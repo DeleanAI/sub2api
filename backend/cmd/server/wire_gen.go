@@ -28,6 +28,7 @@ import (
 import (
 	_ "embed"
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
+	_ "github.com/lib/pq"
 )
 
 // Injectors from wire.go:
