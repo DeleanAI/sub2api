@@ -90,7 +90,7 @@ func TestPassthroughIngressReportsTurnStartedBeforeAfterTurnWithoutBeforeTurn(t 
 			hookEvents = append(hookEvents, hookEvent{name: "TurnStarted", turn: turn, startedAt: startedAt})
 			hooksMu.Unlock()
 		},
-		BeforeTurn: func(int) error {
+		BeforeTurn: func(int, string) error {
 			hooksMu.Lock()
 			beforeTurnCalls++
 			hooksMu.Unlock()

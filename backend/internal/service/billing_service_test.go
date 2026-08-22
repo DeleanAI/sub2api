@@ -269,13 +269,13 @@ func TestCalculateCost_OpenAIGPT54LongContextAppliesWholeSessionMultipliers(t *t
 func TestCalculateCost_OpenAIGPT54LongContextMarkerRequiresActualCostIncrease(t *testing.T) {
 	svc := newTestBillingService()
 
-	cost, err := svc.calculateCostWithServiceTierPolicy(
-		"gpt-5.4-2026-03-05",
-		UsageTokens{InputTokens: 300000},
-		0,
-		"",
-		true,
-	)
+	longContextEnabled := true
+	cost, err := svc.CalculateCostUnified(CostInput{
+		Model:                     "gpt-5.4-2026-03-05",
+		Tokens:                    UsageTokens{InputTokens: 300000},
+		RateMultiplier:            0,
+		LongContextBillingEnabled: &longContextEnabled,
+	})
 
 	require.NoError(t, err)
 	require.Zero(t, cost.ActualCost)

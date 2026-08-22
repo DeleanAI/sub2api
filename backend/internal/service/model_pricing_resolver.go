@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"log/slog"
-	"strings"
 )
 
 // PricingSource 定价来源标识
@@ -143,23 +142,49 @@ func (r *ModelPricingResolver) resolveConfiguredPricing(config *ChannelModelPric
 	return resolved
 }
 
+// modelPatternMatchKind 是分组级模式匹配的命中级别。
+type modelPatternMatchKind int
+
+const (
+	modelPatternNoMatch modelPatternMatchKind = iota
+	modelPatternMatchWildcard
+	modelPatternMatchExact
+)
+
+// matchModelPatternNormalized 是分组级"模式 → 模型"匹配的唯一规则，分组逐模型定价
+// （matchGroupModelPricing）与分组逐模型倍率（Group.ModelRateMultiplierFor）共用：
+// 双方先经 normalizeChannelPricingModelName 归一化（小写、claude 系列 "." → "-"），
+// 相等为精确命中；模式以 * 结尾且模型以其前缀开头为通配命中（末尾通配的判定复用
+// matchModelPattern，与模型路由同一条 * 规则）。
+func matchModelPatternNormalized(pattern, model string) modelPatternMatchKind {
+	normalizedPattern := normalizeChannelPricingModelName(pattern)
+	normalizedModel := normalizeChannelPricingModelName(model)
+	if normalizedPattern == normalizedModel {
+		return modelPatternMatchExact
+	}
+	if matchModelPattern(normalizedPattern, normalizedModel) {
+		return modelPatternMatchWildcard
+	}
+	return modelPatternNoMatch
+}
+
 func matchGroupModelPricing(group *Group, model string) *ChannelModelPricing {
 	if group == nil {
 		return nil
 	}
-	model = normalizeChannelPricingModelName(model)
 	var wildcard *ChannelModelPricing
 	for i := range group.ModelPricing {
 		entry := &group.ModelPricing[i]
 		for _, pattern := range entry.Models {
-			normalized := normalizeChannelPricingModelName(pattern)
-			if normalized == model {
+			switch matchModelPatternNormalized(pattern, model) {
+			case modelPatternMatchExact:
 				cp := entry.Clone()
 				return &cp
-			}
-			if strings.HasSuffix(normalized, "*") && strings.HasPrefix(model, strings.TrimSuffix(normalized, "*")) && wildcard == nil {
-				cp := entry.Clone()
-				wildcard = &cp
+			case modelPatternMatchWildcard:
+				if wildcard == nil {
+					cp := entry.Clone()
+					wildcard = &cp
+				}
 			}
 		}
 	}

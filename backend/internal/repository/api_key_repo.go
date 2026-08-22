@@ -200,6 +200,7 @@ func (r *apiKeyRepository) GetByKeyForAuth(ctx context.Context, key string) (*se
 				group.FieldAudioSttPricePerHour,
 				group.FieldLongContextPricingEnabled,
 				group.FieldModelPricing,
+				group.FieldModelRateMultipliers,
 				group.FieldClaudeCodeOnly,
 				group.FieldFallbackGroupID,
 				group.FieldFallbackGroupIDOnInvalidRequest,
@@ -958,6 +959,16 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 			modelPricing = nil
 		}
 	}
+	// 逐模型倍率与逐模型定价同样降级：解析失败按"未配置"（因子 1）处理并告警，
+	// 绝不能让一条坏 JSON 把整把密钥的认证查询拖垮。
+	var modelRateMultipliers []service.GroupModelRateMultiplier
+	if len(g.ModelRateMultipliers) > 0 {
+		if err := json.Unmarshal(g.ModelRateMultipliers, &modelRateMultipliers); err != nil {
+			slog.Warn("group model_rate_multipliers unmarshal failed; treating per-model multipliers as unset",
+				"group_id", g.ID, "error", err)
+			modelRateMultipliers = nil
+		}
+	}
 	return &service.Group{
 		ID:                              g.ID,
 		Name:                            g.Name,
@@ -994,6 +1005,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		AudioSTTPricePerHour:            g.AudioSttPricePerHour,
 		LongContextPricingEnabled:       g.LongContextPricingEnabled,
 		ModelPricing:                    modelPricing,
+		ModelRateMultipliers:            modelRateMultipliers,
 		DefaultValidityDays:             g.DefaultValidityDays,
 		ClaudeCodeOnly:                  g.ClaudeCodeOnly,
 		FallbackGroupID:                 g.FallbackGroupID,

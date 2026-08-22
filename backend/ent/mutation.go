@@ -22144,6 +22144,8 @@ type GroupMutation struct {
 	long_context_pricing_enabled            *bool
 	model_pricing                           *json.RawMessage
 	appendmodel_pricing                     json.RawMessage
+	model_rate_multipliers                  *json.RawMessage
+	appendmodel_rate_multipliers            json.RawMessage
 	claude_code_only                        *bool
 	fallback_group_id                       *int64
 	addfallback_group_id                    *int64
@@ -24468,6 +24470,71 @@ func (m *GroupMutation) ResetModelPricing() {
 	delete(m.clearedFields, group.FieldModelPricing)
 }
 
+// SetModelRateMultipliers sets the "model_rate_multipliers" field.
+func (m *GroupMutation) SetModelRateMultipliers(jm json.RawMessage) {
+	m.model_rate_multipliers = &jm
+	m.appendmodel_rate_multipliers = nil
+}
+
+// ModelRateMultipliers returns the value of the "model_rate_multipliers" field in the mutation.
+func (m *GroupMutation) ModelRateMultipliers() (r json.RawMessage, exists bool) {
+	v := m.model_rate_multipliers
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldModelRateMultipliers returns the old "model_rate_multipliers" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldModelRateMultipliers(ctx context.Context) (v json.RawMessage, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldModelRateMultipliers is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldModelRateMultipliers requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldModelRateMultipliers: %w", err)
+	}
+	return oldValue.ModelRateMultipliers, nil
+}
+
+// AppendModelRateMultipliers adds jm to the "model_rate_multipliers" field.
+func (m *GroupMutation) AppendModelRateMultipliers(jm json.RawMessage) {
+	m.appendmodel_rate_multipliers = append(m.appendmodel_rate_multipliers, jm...)
+}
+
+// AppendedModelRateMultipliers returns the list of values that were appended to the "model_rate_multipliers" field in this mutation.
+func (m *GroupMutation) AppendedModelRateMultipliers() (json.RawMessage, bool) {
+	if len(m.appendmodel_rate_multipliers) == 0 {
+		return nil, false
+	}
+	return m.appendmodel_rate_multipliers, true
+}
+
+// ClearModelRateMultipliers clears the value of the "model_rate_multipliers" field.
+func (m *GroupMutation) ClearModelRateMultipliers() {
+	m.model_rate_multipliers = nil
+	m.appendmodel_rate_multipliers = nil
+	m.clearedFields[group.FieldModelRateMultipliers] = struct{}{}
+}
+
+// ModelRateMultipliersCleared returns if the "model_rate_multipliers" field was cleared in this mutation.
+func (m *GroupMutation) ModelRateMultipliersCleared() bool {
+	_, ok := m.clearedFields[group.FieldModelRateMultipliers]
+	return ok
+}
+
+// ResetModelRateMultipliers resets all changes to the "model_rate_multipliers" field.
+func (m *GroupMutation) ResetModelRateMultipliers() {
+	m.model_rate_multipliers = nil
+	m.appendmodel_rate_multipliers = nil
+	delete(m.clearedFields, group.FieldModelRateMultipliers)
+}
+
 // SetClaudeCodeOnly sets the "claude_code_only" field.
 func (m *GroupMutation) SetClaudeCodeOnly(b bool) {
 	m.claude_code_only = &b
@@ -25773,7 +25840,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 62)
+	fields := make([]string, 0, 63)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -25896,6 +25963,9 @@ func (m *GroupMutation) Fields() []string {
 	}
 	if m.model_pricing != nil {
 		fields = append(fields, group.FieldModelPricing)
+	}
+	if m.model_rate_multipliers != nil {
+		fields = append(fields, group.FieldModelRateMultipliers)
 	}
 	if m.claude_code_only != nil {
 		fields = append(fields, group.FieldClaudeCodeOnly)
@@ -26050,6 +26120,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.LongContextPricingEnabled()
 	case group.FieldModelPricing:
 		return m.ModelPricing()
+	case group.FieldModelRateMultipliers:
+		return m.ModelRateMultipliers()
 	case group.FieldClaudeCodeOnly:
 		return m.ClaudeCodeOnly()
 	case group.FieldFallbackGroupID:
@@ -26183,6 +26255,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldLongContextPricingEnabled(ctx)
 	case group.FieldModelPricing:
 		return m.OldModelPricing(ctx)
+	case group.FieldModelRateMultipliers:
+		return m.OldModelRateMultipliers(ctx)
 	case group.FieldClaudeCodeOnly:
 		return m.OldClaudeCodeOnly(ctx)
 	case group.FieldFallbackGroupID:
@@ -26520,6 +26594,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetModelPricing(v)
+		return nil
+	case group.FieldModelRateMultipliers:
+		v, ok := value.(json.RawMessage)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetModelRateMultipliers(v)
 		return nil
 	case group.FieldClaudeCodeOnly:
 		v, ok := value.(bool)
@@ -27082,6 +27163,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldModelPricing) {
 		fields = append(fields, group.FieldModelPricing)
 	}
+	if m.FieldCleared(group.FieldModelRateMultipliers) {
+		fields = append(fields, group.FieldModelRateMultipliers)
+	}
 	if m.FieldCleared(group.FieldFallbackGroupID) {
 		fields = append(fields, group.FieldFallbackGroupID)
 	}
@@ -27161,6 +27245,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldModelPricing:
 		m.ClearModelPricing()
+		return nil
+	case group.FieldModelRateMultipliers:
+		m.ClearModelRateMultipliers()
 		return nil
 	case group.FieldFallbackGroupID:
 		m.ClearFallbackGroupID()
@@ -27301,6 +27388,9 @@ func (m *GroupMutation) ResetField(name string) error {
 		return nil
 	case group.FieldModelPricing:
 		m.ResetModelPricing()
+		return nil
+	case group.FieldModelRateMultipliers:
+		m.ResetModelRateMultipliers()
 		return nil
 	case group.FieldClaudeCodeOnly:
 		m.ResetClaudeCodeOnly()
@@ -44271,6 +44361,8 @@ type UsageLogMutation struct {
 	long_context_billing_applied *bool
 	account_rate_multiplier      *float64
 	addaccount_rate_multiplier   *float64
+	model_rate_multiplier        *float64
+	addmodel_rate_multiplier     *float64
 	billing_type                 *int8
 	addbilling_type              *int8
 	stream                       *bool
@@ -45933,6 +46025,76 @@ func (m *UsageLogMutation) ResetAccountRateMultiplier() {
 	delete(m.clearedFields, usagelog.FieldAccountRateMultiplier)
 }
 
+// SetModelRateMultiplier sets the "model_rate_multiplier" field.
+func (m *UsageLogMutation) SetModelRateMultiplier(f float64) {
+	m.model_rate_multiplier = &f
+	m.addmodel_rate_multiplier = nil
+}
+
+// ModelRateMultiplier returns the value of the "model_rate_multiplier" field in the mutation.
+func (m *UsageLogMutation) ModelRateMultiplier() (r float64, exists bool) {
+	v := m.model_rate_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldModelRateMultiplier returns the old "model_rate_multiplier" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldModelRateMultiplier(ctx context.Context) (v *float64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldModelRateMultiplier is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldModelRateMultiplier requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldModelRateMultiplier: %w", err)
+	}
+	return oldValue.ModelRateMultiplier, nil
+}
+
+// AddModelRateMultiplier adds f to the "model_rate_multiplier" field.
+func (m *UsageLogMutation) AddModelRateMultiplier(f float64) {
+	if m.addmodel_rate_multiplier != nil {
+		*m.addmodel_rate_multiplier += f
+	} else {
+		m.addmodel_rate_multiplier = &f
+	}
+}
+
+// AddedModelRateMultiplier returns the value that was added to the "model_rate_multiplier" field in this mutation.
+func (m *UsageLogMutation) AddedModelRateMultiplier() (r float64, exists bool) {
+	v := m.addmodel_rate_multiplier
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearModelRateMultiplier clears the value of the "model_rate_multiplier" field.
+func (m *UsageLogMutation) ClearModelRateMultiplier() {
+	m.model_rate_multiplier = nil
+	m.addmodel_rate_multiplier = nil
+	m.clearedFields[usagelog.FieldModelRateMultiplier] = struct{}{}
+}
+
+// ModelRateMultiplierCleared returns if the "model_rate_multiplier" field was cleared in this mutation.
+func (m *UsageLogMutation) ModelRateMultiplierCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldModelRateMultiplier]
+	return ok
+}
+
+// ResetModelRateMultiplier resets all changes to the "model_rate_multiplier" field.
+func (m *UsageLogMutation) ResetModelRateMultiplier() {
+	m.model_rate_multiplier = nil
+	m.addmodel_rate_multiplier = nil
+	delete(m.clearedFields, usagelog.FieldModelRateMultiplier)
+}
+
 // SetBillingType sets the "billing_type" field.
 func (m *UsageLogMutation) SetBillingType(i int8) {
 	m.billing_type = &i
@@ -46980,7 +47142,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 47)
+	fields := make([]string, 0, 48)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47070,6 +47232,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.account_rate_multiplier != nil {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
+	}
+	if m.model_rate_multiplier != nil {
+		fields = append(fields, usagelog.FieldModelRateMultiplier)
 	}
 	if m.billing_type != nil {
 		fields = append(fields, usagelog.FieldBillingType)
@@ -47190,6 +47355,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.LongContextBillingApplied()
 	case usagelog.FieldAccountRateMultiplier:
 		return m.AccountRateMultiplier()
+	case usagelog.FieldModelRateMultiplier:
+		return m.ModelRateMultiplier()
 	case usagelog.FieldBillingType:
 		return m.BillingType()
 	case usagelog.FieldStream:
@@ -47293,6 +47460,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldLongContextBillingApplied(ctx)
 	case usagelog.FieldAccountRateMultiplier:
 		return m.OldAccountRateMultiplier(ctx)
+	case usagelog.FieldModelRateMultiplier:
+		return m.OldModelRateMultiplier(ctx)
 	case usagelog.FieldBillingType:
 		return m.OldBillingType(ctx)
 	case usagelog.FieldStream:
@@ -47546,6 +47715,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetAccountRateMultiplier(v)
 		return nil
+	case usagelog.FieldModelRateMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetModelRateMultiplier(v)
+		return nil
 	case usagelog.FieldBillingType:
 		v, ok := value.(int8)
 		if !ok {
@@ -47718,6 +47894,9 @@ func (m *UsageLogMutation) AddedFields() []string {
 	if m.addaccount_rate_multiplier != nil {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
 	}
+	if m.addmodel_rate_multiplier != nil {
+		fields = append(fields, usagelog.FieldModelRateMultiplier)
+	}
 	if m.addbilling_type != nil {
 		fields = append(fields, usagelog.FieldBillingType)
 	}
@@ -47774,6 +47953,8 @@ func (m *UsageLogMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedRateMultiplier()
 	case usagelog.FieldAccountRateMultiplier:
 		return m.AddedAccountRateMultiplier()
+	case usagelog.FieldModelRateMultiplier:
+		return m.AddedModelRateMultiplier()
 	case usagelog.FieldBillingType:
 		return m.AddedBillingType()
 	case usagelog.FieldDurationMs:
@@ -47900,6 +48081,13 @@ func (m *UsageLogMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddAccountRateMultiplier(v)
 		return nil
+	case usagelog.FieldModelRateMultiplier:
+		v, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddModelRateMultiplier(v)
+		return nil
 	case usagelog.FieldBillingType:
 		v, ok := value.(int8)
 		if !ok {
@@ -47983,6 +48171,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldAccountRateMultiplier) {
 		fields = append(fields, usagelog.FieldAccountRateMultiplier)
 	}
+	if m.FieldCleared(usagelog.FieldModelRateMultiplier) {
+		fields = append(fields, usagelog.FieldModelRateMultiplier)
+	}
 	if m.FieldCleared(usagelog.FieldDurationMs) {
 		fields = append(fields, usagelog.FieldDurationMs)
 	}
@@ -48062,6 +48253,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldAccountRateMultiplier:
 		m.ClearAccountRateMultiplier()
+		return nil
+	case usagelog.FieldModelRateMultiplier:
+		m.ClearModelRateMultiplier()
 		return nil
 	case usagelog.FieldDurationMs:
 		m.ClearDurationMs()
@@ -48193,6 +48387,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldAccountRateMultiplier:
 		m.ResetAccountRateMultiplier()
+		return nil
+	case usagelog.FieldModelRateMultiplier:
+		m.ResetModelRateMultiplier()
 		return nil
 	case usagelog.FieldBillingType:
 		m.ResetBillingType()

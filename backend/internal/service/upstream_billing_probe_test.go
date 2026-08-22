@@ -1302,3 +1302,38 @@ func TestUpstreamBillingProbeLeaderLockCoversStaggeredInstancesInCadenceWindow(t
 	require.NoError(t, staggered.RunDue(context.Background()))
 	require.Equal(t, int64(1), upstream.calls.Load(), "a staggered instance must not start a second batch inside the cadence window")
 }
+
+// schema v2（分组逐模型倍率）只增字段：不带 ?model= 的探测响应里倍率字段语义与 v1 一致，
+// 探测必须同时接受 v1/v2，并把逐模型倍率表透传进快照而不是当作未知 schema 拒绝。
+func TestParseUpstreamBillingProbeResponse_AcceptsSchemaV2WithModelRateMultipliers(t *testing.T) {
+	data, err := parseUpstreamBillingProbeResponse([]byte(`{
+		"object":"sub2api.key_billing",
+		"schema_version":2,
+		"billing_scope":"token",
+		"group_rate_multiplier":0.8,
+		"resolved_rate_multiplier":0.8,
+		"peak_rate_enabled":false,
+		"model_rate_multipliers":[{"model_pattern":"claude-opus-*","multiplier":2}],
+		"effective_rate_multiplier":0.8,
+		"observed_at":"2026-07-13T01:00:00Z"
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, 2, data["schema_version"])
+	require.Equal(t, []GroupModelRateMultiplier{{ModelPattern: "claude-opus-*", Multiplier: 2}}, data["model_rate_multipliers"])
+
+	rate, ok := upstreamBillingRateAt(data, time.Date(2026, time.July, 13, 1, 0, 0, 0, time.UTC))
+	require.True(t, ok)
+	require.InDelta(t, 0.8, rate, 1e-12, "账号倍率仍取不含逐模型因子的基础倍率")
+
+	_, err = parseUpstreamBillingProbeResponse([]byte(`{
+		"object":"sub2api.key_billing",
+		"schema_version":3,
+		"billing_scope":"token",
+		"group_rate_multiplier":0.8,
+		"resolved_rate_multiplier":0.8,
+		"peak_rate_enabled":false,
+		"effective_rate_multiplier":0.8,
+		"observed_at":"2026-07-13T01:00:00Z"
+	}`))
+	require.Error(t, err, "未知 schema 版本仍须拒绝")
+}

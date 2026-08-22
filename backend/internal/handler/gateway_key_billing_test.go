@@ -85,7 +85,7 @@ func TestGatewayHandlerKeyBillingInfoUsesGroupRate(t *testing.T) {
 	var got keyBillingInfoResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.Equal(t, "sub2api.key_billing", got.Object)
-	require.Equal(t, 1, got.SchemaVersion)
+	require.Equal(t, 2, got.SchemaVersion)
 	require.Equal(t, "token", got.BillingScope)
 	require.Equal(t, 0.75, got.GroupRateMultiplier)
 	require.Nil(t, got.UserRateMultiplier)
@@ -152,7 +152,7 @@ func TestBuildKeyBillingInfoAppliesPeakMultiplier(t *testing.T) {
 	now := time.Date(2026, time.July, 12, 10, 0, 0, 0, timezone.Location())
 	userRate := 0.8
 
-	got := buildKeyBillingInfo(apiKey, userRate, now)
+	got := buildKeyBillingInfo(apiKey, userRate, now, "")
 
 	require.Equal(t, 1.2, got.GroupRateMultiplier)
 	require.NotNil(t, got.UserRateMultiplier)
@@ -202,7 +202,7 @@ func TestKeyBillingInfoJSONKeepsZeroPeakMultiplierWhenEnabled(t *testing.T) {
 		},
 	}
 	now := time.Date(2026, time.July, 12, 12, 0, 0, 0, timezone.Location())
-	encoded, err := json.Marshal(buildKeyBillingInfo(apiKey, apiKey.Group.RateMultiplier, now))
+	encoded, err := json.Marshal(buildKeyBillingInfo(apiKey, apiKey.Group.RateMultiplier, now, ""))
 	require.NoError(t, err)
 
 	var fields map[string]json.RawMessage
@@ -308,4 +308,98 @@ func TestGatewayHandlerKeyBillingInfoSharesBillingResolverCacheByPlatform(t *tes
 			require.Equal(t, 1, repo.lookupCalls)
 		})
 	}
+}
+
+func TestKeyBillingInfoModelQueryFoldsModelRateMultiplier(t *testing.T) {
+	groupID := int64(7)
+	apiKey := &service.APIKey{
+		UserID:  11,
+		GroupID: &groupID,
+		Group: &service.Group{
+			ID:                 groupID,
+			RateMultiplier:     1.2,
+			SubscriptionType:   service.SubscriptionTypeSubscription,
+			PeakRateEnabled:    true,
+			PeakStart:          "09:00",
+			PeakEnd:            "18:00",
+			PeakRateMultiplier: 1.5,
+			ModelRateMultipliers: []service.GroupModelRateMultiplier{
+				{ModelPattern: "claude-opus-*", Multiplier: 2},
+			},
+		},
+	}
+	now := time.Date(2026, time.July, 12, 10, 0, 0, 0, timezone.Location())
+
+	t.Run("without model the table is exposed but not folded in", func(t *testing.T) {
+		got := buildKeyBillingInfo(apiKey, 0.8, now, "")
+		require.Equal(t, 2, got.SchemaVersion)
+		require.Equal(t, apiKey.Group.ModelRateMultipliers, got.ModelRateMultipliers)
+		require.Nil(t, got.Model)
+		require.Nil(t, got.ModelRateMultiplier)
+		require.Nil(t, got.MatchedModelPattern)
+		require.InDelta(t, 0.8*1.5, got.EffectiveRateMultiplier, 1e-12)
+
+		encoded, err := json.Marshal(got)
+		require.NoError(t, err)
+		var fields map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(encoded, &fields))
+		require.Contains(t, fields, "model_rate_multipliers")
+		require.NotContains(t, fields, "model")
+		require.NotContains(t, fields, "model_rate_multiplier")
+		require.NotContains(t, fields, "matched_model_pattern")
+	})
+
+	t.Run("matching model folds the factor into effective_rate_multiplier", func(t *testing.T) {
+		got := buildKeyBillingInfo(apiKey, 0.8, now, "claude-opus-4-1")
+		require.NotNil(t, got.Model)
+		require.Equal(t, "claude-opus-4-1", *got.Model)
+		require.NotNil(t, got.ModelRateMultiplier)
+		require.Equal(t, 2.0, *got.ModelRateMultiplier)
+		require.NotNil(t, got.MatchedModelPattern)
+		require.Equal(t, "claude-opus-*", *got.MatchedModelPattern)
+		require.InDelta(t, 0.8*1.5*2, got.EffectiveRateMultiplier, 1e-12)
+		require.InDelta(t, service.EffectiveDownstreamMultiplier(apiKey.Group, 0.8, now, "claude-opus-4-1"), got.EffectiveRateMultiplier, 1e-12,
+			"账单口径必须与利润门/扣费同一公式")
+	})
+
+	t.Run("non-matching model reports factor 1 without a matched pattern", func(t *testing.T) {
+		got := buildKeyBillingInfo(apiKey, 0.8, now, "claude-haiku-4")
+		require.NotNil(t, got.ModelRateMultiplier)
+		require.Equal(t, 1.0, *got.ModelRateMultiplier)
+		require.Nil(t, got.MatchedModelPattern)
+		require.InDelta(t, 0.8*1.5, got.EffectiveRateMultiplier, 1e-12)
+	})
+
+	t.Run("group without rules always returns an empty array", func(t *testing.T) {
+		plain := &service.APIKey{GroupID: &groupID, Group: &service.Group{ID: groupID, RateMultiplier: 1}}
+		encoded, err := json.Marshal(buildKeyBillingInfo(plain, 1, now, ""))
+		require.NoError(t, err)
+		var fields map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(encoded, &fields))
+		require.JSONEq(t, "[]", string(fields["model_rate_multipliers"]))
+	})
+}
+
+func TestGatewayHandlerKeyBillingInfoReadsModelQuery(t *testing.T) {
+	groupID := int64(7)
+	apiKey := &service.APIKey{
+		UserID:  11,
+		GroupID: &groupID,
+		Group: &service.Group{
+			ID:                   groupID,
+			RateMultiplier:       0.75,
+			ModelRateMultipliers: []service.GroupModelRateMultiplier{{ModelPattern: "gpt-5*", Multiplier: 1.6}},
+		},
+	}
+	c, w := newKeyBillingContext(apiKey)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/sub2api/billing?model=%20gpt-5.4%20", nil)
+
+	newKeyBillingHandler(nil).KeyBillingInfo(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var got keyBillingInfoResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	require.NotNil(t, got.Model)
+	require.Equal(t, "gpt-5.4", *got.Model)
+	require.InDelta(t, 0.75*1.6, got.EffectiveRateMultiplier, 1e-12)
 }

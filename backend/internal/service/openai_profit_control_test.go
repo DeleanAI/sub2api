@@ -42,30 +42,30 @@ func TestResolveOpenAIProfitControlGate(t *testing.T) {
 	groupID := int64(7)
 
 	t.Run("nil group id yields no gate", func(t *testing.T) {
-		require.Nil(t, svc.resolveOpenAIProfitControlGate(context.Background(), nil))
+		require.Nil(t, svc.resolveOpenAIProfitControlGate(context.Background(), nil, ""))
 	})
 
 	t.Run("no ctx group and no snapshot yields no gate", func(t *testing.T) {
-		require.Nil(t, svc.resolveOpenAIProfitControlGate(context.Background(), &groupID))
+		require.Nil(t, svc.resolveOpenAIProfitControlGate(context.Background(), &groupID, ""))
 	})
 
 	t.Run("disabled group yields no gate", func(t *testing.T) {
 		group := profitControlTestGroup(groupID, 0.3, 0)
 		group.ProfitControlEnabled = false
-		require.Nil(t, svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID))
+		require.Nil(t, svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID, ""))
 	})
 
 	t.Run("non openai or grok platform yields no gate even if enabled", func(t *testing.T) {
 		group := profitControlTestGroup(groupID, 0.3, 0)
 		group.Platform = PlatformAnthropic
-		require.Nil(t, svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID))
+		require.Nil(t, svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID, ""))
 	})
 
 	t.Run("grok group routed through openai handler installs gate", func(t *testing.T) {
 		group := profitControlTestGroup(groupID, 0.3, 0.05)
 		group.Platform = PlatformGrok
 		group.RateMultiplier = 0.5
-		gate := svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID)
+		gate := svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID, "")
 		require.NotNil(t, gate)
 		require.Equal(t, PlatformGrok, gate.platform)
 		require.InDelta(t, 0.5*(1-0.35), gate.threshold, 1e-12)
@@ -73,13 +73,13 @@ func TestResolveOpenAIProfitControlGate(t *testing.T) {
 
 	t.Run("ctx group id mismatch without snapshot yields no gate", func(t *testing.T) {
 		group := profitControlTestGroup(groupID+1, 0.3, 0)
-		require.Nil(t, svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID))
+		require.Nil(t, svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID, ""))
 	})
 
 	t.Run("threshold composes margin and buffer from downstream rate", func(t *testing.T) {
 		group := profitControlTestGroup(groupID, 0.3, 0.05)
 		group.RateMultiplier = 2.0
-		gate := svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID)
+		gate := svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID, "")
 		require.NotNil(t, gate)
 		require.InDelta(t, 2.0*(1-0.35), gate.threshold, 1e-12)
 		require.Equal(t, PlatformOpenAI, gate.platform)
@@ -94,7 +94,7 @@ func TestResolveOpenAIProfitControlGate(t *testing.T) {
 		group.PeakStart = "00:00"
 		group.PeakEnd = "23:59"
 		group.PeakRateMultiplier = 3.0
-		gate := svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID)
+		gate := svc.resolveOpenAIProfitControlGate(profitControlTestCtx(group), &groupID, "")
 		require.NotNil(t, gate)
 		expected := group.RateMultiplier * group.PeakMultiplierAt(timezone.Now()) * 0.5
 		require.InDelta(t, expected, gate.threshold, 1e-9)

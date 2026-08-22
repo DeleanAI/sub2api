@@ -1519,6 +1519,12 @@
           </div>
         </div>
 
+        <GroupModelRateMultipliersEditor
+          :entries="createForm.model_rate_multipliers"
+          :base-rate-multiplier="createForm.rate_multiplier"
+          @update:entries="createForm.model_rate_multipliers = $event"
+        />
+
         <!-- Grok Voice 显式定价（仅 grok 平台） -->
         <div
           v-if="createForm.platform === 'grok'"
@@ -3241,6 +3247,12 @@
           </div>
         </div>
 
+        <GroupModelRateMultipliersEditor
+          :entries="editForm.model_rate_multipliers"
+          :base-rate-multiplier="editForm.rate_multiplier"
+          @update:entries="editForm.model_rate_multipliers = $event"
+        />
+
         <!-- Grok Voice 显式定价（仅 grok 平台） -->
         <div
           v-if="editForm.platform === 'grok'"
@@ -4442,6 +4454,13 @@ import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesMo
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
 import PricingEntryCard from "@/components/admin/channel/PricingEntryCard.vue";
+import GroupModelRateMultipliersEditor from "@/components/admin/group/GroupModelRateMultipliersEditor.vue";
+import {
+  modelRateMultipliersFromAPI,
+  modelRateMultipliersToAPI,
+  validateModelRateMultiplierEntries,
+  type ModelRateMultiplierFormEntry,
+} from "./groupsModelRateMultipliers";
 import type { PricingFormEntry } from "@/components/admin/channel/types";
 import {
   apiIntervalsToForm,
@@ -5036,6 +5055,7 @@ const createForm = reactive({
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
   model_pricing: [] as PricingFormEntry[],
+  model_rate_multipliers: [] as ModelRateMultiplierFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
   allow_batch_image_generation: false,
@@ -5397,6 +5417,7 @@ const editForm = reactive({
   monthly_limit_usd: null as number | null,
   long_context_pricing_enabled: true,
   model_pricing: [] as PricingFormEntry[],
+  model_rate_multipliers: [] as ModelRateMultiplierFormEntry[],
   // 图片生成计费配置
   allow_image_generation: false,
   allow_batch_image_generation: false,
@@ -5871,6 +5892,7 @@ const closeCreateModal = () => {
   createForm.video_model_prices = createVideoModelPricesForm();
   createForm.long_context_pricing_enabled = true;
   createForm.model_pricing = [];
+  createForm.model_rate_multipliers = [];
   createForm.web_search_price_per_call = null;
   createForm.search_price_per_1k = null;
   createForm.audio_realtime_price_per_min = null;
@@ -5943,6 +5965,21 @@ const validateProfitControlForm = (form: ProfitControlFormState): boolean => {
   return true;
 };
 
+// 分组逐模型倍率：提交前按与编辑器相同的规则预检，把第一条出错行定位给管理员；
+// 后端 NormalizeGroupModelRateMultipliers 仍是最终权威。
+const validateModelRateMultipliersForm = (
+  entries: ModelRateMultiplierFormEntry[],
+): boolean => {
+  const error = validateModelRateMultiplierEntries(entries);
+  if (error) {
+    appStore.showError(
+      `#${error.index + 1}: ${t(`admin.groups.modelRateMultipliers.${error.errorKey}`)}`,
+    );
+    return false;
+  }
+  return true;
+};
+
 const handleCreateGroup = async () => {
   if (!createForm.name.trim()) {
     appStore.showError(t("admin.groups.nameRequired"));
@@ -5956,6 +5993,9 @@ const handleCreateGroup = async () => {
     return;
   }
   if (!validateProfitControlForm(createForm)) {
+    return;
+  }
+  if (!validateModelRateMultipliersForm(createForm.model_rate_multipliers)) {
     return;
   }
   submitting.value = true;
@@ -5973,6 +6013,9 @@ const handleCreateGroup = async () => {
       model_pricing: groupPricingToAPI(
         createForm.model_pricing,
         createForm.platform,
+      ),
+      model_rate_multipliers: modelRateMultipliersToAPI(
+        createForm.model_rate_multipliers,
       ),
       daily_limit_usd: normalizeOptionalLimit(
         createForm.daily_limit_usd as number | string | null,
@@ -6099,6 +6142,9 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.long_context_pricing_enabled =
     group.long_context_pricing_enabled ?? true;
   editForm.model_pricing = groupPricingFromAPI(group.model_pricing);
+  editForm.model_rate_multipliers = modelRateMultipliersFromAPI(
+    group.model_rate_multipliers,
+  );
   editForm.allow_image_generation = group.allow_image_generation ?? false;
   editForm.allow_batch_image_generation =
     group.allow_batch_image_generation ?? false;
@@ -6205,6 +6251,7 @@ const closeEditModal = () => {
   editForm.video_model_prices = createVideoModelPricesForm();
   editForm.long_context_pricing_enabled = true;
   editForm.model_pricing = [];
+  editForm.model_rate_multipliers = [];
   editForm.web_search_price_per_call = null;
   editForm.search_price_per_1k = null;
   editForm.audio_realtime_price_per_min = null;
@@ -6231,6 +6278,9 @@ const handleUpdateGroup = async () => {
   if (!validateProfitControlForm(editForm)) {
     return;
   }
+  if (!validateModelRateMultipliersForm(editForm.model_rate_multipliers)) {
+    return;
+  }
 
   submitting.value = true;
   try {
@@ -6240,6 +6290,9 @@ const handleUpdateGroup = async () => {
       model_pricing: groupPricingToAPI(
         editForm.model_pricing,
         editForm.platform,
+      ),
+      model_rate_multipliers: modelRateMultipliersToAPI(
+        editForm.model_rate_multipliers,
       ),
       daily_limit_usd: normalizeOptionalLimit(
         editForm.daily_limit_usd as number | string | null,

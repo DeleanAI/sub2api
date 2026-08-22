@@ -143,7 +143,16 @@ type upstreamBillingProbeResponse struct {
 	EffectiveRateMultiplier *float64 `json:"effective_rate_multiplier"`
 	Timezone                *string  `json:"timezone"`
 	ObservedAt              string   `json:"observed_at"`
+	// ModelRateMultipliers 是 schema v2 起上游暴露的分组逐模型倍率表。探测不带 ?model=，
+	// effective_rate_multiplier 仍是不含逐模型因子的基础倍率（与 v1 同义）；表只透传进
+	// 快照供运营者看到"该上游对部分模型另有加价"。
+	ModelRateMultipliers []GroupModelRateMultiplier `json:"model_rate_multipliers"`
 }
+
+// upstreamBillingProbeSchemaVersions 列出探测接受的 /v1/sub2api/billing schema 版本：
+// v2 在 v1 基础上只增字段（model_rate_multipliers 与可选的 ?model= 相关字段），
+// 不带 ?model= 时两版本的倍率字段语义完全一致。
+var upstreamBillingProbeSchemaVersions = map[int]bool{1: true, 2: true}
 
 // GetUpstreamBillingProbeSettings returns defaults when the setting is absent.
 func (s *SettingService) GetUpstreamBillingProbeSettings(ctx context.Context) (*UpstreamBillingProbeSettings, error) {
@@ -777,7 +786,7 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
-	if response.Object != "sub2api.key_billing" || response.SchemaVersion != 1 || response.BillingScope != "token" {
+	if response.Object != "sub2api.key_billing" || !upstreamBillingProbeSchemaVersions[response.SchemaVersion] || response.BillingScope != "token" {
 		return nil, fmt.Errorf("unexpected billing response schema")
 	}
 	if response.GroupRateMultiplier == nil || response.ResolvedRateMultiplier == nil ||
@@ -819,6 +828,11 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	}
 	if response.UserRateMultiplier != nil {
 		data["user_rate_multiplier"] = *response.UserRateMultiplier
+	}
+	if len(response.ModelRateMultipliers) > 0 {
+		// 只透传、不参与账号倍率换算：账号倍率是单一标量，上游按模型加价的事实
+		// 留在快照里让运营者可见，而不是被静默抹平。
+		data["model_rate_multipliers"] = response.ModelRateMultipliers
 	}
 	if *response.PeakRateEnabled {
 		if response.PeakStart == nil || response.PeakEnd == nil || response.Timezone == nil ||

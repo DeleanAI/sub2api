@@ -623,6 +623,33 @@ func (_u *UsageLogUpdate) ClearAccountRateMultiplier() *UsageLogUpdate {
 	return _u
 }
 
+// SetModelRateMultiplier sets the "model_rate_multiplier" field.
+func (_u *UsageLogUpdate) SetModelRateMultiplier(v float64) *UsageLogUpdate {
+	_u.mutation.ResetModelRateMultiplier()
+	_u.mutation.SetModelRateMultiplier(v)
+	return _u
+}
+
+// SetNillableModelRateMultiplier sets the "model_rate_multiplier" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableModelRateMultiplier(v *float64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetModelRateMultiplier(*v)
+	}
+	return _u
+}
+
+// AddModelRateMultiplier adds value to the "model_rate_multiplier" field.
+func (_u *UsageLogUpdate) AddModelRateMultiplier(v float64) *UsageLogUpdate {
+	_u.mutation.AddModelRateMultiplier(v)
+	return _u
+}
+
+// ClearModelRateMultiplier clears the value of the "model_rate_multiplier" field.
+func (_u *UsageLogUpdate) ClearModelRateMultiplier() *UsageLogUpdate {
+	_u.mutation.ClearModelRateMultiplier()
+	return _u
+}
+
 // SetBillingType sets the "billing_type" field.
 func (_u *UsageLogUpdate) SetBillingType(v int8) *UsageLogUpdate {
 	_u.mutation.ResetBillingType()
@@ -1281,6 +1308,15 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.AccountRateMultiplierCleared() {
 		_spec.ClearField(usagelog.FieldAccountRateMultiplier, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.ModelRateMultiplier(); ok {
+		_spec.SetField(usagelog.FieldModelRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedModelRateMultiplier(); ok {
+		_spec.AddField(usagelog.FieldModelRateMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.ModelRateMultiplierCleared() {
+		_spec.ClearField(usagelog.FieldModelRateMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.BillingType(); ok {
 		_spec.SetField(usagelog.FieldBillingType, field.TypeInt8, value)
@@ -2137,6 +2173,33 @@ func (_u *UsageLogUpdateOne) ClearAccountRateMultiplier() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetModelRateMultiplier sets the "model_rate_multiplier" field.
+func (_u *UsageLogUpdateOne) SetModelRateMultiplier(v float64) *UsageLogUpdateOne {
+	_u.mutation.ResetModelRateMultiplier()
+	_u.mutation.SetModelRateMultiplier(v)
+	return _u
+}
+
+// SetNillableModelRateMultiplier sets the "model_rate_multiplier" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableModelRateMultiplier(v *float64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetModelRateMultiplier(*v)
+	}
+	return _u
+}
+
+// AddModelRateMultiplier adds value to the "model_rate_multiplier" field.
+func (_u *UsageLogUpdateOne) AddModelRateMultiplier(v float64) *UsageLogUpdateOne {
+	_u.mutation.AddModelRateMultiplier(v)
+	return _u
+}
+
+// ClearModelRateMultiplier clears the value of the "model_rate_multiplier" field.
+func (_u *UsageLogUpdateOne) ClearModelRateMultiplier() *UsageLogUpdateOne {
+	_u.mutation.ClearModelRateMultiplier()
+	return _u
+}
+
 // SetBillingType sets the "billing_type" field.
 func (_u *UsageLogUpdateOne) SetBillingType(v int8) *UsageLogUpdateOne {
 	_u.mutation.ResetBillingType()
@@ -2825,6 +2888,15 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.AccountRateMultiplierCleared() {
 		_spec.ClearField(usagelog.FieldAccountRateMultiplier, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.ModelRateMultiplier(); ok {
+		_spec.SetField(usagelog.FieldModelRateMultiplier, field.TypeFloat64, value)
+	}
+	if value, ok := _u.mutation.AddedModelRateMultiplier(); ok {
+		_spec.AddField(usagelog.FieldModelRateMultiplier, field.TypeFloat64, value)
+	}
+	if _u.mutation.ModelRateMultiplierCleared() {
+		_spec.ClearField(usagelog.FieldModelRateMultiplier, field.TypeFloat64)
 	}
 	if value, ok := _u.mutation.BillingType(); ok {
 		_spec.SetField(usagelog.FieldBillingType, field.TypeInt8, value)

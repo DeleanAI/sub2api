@@ -407,6 +407,20 @@ func (_c *UsageLogCreate) SetNillableAccountRateMultiplier(v *float64) *UsageLog
 	return _c
 }
 
+// SetModelRateMultiplier sets the "model_rate_multiplier" field.
+func (_c *UsageLogCreate) SetModelRateMultiplier(v float64) *UsageLogCreate {
+	_c.mutation.SetModelRateMultiplier(v)
+	return _c
+}
+
+// SetNillableModelRateMultiplier sets the "model_rate_multiplier" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableModelRateMultiplier(v *float64) *UsageLogCreate {
+	if v != nil {
+		_c.SetModelRateMultiplier(*v)
+	}
+	return _c
+}
+
 // SetBillingType sets the "billing_type" field.
 func (_c *UsageLogCreate) SetBillingType(v int8) *UsageLogCreate {
 	_c.mutation.SetBillingType(v)
@@ -1066,6 +1080,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.AccountRateMultiplier(); ok {
 		_spec.SetField(usagelog.FieldAccountRateMultiplier, field.TypeFloat64, value)
 		_node.AccountRateMultiplier = &value
+	}
+	if value, ok := _c.mutation.ModelRateMultiplier(); ok {
+		_spec.SetField(usagelog.FieldModelRateMultiplier, field.TypeFloat64, value)
+		_node.ModelRateMultiplier = &value
 	}
 	if value, ok := _c.mutation.BillingType(); ok {
 		_spec.SetField(usagelog.FieldBillingType, field.TypeInt8, value)
@@ -1785,6 +1803,30 @@ func (u *UsageLogUpsert) AddAccountRateMultiplier(v float64) *UsageLogUpsert {
 // ClearAccountRateMultiplier clears the value of the "account_rate_multiplier" field.
 func (u *UsageLogUpsert) ClearAccountRateMultiplier() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldAccountRateMultiplier)
+	return u
+}
+
+// SetModelRateMultiplier sets the "model_rate_multiplier" field.
+func (u *UsageLogUpsert) SetModelRateMultiplier(v float64) *UsageLogUpsert {
+	u.Set(usagelog.FieldModelRateMultiplier, v)
+	return u
+}
+
+// UpdateModelRateMultiplier sets the "model_rate_multiplier" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateModelRateMultiplier() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldModelRateMultiplier)
+	return u
+}
+
+// AddModelRateMultiplier adds v to the "model_rate_multiplier" field.
+func (u *UsageLogUpsert) AddModelRateMultiplier(v float64) *UsageLogUpsert {
+	u.Add(usagelog.FieldModelRateMultiplier, v)
+	return u
+}
+
+// ClearModelRateMultiplier clears the value of the "model_rate_multiplier" field.
+func (u *UsageLogUpsert) ClearModelRateMultiplier() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldModelRateMultiplier)
 	return u
 }
 
@@ -2726,6 +2768,34 @@ func (u *UsageLogUpsertOne) UpdateAccountRateMultiplier() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearAccountRateMultiplier() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearAccountRateMultiplier()
+	})
+}
+
+// SetModelRateMultiplier sets the "model_rate_multiplier" field.
+func (u *UsageLogUpsertOne) SetModelRateMultiplier(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetModelRateMultiplier(v)
+	})
+}
+
+// AddModelRateMultiplier adds v to the "model_rate_multiplier" field.
+func (u *UsageLogUpsertOne) AddModelRateMultiplier(v float64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddModelRateMultiplier(v)
+	})
+}
+
+// UpdateModelRateMultiplier sets the "model_rate_multiplier" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateModelRateMultiplier() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateModelRateMultiplier()
+	})
+}
+
+// ClearModelRateMultiplier clears the value of the "model_rate_multiplier" field.
+func (u *UsageLogUpsertOne) ClearModelRateMultiplier() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearModelRateMultiplier()
 	})
 }
 
@@ -3882,6 +3952,34 @@ func (u *UsageLogUpsertBulk) UpdateAccountRateMultiplier() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearAccountRateMultiplier() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearAccountRateMultiplier()
+	})
+}
+
+// SetModelRateMultiplier sets the "model_rate_multiplier" field.
+func (u *UsageLogUpsertBulk) SetModelRateMultiplier(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetModelRateMultiplier(v)
+	})
+}
+
+// AddModelRateMultiplier adds v to the "model_rate_multiplier" field.
+func (u *UsageLogUpsertBulk) AddModelRateMultiplier(v float64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddModelRateMultiplier(v)
+	})
+}
+
+// UpdateModelRateMultiplier sets the "model_rate_multiplier" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateModelRateMultiplier() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateModelRateMultiplier()
+	})
+}
+
+// ClearModelRateMultiplier clears the value of the "model_rate_multiplier" field.
+func (u *UsageLogUpsertBulk) ClearModelRateMultiplier() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearModelRateMultiplier()
 	})
 }
 

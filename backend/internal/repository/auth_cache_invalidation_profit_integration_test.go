@@ -56,9 +56,15 @@ func TestAuthCacheInvalidationTrigger_ProfitControlColumns(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	// migration 230 起改为行差异规则：除 updated_at 外任何列（含 name 这类外观列）变化都入队，
+	// 代价是一次额外的认证回源；无实际变化的 UPDATE 仍不入队。
 	_, err := integrationDB.ExecContext(ctx, "UPDATE groups SET name = name || '-cosmetic' WHERE id = $1", group.ID)
 	require.NoError(t, err)
-	require.Zero(t, count(), "cosmetic 更新不得入队（既有语义回归）")
+	require.Equal(t, 1, count(), "行差异规则下外观列变化同样入队")
+	clear()
+	_, err = integrationDB.ExecContext(ctx, "UPDATE groups SET name = name WHERE id = $1", group.ID)
+	require.NoError(t, err)
+	require.Zero(t, count(), "无实际变化的 UPDATE 不得入队")
 
 	_, err = integrationDB.ExecContext(ctx, "UPDATE groups SET profit_control_enabled = NOT profit_control_enabled WHERE id = $1", group.ID)
 	require.NoError(t, err)

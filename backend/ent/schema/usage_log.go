@@ -120,6 +120,12 @@ func (UsageLog) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}),
+		// model_rate_multiplier: 分组逐模型倍率快照（migration 229；NULL 表示未评估，按 1.0 处理）。
+		// 与 rate_multiplier 分列，后者按 billing_mode 分别承载 token/图片/视频倍率，不再叠加含义。
+		field.Float("model_rate_multiplier").
+			Optional().
+			Nillable().
+			SchemaType(map[string]string{dialect.Postgres: "numeric(12,6)"}),
 
 		// 其他字段
 		field.Int8("billing_type").

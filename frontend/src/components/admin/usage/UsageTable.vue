@@ -214,6 +214,19 @@
           </div>
         </template>
 
+        <!-- 分组逐模型倍率快照列：让"这条按什么模型倍率扣的"可审计。null = 未评估（按 1） -->
+        <template #cell-model_rate_multiplier="{ row }">
+          <span
+            v-if="row.model_rate_multiplier != null"
+            data-testid="model-rate-multiplier-cell"
+            class="inline-flex rounded px-1.5 py-0.5 text-xs font-medium tabular-nums"
+            :class="row.model_rate_multiplier === 1
+              ? 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-gray-400'
+              : 'bg-amber-100 text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/20 dark:text-amber-300 dark:ring-amber-500/30'"
+          >{{ formatMultiplier(row.model_rate_multiplier) }}x</span>
+          <span v-else class="text-xs text-gray-400 dark:text-gray-500" :title="t('usage.modelMultiplierNotEvaluated')">-</span>
+        </template>
+
         <!-- 合并首字/总耗时的健康度列：左侧色条上端随首字档、下端随总耗时档，中段(40%-60%)短渐变过渡，便于纵向扫视整体健康状况 -->
         <template #cell-latency="{ row }">
           <div class="flex items-stretch gap-2">
@@ -463,6 +476,11 @@
           <div class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.rate') }}</span>
             <span class="font-semibold text-blue-400">{{ formatMultiplier(tooltipData?.rate_multiplier || 1) }}x</span>
+          </div>
+          <!-- 分组逐模型倍率快照：null 表示该行未评估（按次/图片/视频或历史行），按 1 处理 -->
+          <div v-if="tooltipData?.model_rate_multiplier != null" class="flex items-center justify-between gap-6" data-testid="model-rate-multiplier-row">
+            <span class="text-gray-400">{{ t('usage.modelMultiplier') }}</span>
+            <span class="font-semibold" :class="tooltipData.model_rate_multiplier === 1 ? 'text-blue-400' : 'text-amber-300'">{{ formatMultiplier(tooltipData.model_rate_multiplier) }}x</span>
           </div>
           <div class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.original') }}</span>

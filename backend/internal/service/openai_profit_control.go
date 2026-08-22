@@ -119,22 +119,51 @@ type openAIProfitControlGate struct {
 	// groupID 是门配置来源的被调度分组；请求内按分组复用（failover 阈值稳定），
 	// composite 等跨分组调度切换分组时重新解析。
 	groupID int64
+	// model 是计算 D 时采用的请求模型：D 含分组逐模型倍率因子，同分组不同模型的门
+	// 阈值不同，复用判定必须同时比对分组与模型。
+	model string
 	// platform 是利润配置所在分组的平台，用于按平台观测门是否真实生效。
 	platform string
-	// threshold = D(pricingAt) × (1 − margin − buffer)，账号倍率必须 <= 它。
+	// threshold = D(pricingAt, model) × (1 − margin − buffer)，账号倍率必须 <= 它。
 	threshold float64
 	// pricingAt 是本请求的统一定价时刻（D 侧）。
 	pricingAt time.Time
+}
+
+// matches 报告既有门是否可直接复用于同一 (分组, 模型) 的再次装门。
+func (g *openAIProfitControlGate) matches(groupID int64, model string) bool {
+	return g != nil && g.groupID == groupID && g.model == model
+}
+
+// newProfitControlGate 是利润门阈值的唯一构造点，gateway（Anthropic/Gemini/Antigravity）
+// 与 openai/grok 两条装门路径都必须经由本函数：
+//
+//	threshold = effectiveDownstreamMultiplier(billingGroup, resolvedRate, pricingAt, model)
+//	            × (1 − gateGroup.ProfitMinMargin − gateGroup.ProfitSafetyBuffer)
+//
+// gateGroup 是门配置（开关/margin/buffer/平台）所在的被调度分组；billingGroup 是请求真实
+// 计费的分组（apiKey 自身分组，composite 请求为父分组），D 必须与 RecordUsage 的扣费组合同源。
+func newProfitControlGate(gateGroup, billingGroup *Group, resolvedRate float64, pricingAt time.Time, model string) *openAIProfitControlGate {
+	downstream := effectiveDownstreamMultiplier(billingGroup, resolvedRate, pricingAt, model)
+	deduction := gateGroup.ProfitMinMargin + gateGroup.ProfitSafetyBuffer
+	return &openAIProfitControlGate{
+		groupID:   gateGroup.ID,
+		model:     model,
+		platform:  gateGroup.Platform,
+		threshold: clampProfitControlThreshold(downstream * (1 - deduction)),
+		pricingAt: pricingAt,
+	}
 }
 
 // WithOpenAIRequestPricingContext 在请求开始处装配请求级定价上下文：固定
 // pricingAt（返回给调用方，供 RecordUsage 入参共用同一时刻），并按分组安装
 // 利润门。ctx 携带 WithOpenAIProfitControlSuppressed 标记（门范围外流量）时
 // 只固定 pricingAt、不装门。handler 各文本入口应在选号循环前调用一次。
-func (s *OpenAIGatewayService) WithOpenAIRequestPricingContext(ctx context.Context, groupID *int64) (context.Context, time.Time) {
+// requestedModel 是客户端请求的模型：D 含分组逐模型倍率因子，门按模型计算。
+func (s *OpenAIGatewayService) WithOpenAIRequestPricingContext(ctx context.Context, groupID *int64, requestedModel string) (context.Context, time.Time) {
 	pricingAt := timezone.Now()
 	ctx = context.WithValue(ctx, openAIPricingAtCtxKey{}, pricingAt)
-	return s.withOpenAIProfitControlGate(ctx, groupID), pricingAt
+	return s.withOpenAIProfitControlGate(ctx, groupID, requestedModel), pricingAt
 }
 
 // WithOpenAIProfitControlSuppressed 标记本请求在利润门范围之外（独立图片/视频
@@ -149,7 +178,8 @@ func WithOpenAIProfitControlSuppressed(ctx context.Context) context.Context {
 // 保活不再让后续 turn 继续按建连时刻的谷价定价。连接可能被调度到与入口分组
 // 不同的分组（composite 成员分组），turn 级重装以连接上已装门的调度分组为准；
 // 连接从未装门时才回退入口分组。抑制标记下只刷新 pricingAt。
-func (s *OpenAIGatewayService) WithOpenAITurnPricingContext(ctx context.Context, groupID *int64) (context.Context, time.Time) {
+// turnModel 是本 turn 请求体里的模型（连接内可切模型），D 的逐模型因子按它重算。
+func (s *OpenAIGatewayService) WithOpenAITurnPricingContext(ctx context.Context, groupID *int64, turnModel string) (context.Context, time.Time) {
 	pricingAt := timezone.Now()
 	ctx = context.WithValue(ctx, openAIPricingAtCtxKey{}, pricingAt)
 	if _, suppressed := ctx.Value(openAIProfitControlSuppressCtxKey{}).(struct{}); suppressed {
@@ -159,7 +189,7 @@ func (s *OpenAIGatewayService) WithOpenAITurnPricingContext(ctx context.Context,
 		gid := existing.groupID
 		groupID = &gid
 	}
-	gate := s.resolveOpenAIProfitControlGate(ctx, groupID)
+	gate := s.resolveOpenAIProfitControlGate(ctx, groupID, turnModel)
 	if gate == nil {
 		// 分组已关门（或配置读取失败 fail-open）：清除旧 turn 的门，后续 turn
 		// 按无门放行，与 HTTP 路径的开关语义一致。
@@ -191,16 +221,16 @@ func OpenAIPricingAtFromContext(ctx context.Context) time.Time {
 // 装进 ctx。抑制标记、未启用/非 openai 分组/无法取到分组配置时原样返回 ctx
 // （门不存在，全部否决点自动放行，既有行为零变化）。ctx 已有同分组门时直接
 // 复用：同一请求的全部 failover 重入共享同一阈值。
-func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, groupID *int64) context.Context {
+func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, groupID *int64, requestedModel string) context.Context {
 	if _, suppressed := ctx.Value(openAIProfitControlSuppressCtxKey{}).(struct{}); suppressed {
 		return ctx
 	}
 	if groupID != nil {
-		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing != nil && existing.groupID == *groupID {
+		if existing, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate); ok && existing.matches(*groupID, requestedModel) {
 			return ctx
 		}
 	}
-	gate := s.resolveOpenAIProfitControlGate(ctx, groupID)
+	gate := s.resolveOpenAIProfitControlGate(ctx, groupID, requestedModel)
 	if gate == nil {
 		// 被调度分组无门（未启用/非 openai/配置读取失败）而 ctx 带着其他分组的
 		// 请求门时清除之：门配置取被调度分组，父分组阈值不得泄漏到成员分组
@@ -214,7 +244,7 @@ func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, 
 	return context.WithValue(ctx, openAIProfitControlGateCtxKey{}, gate)
 }
 
-func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Context, groupID *int64) *openAIProfitControlGate {
+func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Context, groupID *int64, requestedModel string) *openAIProfitControlGate {
 	if s == nil || groupID == nil || *groupID <= 0 {
 		return nil
 	}
@@ -253,20 +283,12 @@ func (s *OpenAIGatewayService) resolveOpenAIProfitControlGate(ctx context.Contex
 	if ctxGroup, ok := ctx.Value(ctxkey.Group).(*Group); ok && IsGroupContextValid(ctxGroup) {
 		billingGroup = ctxGroup
 	}
-	downstream := billingGroup.RateMultiplier
+	resolvedRate := billingGroup.RateMultiplier
 	if userID, _ := ctx.Value(ctxkey.UserID).(int64); userID > 0 {
-		downstream = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
+		resolvedRate = s.ResolveUserGroupRateMultiplier(ctx, userID, billingGroup.ID, billingGroup.RateMultiplier)
 	}
-	downstream *= billingGroup.PeakMultiplierAt(pricingAt)
-
-	deduction := group.ProfitMinMargin + group.ProfitSafetyBuffer
-	threshold := clampProfitControlThreshold(downstream * (1 - deduction))
-	return &openAIProfitControlGate{
-		groupID:   *groupID,
-		platform:  group.Platform,
-		threshold: threshold,
-		pricingAt: pricingAt,
-	}
+	// D 的组合（含高峰因子与逐模型因子）只在 newProfitControlGate 里写一次，与 gateway 路径共用。
+	return newProfitControlGate(group, billingGroup, resolvedRate, pricingAt, requestedModel)
 }
 
 // attachSelectionProfitGate 把调度上下文里生效的利润门记录到选号结果上。门在

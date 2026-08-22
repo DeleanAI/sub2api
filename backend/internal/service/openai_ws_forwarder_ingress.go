@@ -502,7 +502,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				}
 			}
 			if hooks != nil && hooks.BeforeTurn != nil {
-				if err := hooks.BeforeTurn(turn); err != nil {
+				if err := hooks.BeforeTurn(turn, currentBridgePayload.originalModel); err != nil {
 					return err
 				}
 			}
@@ -1298,7 +1298,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			}
 		}
 		if !skipBeforeTurn && hooks != nil && hooks.BeforeTurn != nil {
-			if err := hooks.BeforeTurn(turn); err != nil {
+			if err := hooks.BeforeTurn(turn, currentOriginalModel); err != nil {
 				return err
 			}
 		}

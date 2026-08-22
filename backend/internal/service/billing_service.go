@@ -202,6 +202,15 @@ type CostBreakdown struct {
 	ActualCost                float64 // 应用倍率后的实际费用
 	BillingMode               string  // 计费模式（"token"/"per_request"/"image"），由 CalculateCostUnified 填充
 	LongContextBillingApplied bool
+	// RateMultiplier 是本次实际施加的基础倍率（用户覆盖 ?? 分组默认，token 计费已含高峰因子；
+	// 负值已钳为 0），由 CalculateCostUnified 填充，仅供不变式校验与落账快照。
+	RateMultiplier float64
+	// ModelRateMultiplier 是分组逐模型倍率因子，由 CalculateCostUnified 填充：
+	// token 计费按 Group.ModelRateMultiplierFor(Model) 解析，未命中为 1；按次/图片/视频计费恒为 1。
+	// 不变式：ActualCost = TotalCost × RateMultiplier × ModelRateMultiplier
+	//（长上下文阈值拆分的超额部分另乘 extraMultiplier，是既有例外）。
+	// 零值表示结果未经统一入口评估（CalculateImageCost 等直接构造的结果）。
+	ModelRateMultiplier float64
 }
 
 func applyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
@@ -1138,25 +1147,59 @@ type CostInput struct {
 	Resolver                  *ModelPricingResolver // 定价解析器
 	Resolved                  *ResolvedPricing      // 可选：预解析的定价结果（避免重复 Resolve 调用）
 	LongContextBillingEnabled *bool
+	// LongContextThreshold / LongContextMultiplier：无 Resolver 的内置定价路径上，
+	// 超过阈值的输入部分按 LongContextMultiplier 倍计费（Gemini 200K 阈值语义，见
+	// CalculateCostWithLongContext）。由网关按分组 LongContextPricingEnabled 决定是否传入。
+	LongContextThreshold  int
+	LongContextMultiplier float64
 }
 
-// CalculateCostUnified 统一计费入口，支持三种计费模式。
-// 使用 ModelPricingResolver 解析定价，然后根据 BillingMode 分发计算。
+// CalculateCostUnified 是带分组的 token 计费唯一入口，支持三种计费模式：
+// 先按 Resolver/内置定价/长上下文阈值拆分算出基础结果，再在唯一的一处乘入分组逐模型
+// 倍率因子（applyGroupModelRateMultiplier）。两条网关（Anthropic 与 OpenAI/Grok）计算
+// 任何 token 费用都必须经过这里——任何绕过本函数的路径都会让逐模型倍率在该平台静默失效。
 func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, error) {
+	// 保存时强制 > 0；若仍有负数泄漏（缓存/迁移残留），按 0 处理避免按 1x 误扣。
+	if input.RateMultiplier < 0 {
+		input.RateMultiplier = 0
+	}
+	breakdown, err := s.calculateBaseCostUnified(input)
+	if err != nil || breakdown == nil {
+		return breakdown, err
+	}
+	applyGroupModelRateMultiplier(breakdown, input)
+	return breakdown, nil
+}
+
+// calculateBaseCostUnified 计算不含逐模型因子的基础费用（ActualCost = TotalCost × RateMultiplier）。
+func (s *BillingService) calculateBaseCostUnified(input CostInput) (*CostBreakdown, error) {
 	if input.Resolver == nil {
-		// 无 Resolver，回退到旧路径
-		applyLongContextBilling := true
-		if input.LongContextBillingEnabled != nil {
-			applyLongContextBilling = *input.LongContextBillingEnabled
+		// 无 Resolver：内置定价路径。阈值拆分优先（Gemini 等"超阈值部分加倍"），
+		// 否则按官方长上下文阶梯策略计费。两者都只产出 token 计费结果。
+		var breakdown *CostBreakdown
+		var err error
+		if input.LongContextThreshold > 0 {
+			breakdown, err = s.CalculateCostWithLongContext(
+				input.Model, input.Tokens, input.RateMultiplier, input.LongContextThreshold, input.LongContextMultiplier,
+			)
+		} else {
+			applyLongContextBilling := true
+			if input.LongContextBillingEnabled != nil {
+				applyLongContextBilling = *input.LongContextBillingEnabled
+			}
+			breakdown, err = s.calculateCostInternalWithPolicy(
+				input.Model,
+				input.Tokens,
+				input.RateMultiplier,
+				input.ServiceTier,
+				nil,
+				applyLongContextBilling,
+			)
 		}
-		return s.calculateCostInternalWithPolicy(
-			input.Model,
-			input.Tokens,
-			input.RateMultiplier,
-			input.ServiceTier,
-			nil,
-			applyLongContextBilling,
-		)
+		if err == nil && breakdown != nil {
+			breakdown.BillingMode = string(BillingModeToken)
+		}
+		return breakdown, err
 	}
 
 	// 优先使用预解析结果，避免重复 Resolve 调用
@@ -1167,11 +1210,6 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 			GroupID: input.GroupID,
 			Group:   input.Group,
 		})
-	}
-
-	// 保存时强制 > 0；若仍有负数泄漏（缓存/迁移残留），按 0 处理避免按 1x 误扣。
-	if input.RateMultiplier < 0 {
-		input.RateMultiplier = 0
 	}
 
 	var breakdown *CostBreakdown
@@ -1189,6 +1227,22 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 		}
 	}
 	return breakdown, err
+}
+
+// applyGroupModelRateMultiplier 是分组逐模型倍率在计费侧的唯一施加点：
+// 只对 token 计费生效（按次/图片/视频走各自独立倍率，因子记 1），
+// ActualCost 乘入因子，并把实际施加的两个倍率写回 breakdown 供落账快照与不变式校验。
+func applyGroupModelRateMultiplier(breakdown *CostBreakdown, input CostInput) {
+	breakdown.RateMultiplier = input.RateMultiplier
+	breakdown.ModelRateMultiplier = 1
+	if breakdown.BillingMode != string(BillingModeToken) {
+		return
+	}
+	factor := resolveGroupModelRateMultiplier(input.Group, input.Model)
+	breakdown.ModelRateMultiplier = factor
+	if factor != 1 {
+		breakdown.ActualCost *= factor
+	}
 }
 
 // calculateTokenCost 按 token 区间计费
@@ -1390,16 +1444,6 @@ func (s *BillingService) CalculateCost(model string, tokens UsageTokens, rateMul
 
 func (s *BillingService) CalculateCostWithServiceTier(model string, tokens UsageTokens, rateMultiplier float64, serviceTier string) (*CostBreakdown, error) {
 	return s.calculateCostInternal(model, tokens, rateMultiplier, serviceTier, nil)
-}
-
-func (s *BillingService) calculateCostWithServiceTierPolicy(
-	model string,
-	tokens UsageTokens,
-	rateMultiplier float64,
-	serviceTier string,
-	longContextBillingEnabled bool,
-) (*CostBreakdown, error) {
-	return s.calculateCostInternalWithPolicy(model, tokens, rateMultiplier, serviceTier, nil, longContextBillingEnabled)
 }
 
 func (s *BillingService) calculateCostInternal(model string, tokens UsageTokens, rateMultiplier float64, serviceTier string, channelPricing *ChannelModelPricing) (*CostBreakdown, error) {

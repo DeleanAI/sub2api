@@ -2159,7 +2159,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	// Images 调度不装门；其他使用 Responses 能力的文本请求（包括原生远程压缩）
 	// 仍须装门。其余媒体路径通过 WithOpenAIProfitControlSuppressed 显式跳过。
 	if requiredImageCapability == "" {
-		ctx = s.withOpenAIProfitControlGate(ctx, groupID)
+		ctx = s.withOpenAIProfitControlGate(ctx, groupID, requestedModel)
 	}
 	platform = NormalizeOpenAICompatiblePlatform(platform)
 	decision := OpenAIAccountScheduleDecision{}

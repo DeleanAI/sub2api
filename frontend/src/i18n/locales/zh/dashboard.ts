@@ -290,6 +290,8 @@ export default {
     resetNow: '现在',
     resetPending: '待刷新',
     accountMultiplier: '账号倍率',
+    modelMultiplier: '模型倍率',
+    modelMultiplierNotEvaluated: '本条未评估逐模型倍率（按 1 计）',
     avgDuration: '平均耗时',
     inSelectedRange: '所选范围内',
     perRequest: '每次请求',

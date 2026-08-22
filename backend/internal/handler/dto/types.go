@@ -101,6 +101,9 @@ type Group struct {
 	WeeklyLimitUSD            *float64 `json:"weekly_limit_usd"`
 	MonthlyLimitUSD           *float64 `json:"monthly_limit_usd"`
 	LongContextPricingEnabled bool     `json:"long_context_pricing_enabled"`
+	// ModelRateMultipliers 分组逐模型倍率有序列表：token 计费时第一条命中的倍率乘入有效倍率。
+	// 和 rate_multiplier 一样是用户承担的价格构成，因此放在用户可见的基础 DTO 里。
+	ModelRateMultipliers []service.GroupModelRateMultiplier `json:"model_rate_multipliers"`
 
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration         bool    `json:"allow_image_generation"`
@@ -513,6 +516,9 @@ type UsageLog struct {
 	ActualCost                float64 `json:"actual_cost"`
 	RateMultiplier            float64 `json:"rate_multiplier"`
 	LongContextBillingApplied bool    `json:"long_context_billing_applied"`
+	// ModelRateMultiplier 分组逐模型倍率快照（null 表示该行未评估逐模型倍率，按 1 处理）。
+	// 用户自己的账单里也展示：它和 rate_multiplier 一样是用户实际承担的价格构成。
+	ModelRateMultiplier *float64 `json:"model_rate_multiplier"`
 
 	BillingType  int8   `json:"billing_type"`
 	RequestType  string `json:"request_type"`

@@ -1011,6 +1011,22 @@ export default {
         longContextHint: '勾选后按渠道区间或官方预设阶梯计费；关闭后默认按第一档，账号显式开启时除外。',
         add: '添加模型价格'
       },
+      modelRateMultipliers: {
+        title: '分组逐模型倍率',
+        description:
+          '按模型在分组倍率之上再乘一个因子：有效倍率 = (用户专属 ?? 分组倍率) × 高峰因子 × 逐模型因子。仅作用于 token 计费；图片/视频按次倍率不受影响。价格仍跟随价格表同步，不像逐模型定价那样写死绝对价。',
+        add: '添加倍率规则',
+        empty: '未配置逐模型倍率，所有模型按分组倍率计费。',
+        pattern: '模型模式',
+        patternPlaceholder: '如 claude-opus-* 或 gpt-5.4',
+        multiplier: '倍率因子',
+        preview: '最终倍率预览',
+        previewFormula: '{base} × {factor} = {effective}',
+        orderHint: '按顺序匹配，第一条命中的规则生效；请把更具体的模式放在通配规则之前。支持精确模型名与末尾 * 通配，大小写不敏感。',
+        patternRequired: '模型模式不能为空',
+        multiplierRange: '倍率因子应大于 0 且不超过 100',
+        duplicatePattern: '模型模式重复（大小写不敏感）'
+      },
       voicePricing: {
         title: 'Grok Voice 定价',
         description: '分组级 Voice realtime / TTS / STT 单价（USD）。留空表示未配置。',
