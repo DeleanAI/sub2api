@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -59,6 +60,15 @@ func main() {
 	// 运维子命令（sub2api <command> ...）先于 flag 解析分发；见 cli.go。
 	if handled, err := runSubcommand(os.Args[1:], os.Stdout, os.Stderr); handled {
 		if err != nil {
+			var coded *exitCodeError
+			if errors.As(err, &coded) {
+				// 判定结果走退出码（如 migrate plan 的 10/20），不是故障，不走 Fatalf。
+				if coded.message != "" {
+					fmt.Fprintln(os.Stderr, coded.message)
+				}
+				logger.Sync()
+				os.Exit(coded.code)
+			}
 			log.Fatalf("%s: %v", os.Args[1], err)
 		}
 		return

@@ -22,6 +22,20 @@ type subcommand struct {
 
 var subcommands = map[string]subcommand{}
 
+// exitCodeError 让子命令把判定结果编码成进程退出码，供脚本与 CI 门禁直接消费。
+// message 非空时由 main 打印到 stderr；为空则静默退出（例如 --quiet）。
+type exitCodeError struct {
+	code    int
+	message string
+}
+
+func (e *exitCodeError) Error() string {
+	if e.message == "" {
+		return fmt.Sprintf("exit code %d", e.code)
+	}
+	return e.message
+}
+
 func registerSubcommand(cmd subcommand) {
 	name := strings.TrimSpace(cmd.name)
 	if name == "" || cmd.run == nil {

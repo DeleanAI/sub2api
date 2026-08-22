@@ -152,6 +152,36 @@ When using Docker Compose with `AUTO_SETUP=true`:
 - `schema_migrations` tracks applied migrations (filename + checksum).
 - Migrations are forward-only; rollback requires a DB backup restore or a manual compensating SQL script.
 
+**Rolling updates and destructive migrations**
+
+- Migrations run on **every start** of the `sub2api` binary (`backend/internal/repository/ent.go` → `applyMigrationsFS`), serialised across instances by a PostgreSQL advisory lock. This is not limited to the setup path.
+- Some migrations are destructive (`090_drop_sora.sql`, `136_remove_ops_retry_replay.sql`, … drop tables and columns). Reverting the image does not revert the schema; the only way back from a destructive migration is restoring the backup taken before the upgrade.
+- During a rolling update the old and new versions run concurrently. The moment the new version applies a destructive migration, the old replicas are still reading the schema it just removed — a hard error on every affected request, not a degradation.
+
+Gate every upgrade with the **new** image before rolling it out. The command reads the same config/env as the server, only reads `schema_migrations`, and applies nothing:
+
+```bash
+# Docker (same .env as the service; the entrypoint needs the explicit binary path)
+docker run --rm --env-file .env weishaw/sub2api:<new-tag> /app/sub2api migrate plan
+
+# Docker Compose (service already defined; --no-deps keeps postgres/redis untouched)
+docker compose run --rm --no-deps sub2api /app/sub2api migrate plan
+
+# Binary install: run from the service working directory so the same config.yaml is found
+/opt/sub2api/sub2api migrate plan
+```
+
+| Exit code | Meaning | What to do |
+|-----------|---------|------------|
+| `0` | nothing pending | roll as usual |
+| `10` | every pending migration is `additive` or `data-rewrite` | rolling update is safe; `data-rewrite` rows are listed so you know which tables get rewritten |
+| `20` | at least one pending migration is `destructive` | take a database backup, scale to **zero** replicas (or a single replica), start one instance of the new image so the migrations apply exactly once, then scale back up |
+| `1` | error, or an applied migration no longer matches the checksum recorded in `schema_migrations` | the new image will refuse to start against this database; fix that first |
+
+`migrate plan --json` prints the same report as JSON for scripts, `--quiet` prints nothing and only sets the exit code. The report lists every pending file, its kind and the statements behind the verdict, plus the number of applied migrations and the last applied filename; migrations recorded in the database but unknown to the image (you are rolling back) are printed as a warning.
+
+The classifier only reads the `-- +goose Up` part of each file and errs on the side of flagging. In particular the fork-local repair migration `229_maycluster_repair_goose_down_side_effects.sql` is reported as destructive on databases created by upstream releases (it conditionally drops the `users.wechat` column an older runner bug resurrected), so the first upgrade to a build containing it must be a stop-the-world upgrade. The contributor-side rule (expand/contract: the release that stops using a column must not be the one that drops it) is in `backend/migrations/README.md`.
+
 **Verify `users.allowed_groups` → `user_allowed_groups` backfill**
 
 During the incremental GORM→Ent migration, `users.allowed_groups` (legacy `BIGINT[]`) is being replaced by a normalized join table `user_allowed_groups(user_id, group_id)`.
