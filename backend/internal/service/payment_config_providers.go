@@ -15,6 +15,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/payment"
 	"github.com/Wei-Shaw/sub2api/internal/payment/provider"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/secretcipher"
 )
 
 // validateProviderConfig runs the provider's constructor to surface config-level
@@ -489,35 +490,40 @@ func (s *PaymentConfigService) mergeConfig(ctx context.Context, id int64, newCon
 	return existing, nil
 }
 
-// decryptConfig parses a stored provider config.
-// New records are plaintext JSON; legacy records are AES-256-GCM ciphertext
-// ("iv:authTag:ciphertext"). Values that cannot be parsed as either — including
-// legacy ciphertext with no/invalid TOTP_ENCRYPTION_KEY — are treated as empty,
-// letting the admin re-enter the config via the UI to complete the migration.
+// decryptConfig parses a stored provider config via payment.DecodeProviderConfig.
 //
-// TODO(deprecated-legacy-ciphertext): The AES fallback branch is a transitional
-// shim for pre-plaintext records. Remove it (and the encryptionKey field) after
-// a few releases once all live deployments have re-saved their provider configs.
+// Values that cannot be read are still treated as empty so the admin can re-enter
+// the config via the UI — but a config that only looks unset because this
+// instance holds the wrong encryption key is logged at error level, with the
+// key ids involved, instead of being indistinguishable from "never configured".
+// Legacy ciphertext that still decrypts is logged at warn level: it becomes
+// unreadable once the key that wrote it retires, and
+// `sub2api encryption-key rotate` converts it to plaintext JSON.
 func (s *PaymentConfigService) decryptConfig(stored string) (map[string]string, error) {
-	if stored == "" {
+	keys := s.legacyDecryptKeys()
+	cfg, legacy, err := payment.DecodeProviderConfig(stored, keys)
+	if err != nil {
+		slog.Error("payment provider config unreadable; treating as empty so it can be re-entered. "+
+			"If TOTP_ENCRYPTION_KEY was changed, put the old key in TOTP_ENCRYPTION_KEY_PREVIOUS and run `sub2api encryption-key rotate`",
+			"error", err, "configured_key_ids", legacyKeyIDs(keys))
 		return nil, nil
 	}
-	var cfg map[string]string
-	if err := json.Unmarshal([]byte(stored), &cfg); err == nil {
-		return cfg, nil
+	if legacy {
+		slog.Warn("payment provider config is still legacy ciphertext; run `sub2api encryption-key rotate` (or re-save it) to convert it to the current format",
+			"configured_key_ids", legacyKeyIDs(keys))
 	}
-	// Deprecated: legacy AES-256-GCM ciphertext fallback — scheduled for removal.
-	if len(s.encryptionKey) == payment.AES256KeySize {
-		//nolint:staticcheck // SA1019: intentional legacy fallback, scheduled for removal
-		if plaintext, err := payment.Decrypt(stored, s.encryptionKey); err == nil {
-			if err := json.Unmarshal([]byte(plaintext), &cfg); err == nil {
-				return cfg, nil
-			}
+	return cfg, nil
+}
+
+// legacyKeyIDs 返回密钥的短标识，供日志定位是哪把钥匙缺席。
+func legacyKeyIDs(keys [][]byte) []string {
+	ids := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if len(key) == payment.AES256KeySize {
+			ids = append(ids, secretcipher.KeyID(key))
 		}
 	}
-	slog.Warn("payment provider config unreadable, treating as empty for re-entry",
-		"stored_len", len(stored))
-	return nil, nil
+	return ids
 }
 
 func (s *PaymentConfigService) DeleteProviderInstance(ctx context.Context, id int64) error {

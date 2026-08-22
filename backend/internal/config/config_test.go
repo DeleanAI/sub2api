@@ -14,6 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testEncryptionKey 是测试用的固定落库密文密钥：默认 server.mode=release，
+// 没有它配置加载会被密钥策略拒绝。
+const testEncryptionKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func resetViperWithJWTSecret(t *testing.T) {
 	t.Helper()
 	viper.Reset()
@@ -21,6 +25,8 @@ func resetViperWithJWTSecret(t *testing.T) {
 	t.Setenv("CONFIG_FILE", "")
 	t.Setenv("DATA_DIR", "")
 	t.Setenv("JWT_SECRET", strings.Repeat("x", 32))
+	t.Setenv("TOTP_ENCRYPTION_KEY", testEncryptionKey)
+	t.Setenv("TOTP_ENCRYPTION_KEY_PREVIOUS", "")
 }
 
 func TestLoadTimezonePrecedence(t *testing.T) {
@@ -331,10 +337,7 @@ func TestLoadReturnsErrorForMissingConfigFile(t *testing.T) {
 }
 
 func TestLoadForBootstrapAllowsMissingJWTSecret(t *testing.T) {
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-	t.Setenv("CONFIG_FILE", "")
-	t.Setenv("DATA_DIR", "")
+	resetViperWithJWTSecret(t)
 	t.Setenv("JWT_SECRET", "")
 
 	cfg, err := LoadForBootstrap()

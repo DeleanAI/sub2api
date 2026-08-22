@@ -922,9 +922,10 @@ func ProvideUserPlatformQuotaUsageFlusher(cfg *config.Config, cache BillingCache
 }
 
 // ProvidePaymentConfigService wraps NewPaymentConfigService to accept the named
-// payment.EncryptionKey type instead of raw []byte, avoiding Wire ambiguity.
-func ProvidePaymentConfigService(entClient *dbent.Client, settingRepo SettingRepository, key payment.EncryptionKey) *PaymentConfigService {
-	return NewPaymentConfigService(entClient, settingRepo, []byte(key))
+// payment.EncryptionKey / PreviousEncryptionKeys types instead of raw []byte,
+// avoiding Wire ambiguity.
+func ProvidePaymentConfigService(entClient *dbent.Client, settingRepo SettingRepository, key payment.EncryptionKey, previous payment.PreviousEncryptionKeys) *PaymentConfigService {
+	return NewPaymentConfigService(entClient, settingRepo, []byte(key), previous...)
 }
 
 // ProvideBalanceNotifyService creates BalanceNotifyService

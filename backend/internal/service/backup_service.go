@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -23,10 +24,11 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/secretcipher"
 )
 
 const (
-	settingKeyBackupS3Config = "backup_s3_config"
+	SettingKeyBackupS3Config = "backup_s3_config"
 	settingKeyBackupSchedule = "backup_schedule"
 	settingKeyBackupRecords  = "backup_records"
 
@@ -381,7 +383,7 @@ func (s *BackupService) UpdateS3Config(ctx context.Context, cfg BackupS3Config) 
 	if err != nil {
 		return nil, fmt.Errorf("marshal s3 config: %w", err)
 	}
-	if err := s.settingRepo.Set(ctx, settingKeyBackupS3Config, string(data)); err != nil {
+	if err := s.settingRepo.Set(ctx, SettingKeyBackupS3Config, string(data)); err != nil {
 		return nil, fmt.Errorf("save s3 config: %w", err)
 	}
 
@@ -1241,7 +1243,7 @@ func (s *BackupService) GetBackupDownloadURL(ctx context.Context, backupID strin
 // ─── 内部方法 ───
 
 func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, error) {
-	raw, err := s.settingRepo.GetValue(ctx, settingKeyBackupS3Config)
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyBackupS3Config)
 	if err != nil || raw == "" {
 		return nil, nil //nolint:nilnil // no config is a valid state
 	}
@@ -1249,17 +1251,29 @@ func (s *BackupService) loadS3Config(ctx context.Context) (*BackupS3Config, erro
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		return nil, ErrBackupS3ConfigCorrupt
 	}
-	// 解密 SecretAccessKey
 	if cfg.SecretAccessKey != "" {
-		decrypted, err := s.encryptor.Decrypt(cfg.SecretAccessKey)
-		if err != nil {
-			// 兼容未加密的旧数据：如果解密失败，保持原值
-			logger.LegacyPrintf("service.backup", "[Backup] S3 SecretAccessKey 解密失败（可能是旧的未加密数据）: %v", err)
-		} else {
-			cfg.SecretAccessKey = decrypted
-		}
+		cfg.SecretAccessKey = decryptStoredSecret(s.encryptor, cfg.SecretAccessKey, "backup s3 secret_access_key")
 	}
 	return &cfg, nil
+}
+
+// decryptStoredSecret 解密落库的 S3 密钥。这两处（备份、图片存储）历史上存过
+// 未加密的明文，所以解不开时沿用原值让管理员重新录入，而不是让整个设置页报错。
+// 用密文格式把两种情况分开：带版本前缀却解不开，说明密钥环里没有写它的那把
+// 钥匙，记 error；没有前缀才可能是历史明文，记 warn。
+func decryptStoredSecret(encryptor SecretEncryptor, stored, what string) string {
+	plain, err := encryptor.Decrypt(stored)
+	if err == nil {
+		return plain
+	}
+	if secretcipher.IsVersioned(stored) {
+		slog.Error(what+": stored ciphertext cannot be decrypted with this instance's encryption key ring; keeping the raw value, which will fail downstream until the secret is re-entered or the key ring is fixed",
+			"error", err)
+	} else {
+		slog.Warn(what+": stored value is not current-format ciphertext and does not decrypt; treating it as legacy plaintext",
+			"error", err)
+	}
+	return stored
 }
 
 func (s *BackupService) getOrCreateStore(ctx context.Context, cfg *BackupS3Config) (BackupObjectStore, error) {

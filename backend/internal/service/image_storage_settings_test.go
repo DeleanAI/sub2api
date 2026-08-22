@@ -93,7 +93,7 @@ func seedBackupS3(t *testing.T, repo *stubSettingRepo, cfg BackupS3Config) {
 	cfg.SecretAccessKey = "enc:" + cfg.SecretAccessKey
 	data, err := json.Marshal(cfg)
 	require.NoError(t, err)
-	require.NoError(t, repo.Set(context.Background(), settingKeyBackupS3Config, string(data)))
+	require.NoError(t, repo.Set(context.Background(), SettingKeyBackupS3Config, string(data)))
 }
 
 // The admin switch must take effect without a restart: that is the entire point
@@ -151,7 +151,7 @@ func TestImageStorageSettingsReuseBackupCredentials(t *testing.T) {
 	require.Equal(t, "images/", got.Prefix, "images stay under their own prefix so they never collide with backups/")
 
 	// Reusing must not duplicate the secret into a second row.
-	raw, err := repo.GetValue(ctx, settingKeyImageStorageConfig)
+	raw, err := repo.GetValue(ctx, SettingKeyImageStorageConfig)
 	require.NoError(t, err)
 	require.NotContains(t, raw, "backup-sk")
 	require.NotContains(t, raw, "enc:")
@@ -169,7 +169,7 @@ func TestImageStorageSettingsOwnCredentialsAreEncryptedAndMasked(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, saved.SecretAccessKey, "the response must never echo the secret back")
 
-	raw, err := repo.GetValue(ctx, settingKeyImageStorageConfig)
+	raw, err := repo.GetValue(ctx, SettingKeyImageStorageConfig)
 	require.NoError(t, err)
 	require.NotContains(t, raw, `"secret_access_key":"super-secret"`, "the secret must be encrypted at rest")
 	require.Contains(t, raw, "enc:super-secret")
@@ -208,7 +208,7 @@ func TestImageStorageSettingsRejectSecretWithEphemeralKey(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrSecretEncryptionKeyNotConfigured)
 
-	raw, _ := repo.GetValue(ctx, settingKeyImageStorageConfig)
+	raw, _ := repo.GetValue(ctx, SettingKeyImageStorageConfig)
 	require.Empty(t, raw, "nothing must be persisted when the secret is rejected")
 	require.Empty(t, *built)
 

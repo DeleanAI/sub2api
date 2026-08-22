@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"math/rand/v2"
 	"net/http"
@@ -865,6 +866,9 @@ func (s *OllamaCloudUsageService) refreshLoadedAccount(ctx context.Context, acco
 	}
 	cookie, err := s.encryptor.Decrypt(ciphertext)
 	if err != nil {
+		// 对外只说"解不开"，原因（缺哪把钥匙）进日志：这是密钥环配置问题，不是会话过期。
+		slog.Error("ollama_cloud_usage: stored web session cannot be decrypted with this instance's encryption key ring",
+			"account_id", account.ID, "error", err)
 		return nil, infraerrors.ServiceUnavailable("OLLAMA_CLOUD_USAGE_SESSION_DECRYPT_FAILED", "stored Ollama web session cannot be decrypted")
 	}
 	cookie, err = normalizeOllamaCloudUsageCookie(cookie)
