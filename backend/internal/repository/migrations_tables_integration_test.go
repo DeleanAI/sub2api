@@ -139,7 +139,11 @@ var (
 	reRawSQLFunctionFrom = regexp.MustCompile(`\b(?:EXTRACT|SUBSTRING|TRIM|OVERLAY|POSITION)\s*\([^)]*\)`)
 	reRawSQLDistinctFrom = regexp.MustCompile(`\bDISTINCT\s+FROM\b`)
 	// 同一文件里先用 to_regclass 探测过存在性的表是条件引用，不要求存在
-	reRawSQLRegclass = regexp.MustCompile(`to_regclass\(\s*'(?:public\.)?([A-Za-z_][A-Za-z0-9_]*)'\s*\)`)
+	// reRawSQLStatementStart 判断一段字面量是不是 SQL（或拼接 SQL 的片段）：去掉前导空白和
+	// 括号后必须以语句/子句关键字或注释开头。没有这道门，日志文案里的
+	// "SELECT FOR UPDATE is unavailable" 会被当成 `UPDATE is` 抽出一张叫 is 的表。
+	reRawSQLStatementStart = regexp.MustCompile(`^[\s(]*(?i:SELECT|INSERT|UPDATE|DELETE|WITH|TRUNCATE|FROM|JOIN|INNER|LEFT|RIGHT|FULL|CROSS|WHERE|AND|OR|ON|SET|VALUES|RETURNING|ORDER|GROUP|HAVING|LIMIT|OFFSET|UNION|CREATE|ALTER|DROP|LOCK|DO|BEGIN|COMMIT)\b|^[\s(]*(?:--|/\*|,)`)
+	reRawSQLRegclass       = regexp.MustCompile(`to_regclass\(\s*'(?:public\.)?([A-Za-z_][A-Za-z0-9_]*)'\s*\)`)
 )
 
 // rawSQLTableExpectations 解析 backend/internal 下全部非测试 Go 源码，从字符串字面量里抽出
@@ -209,6 +213,9 @@ func rawSQLTableExpectations(t *testing.T) []tableExpectation {
 // rawSQLTablesIn 从一段文本里抽出被 FROM/JOIN/INSERT INTO/UPDATE/DELETE FROM/TRUNCATE 点名的表。
 // 能用机械规则解释掉的标识符（关键字、函数调用、系统目录、alias.column、同文件里的 CTE）都不算。
 func rawSQLTablesIn(text string, ctes map[string]bool) []string {
+	if !reRawSQLStatementStart.MatchString(text) {
+		return nil // 普通文案（日志、错误信息），不是 SQL
+	}
 	cleaned := reRawSQLFunctionFrom.ReplaceAllString(text, " ")
 	cleaned = reRawSQLDistinctFrom.ReplaceAllString(cleaned, "DISTINCT_FROM")
 
