@@ -56,6 +56,14 @@ func main() {
 	logger.InitBootstrap()
 	defer logger.Sync()
 
+	// 运维子命令（sub2api <command> ...）先于 flag 解析分发；见 cli.go。
+	if handled, err := runSubcommand(os.Args[1:], os.Stdout, os.Stderr); handled {
+		if err != nil {
+			log.Fatalf("%s: %v", os.Args[1], err)
+		}
+		return
+	}
+
 	// Parse command line flags
 	setupMode := flag.Bool("setup", false, "Run setup wizard in CLI mode")
 	showVersion := flag.Bool("version", false, "Show version information")
