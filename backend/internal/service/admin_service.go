@@ -220,6 +220,8 @@ type CreateGroupInput struct {
 	MonthlyLimitUSD           *float64 // 月限额 (USD)
 	LongContextPricingEnabled bool
 	ModelPricing              []ChannelModelPricing
+	// ModelRateMultipliers 分组逐模型倍率有序列表（nil/空均表示未配置）。
+	ModelRateMultipliers []GroupModelRateMultiplier
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration         bool
 	AllowBatchImageGeneration    bool
@@ -295,6 +297,8 @@ type UpdateGroupInput struct {
 	MonthlyLimitUSD           *float64 // 月限额 (USD)
 	LongContextPricingEnabled *bool
 	ModelPricing              *[]ChannelModelPricing
+	// ModelRateMultipliers nil 表示不修改，空数组表示清空，非空数组表示整体替换。
+	ModelRateMultipliers *[]GroupModelRateMultiplier
 	// 图片生成计费配置（仅 antigravity 平台使用）
 	AllowImageGeneration         *bool
 	AllowBatchImageGeneration    *bool

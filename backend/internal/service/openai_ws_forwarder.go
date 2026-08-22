@@ -258,8 +258,10 @@ type OpenAIWSIngressHooks struct {
 	// ReasoningEffortMappings rewrites explicit effort values for this WS session.
 	ReasoningEffortMappings []ReasoningEffortMapping
 	TurnStarted             func(turn int, startedAt time.Time)
-	BeforeTurn              func(turn int) error
-	BeforeRequest           func(turn int, payload []byte, originalModel string) error
+	// BeforeTurn 在每个 turn 请求发往上游前调用；originalModel 是本 turn 请求体里的客户端模型
+	//（空表示沿用建连模型），供 turn 级利润门按模型重算 D。
+	BeforeTurn    func(turn int, originalModel string) error
+	BeforeRequest func(turn int, payload []byte, originalModel string) error
 	// MapRequestModel resolves the current turn's client model to the model
 	// that must be written into the upstream response.create frame.
 	MapRequestModel func(turn int, originalModel string) (string, error)

@@ -194,6 +194,11 @@ func (Group) Fields() []ent.Field {
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
 			Comment("分组逐模型定价；优先级高于渠道和内置定价"),
+		// 分组逐模型倍率 (added by migration 229)：与 model_pricing 分列，倍率条目不得进入定价解析链。
+		field.JSON("model_rate_multipliers", json.RawMessage{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).
+			Comment("分组逐模型倍率有序列表 [{model_pattern, multiplier}]；token 计费时第一条命中的倍率乘入有效倍率"),
 
 		// Claude Code 客户端限制 (added by migration 029)
 		field.Bool("claude_code_only").

@@ -3505,7 +3505,7 @@ func TestOpenAIGatewayService_ProxyResponsesWebSocketFromClient_WriteFailBeforeD
 	beforeTurnCalls := make(map[int]int)
 	afterTurnCalls := make(map[int]int)
 	hooks := &OpenAIWSIngressHooks{
-		BeforeTurn: func(turn int) error {
+		BeforeTurn: func(turn int, _ string) error {
 			hooksMu.Lock()
 			beforeTurnCalls[turn]++
 			hooksMu.Unlock()

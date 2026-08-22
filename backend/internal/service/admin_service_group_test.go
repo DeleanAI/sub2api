@@ -1785,3 +1785,88 @@ func TestAdminService_PreviewCompositeRouteUsesExplicitRoutes(t *testing.T) {
 	require.NotNil(t, decision.Route)
 	require.Equal(t, int64(11), decision.Route.ID)
 }
+
+// 分组逐模型倍率：CreateGroup 与 UpdateGroup 共用 NormalizeGroupModelRateMultipliers 做校验与归一化，
+// 两条写路径对同一非法输入必须给出同一 400 reason，对合法输入必须落库归一化后的值。
+func TestAdminService_CreateGroup_NormalizesModelRateMultipliers(t *testing.T) {
+	repo := &groupRepoStubForAdmin{createID: 61}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	group, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+		Name:           "model-rate-group",
+		Platform:       PlatformAnthropic,
+		RateMultiplier: 1,
+		ModelRateMultipliers: []GroupModelRateMultiplier{
+			{ModelPattern: " claude-opus-* ", Multiplier: 2},
+			{ModelPattern: "claude-haiku-*", Multiplier: 0.5},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, repo.created)
+	require.Equal(t, []GroupModelRateMultiplier{
+		{ModelPattern: "claude-opus-*", Multiplier: 2},
+		{ModelPattern: "claude-haiku-*", Multiplier: 0.5},
+	}, group.ModelRateMultipliers)
+}
+
+func TestAdminService_CreateAndUpdateGroup_RejectInvalidModelRateMultipliers(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []GroupModelRateMultiplier
+		reason  string
+	}{
+		{"empty pattern", []GroupModelRateMultiplier{{ModelPattern: " ", Multiplier: 2}}, "GROUP_MODEL_RATE_MULTIPLIER_PATTERN_REQUIRED"},
+		{"zero multiplier", []GroupModelRateMultiplier{{ModelPattern: "gpt-5*", Multiplier: 0}}, "GROUP_MODEL_RATE_MULTIPLIER_OUT_OF_RANGE"},
+		{"above limit", []GroupModelRateMultiplier{{ModelPattern: "gpt-5*", Multiplier: 101}}, "GROUP_MODEL_RATE_MULTIPLIER_OUT_OF_RANGE"},
+		{"duplicate pattern", []GroupModelRateMultiplier{{ModelPattern: "gpt-5*", Multiplier: 1}, {ModelPattern: "GPT-5*", Multiplier: 2}}, "GROUP_MODEL_RATE_MULTIPLIER_DUPLICATE_PATTERN"},
+	}
+	for _, tc := range cases {
+		t.Run("create/"+tc.name, func(t *testing.T) {
+			repo := &groupRepoStubForAdmin{createID: 62}
+			svc := &adminServiceImpl{groupRepo: repo}
+			_, err := svc.CreateGroup(context.Background(), &CreateGroupInput{
+				Name: "bad", Platform: PlatformOpenAI, RateMultiplier: 1, ModelRateMultipliers: tc.entries,
+			})
+			require.Error(t, err)
+			appErr := infraerrors.FromError(err)
+			require.Equal(t, int32(http.StatusBadRequest), appErr.Code)
+			require.Equal(t, tc.reason, appErr.Reason)
+			require.Nil(t, repo.created)
+		})
+		t.Run("update/"+tc.name, func(t *testing.T) {
+			existing := &Group{ID: 1, Name: "existing", Platform: PlatformOpenAI, Status: StatusActive}
+			repo := &groupRepoStubForAdmin{getByID: existing}
+			svc := &adminServiceImpl{groupRepo: repo}
+			entries := tc.entries
+			_, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{ModelRateMultipliers: &entries})
+			require.Error(t, err)
+			appErr := infraerrors.FromError(err)
+			require.Equal(t, int32(http.StatusBadRequest), appErr.Code)
+			require.Equal(t, tc.reason, appErr.Reason)
+			require.Nil(t, repo.updated)
+		})
+	}
+}
+
+func TestAdminService_UpdateGroup_ModelRateMultipliersNilKeepsAndEmptyClears(t *testing.T) {
+	existing := &Group{
+		ID: 1, Name: "existing", Platform: PlatformOpenAI, Status: StatusActive,
+		ModelRateMultipliers: []GroupModelRateMultiplier{{ModelPattern: "gpt-5*", Multiplier: 2}},
+	}
+	repo := &groupRepoStubForAdmin{getByID: existing}
+	svc := &adminServiceImpl{groupRepo: repo}
+
+	updated, err := svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{Name: "renamed"})
+	require.NoError(t, err)
+	require.Equal(t, []GroupModelRateMultiplier{{ModelPattern: "gpt-5*", Multiplier: 2}}, updated.ModelRateMultipliers, "nil 表示不修改")
+
+	empty := []GroupModelRateMultiplier{}
+	updated, err = svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{ModelRateMultipliers: &empty})
+	require.NoError(t, err)
+	require.Empty(t, updated.ModelRateMultipliers, "空数组表示清空")
+
+	replaced := []GroupModelRateMultiplier{{ModelPattern: "gpt-5.4", Multiplier: 3}}
+	updated, err = svc.UpdateGroup(context.Background(), existing.ID, &UpdateGroupInput{ModelRateMultipliers: &replaced})
+	require.NoError(t, err)
+	require.Equal(t, replaced, updated.ModelRateMultipliers, "非空数组整体替换")
+}

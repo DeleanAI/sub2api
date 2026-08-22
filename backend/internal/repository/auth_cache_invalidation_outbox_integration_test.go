@@ -89,9 +89,15 @@ func TestAuthCacheInvalidationTriggers_CoverSecurityMutationsOnly(t *testing.T) 
 	require.NoError(t, err)
 	clear()
 
+	// migration 230 起 groups 触发器按行差异失效：除 updated_at 外任何列变化都入队；
+	// 只有无实际变化的 UPDATE 不入队。
+	_, err = integrationDB.ExecContext(ctx, "UPDATE groups SET name = name WHERE id = $1", group.ID)
+	require.NoError(t, err)
+	require.Zero(t, count(), "no-op group update must not enqueue")
 	_, err = integrationDB.ExecContext(ctx, "UPDATE groups SET name = name || '-cosmetic' WHERE id = $1", group.ID)
 	require.NoError(t, err)
-	require.Zero(t, count(), "cosmetic group update must not enqueue")
+	require.Equal(t, 1, count(), "any real group column change enqueues under the row-diff rule")
+	clear()
 	_, err = integrationDB.ExecContext(ctx, "UPDATE groups SET allow_image_generation = NOT allow_image_generation WHERE id = $1", group.ID)
 	require.NoError(t, err)
 	require.Equal(t, 1, count(), "image-generation permission changes must enqueue bound keys")

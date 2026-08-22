@@ -62,14 +62,14 @@ func TestGatewayProfitControlInstallsForFivePlatformsOnlyOnTokenRequests(t *test
 			groupID := group.ID
 			svc := &GatewayService{}
 
-			tokenCtx := svc.withGatewayProfitControlGate(gatewayProfitTestContext(group), &groupID)
+			tokenCtx := svc.withGatewayProfitControlGate(gatewayProfitTestContext(group), &groupID, "")
 			gate, _ := tokenCtx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
 			require.NotNil(t, gate)
 			require.Equal(t, platform, gate.platform)
 			require.InDelta(t, 0.5, gate.threshold, 1e-12)
 
 			metadataCtx := context.WithValue(context.Background(), ctxkey.Group, group)
-			metadataCtx = svc.withGatewayProfitControlGate(metadataCtx, &groupID)
+			metadataCtx = svc.withGatewayProfitControlGate(metadataCtx, &groupID, "")
 			gate, _ = metadataCtx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
 			require.Nil(t, gate, "未显式标记为 token 请求的入口不得装门")
 		})
@@ -100,7 +100,7 @@ func TestGatewayProfitControlCompositeBillingUsesScheduledMemberConfig(t *testin
 			nil,
 		),
 	}
-	ctx = svc.withGatewayProfitControlGate(ctx, &memberGroup.ID)
+	ctx = svc.withGatewayProfitControlGate(ctx, &memberGroup.ID, "")
 	gate, _ := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
 	require.NotNil(t, gate)
 	require.Equal(t, memberGroup.ID, gate.groupID)
@@ -135,7 +135,7 @@ func TestGatewayProfitControlGroupLoadFailureClearsForeignGate(t *testing.T) {
 		),
 	}
 
-	ctx = svc.withGatewayProfitControlGate(ctx, &targetGroupID)
+	ctx = svc.withGatewayProfitControlGate(ctx, &targetGroupID, "")
 	gate, ok := ctx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
 	require.True(t, ok)
 	require.Nil(t, gate, "加载新分组失败时必须清除其他分组遗留的门")
@@ -276,7 +276,7 @@ func TestGatewayProfitControlStickyVetoKeepsBindingUntilRateRecovers(t *testing.
 	require.Equal(t, expensive.ID, cache.sessionBindings["sticky-profit"], "候选过滤不得覆盖旧粘性绑定")
 
 	require.NoError(t, svc.BindStickySessionAfterProfitAdmission(
-		svc.withGatewayProfitControlGate(ctx, &group.ID),
+		svc.withGatewayProfitControlGate(ctx, &group.ID, ""),
 		&group.ID,
 		"sticky-profit",
 		cheap.ID,
@@ -395,7 +395,7 @@ func TestGatewayProfitControlSelectionCarriesGateToHandlerContext(t *testing.T) 
 	svc := &GatewayService{}
 	expensive := gatewayProfitTestAccount(161, PlatformAnthropic, 0.9, group.ID)
 
-	gateCtx := svc.withGatewayProfitControlGate(gatewayProfitTestContext(group), &group.ID)
+	gateCtx := svc.withGatewayProfitControlGate(gatewayProfitTestContext(group), &group.ID, "")
 	selection, err := svc.newSelectionResult(gateCtx, &expensive, true, nil, nil)
 	require.NoError(t, err)
 	require.True(t, selection.ProfitGateActive(), "选号结果必须携带调度栈内生效的门")
@@ -426,7 +426,7 @@ func TestGatewayProfitControlImageIntentDoesNotDisableGate(t *testing.T) {
 
 	ctx := gatewayProfitTestContext(group)
 	ctx = WithOpenAIImageGenerationIntent(ctx)
-	gateCtx := svc.withGatewayProfitControlGate(ctx, &group.ID)
+	gateCtx := svc.withGatewayProfitControlGate(ctx, &group.ID, "")
 	require.False(t, svc.isGatewayAccountProfitEligible(gateCtx, &expensive),
 		"请求体里的生图声明（含被动 image_gen namespace）不得关闭利润门")
 }

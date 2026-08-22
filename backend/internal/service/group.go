@@ -74,6 +74,10 @@ type Group struct {
 	// Token intervals are selected only when LongContextPricingEnabled is true.
 	LongContextPricingEnabled bool
 	ModelPricing              []ChannelModelPricing
+	// ModelRateMultipliers 是分组逐模型倍率有序列表（groups.model_rate_multipliers）：
+	// token 计费时把第一条命中模型的倍率乘入有效倍率，见 group_model_rate_multiplier.go。
+	// 必须随认证快照缓存（APIKeyAuthGroupSnapshot），否则扣费热路径拿不到。
+	ModelRateMultipliers []GroupModelRateMultiplier
 
 	// Claude Code 客户端限制
 	ClaudeCodeOnly  bool

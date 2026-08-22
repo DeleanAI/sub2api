@@ -166,6 +166,11 @@ type UsageLog struct {
 	LongContextBillingApplied bool
 	// AccountRateMultiplier 账号计费倍率快照（nil 表示历史数据，按 1.0 处理）
 	AccountRateMultiplier *float64
+	// ModelRateMultiplier 分组逐模型倍率快照（usage_logs.model_rate_multiplier）：
+	// 只有经统一计费入口评估过的行才有值（含 1），按次/图片等未评估路径与历史行为 NULL，读侧 NULL ⇒ 1。
+	// 与 RateMultiplier 分列：rate_multiplier 保持既有含义（按 billing_mode 分别是 token/图片/视频倍率），
+	// 不再往里叠加第四种含义。actual_cost = total_cost × rate_multiplier × COALESCE(model_rate_multiplier, 1)。
+	ModelRateMultiplier *float64
 	// AccountStatsCost 账号统计定价预计算费用（nil = 使用默认公式 total_cost × account_rate_multiplier）
 	AccountStatsCost *float64
 
@@ -229,4 +234,15 @@ func (u *UsageLog) SyncRequestTypeAndLegacyFields() {
 	requestType := u.EffectiveRequestType()
 	u.RequestType = requestType
 	u.Stream, u.OpenAIWSMode = ApplyLegacyRequestFields(requestType, u.Stream, u.OpenAIWSMode)
+}
+
+// usageLogModelRateMultiplier 把计费结果里的逐模型倍率因子快照进 usage_logs.model_rate_multiplier。
+// 两条网关的落账路径共用：只有经 CalculateCostUnified 评估过的结果才有值（含 1），
+// 未经统一入口的结果（CalculateImageCost 等直接构造，ModelRateMultiplier 为零值）留 NULL。
+func usageLogModelRateMultiplier(cost *CostBreakdown) *float64 {
+	if cost == nil || cost.ModelRateMultiplier <= 0 {
+		return nil
+	}
+	multiplier := cost.ModelRateMultiplier
+	return &multiplier
 }
