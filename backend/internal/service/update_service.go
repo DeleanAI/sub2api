@@ -65,15 +65,19 @@ type UpdateService struct {
 	githubClient   GitHubReleaseClient
 	currentVersion string
 	buildType      string // "source" for manual builds, "release" for CI builds
+	// policy 是「能否原地替换运行中的二进制」的唯一裁决点；每个会替换二进制的入口
+	// （PerformUpdate / Rollback / RollbackToVersion）在做任何下载或文件操作之前先问它。
+	policy *InAppUpdatePolicy
 }
 
 // NewUpdateService creates a new UpdateService
-func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string) *UpdateService {
+func NewUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, version, buildType string, policy *InAppUpdatePolicy) *UpdateService {
 	return &UpdateService{
 		cache:          cache,
 		githubClient:   githubClient,
 		currentVersion: version,
 		buildType:      buildType,
+		policy:         policy,
 	}
 }
 
@@ -86,6 +90,13 @@ type UpdateInfo struct {
 	Cached         bool         `json:"cached"`
 	Warning        string       `json:"warning,omitempty"`
 	BuildType      string       `json:"build_type"` // "source" or "release"
+
+	// 原地更新策略的实时裁决：UI 据此直接禁用按钮，而不是点了之后才失败。
+	// 这些字段每次调用都重新评估，不随 release 信息一起缓存。
+	InAppUpdateAllowed       bool   `json:"in_app_update_allowed"`
+	InAppUpdateBlockedCode   string `json:"in_app_update_blocked_code,omitempty"`
+	InAppUpdateBlockedReason string `json:"in_app_update_blocked_reason,omitempty"`
+	LiveInstances            int    `json:"live_instances"` // LiveInstancesUnknown(-1) 表示未知
 }
 
 // ReleaseInfo contains GitHub release details
@@ -129,8 +140,23 @@ type GitHubAsset struct {
 	Size               int64  `json:"size"`
 }
 
-// CheckUpdate checks for available updates
+// CheckUpdate checks for available updates and stamps the current in-app update decision.
 func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInfo, error) {
+	info, err := s.lookupLatestRelease(ctx, force)
+	if err != nil {
+		return nil, err
+	}
+
+	decision := s.policy.Evaluate(ctx)
+	info.InAppUpdateAllowed = decision.Allowed
+	info.InAppUpdateBlockedCode = string(decision.BlockCode)
+	info.InAppUpdateBlockedReason = decision.BlockReason
+	info.LiveInstances = decision.LiveInstances
+	return info, nil
+}
+
+// lookupLatestRelease resolves the latest release info from cache or GitHub.
+func (s *UpdateService) lookupLatestRelease(ctx context.Context, force bool) (*UpdateInfo, error) {
 	// Try cache first
 	if !force {
 		if cached, err := s.getFromCache(ctx); err == nil && cached != nil {
@@ -163,6 +189,11 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 // PerformUpdate downloads and applies the update
 // Uses atomic file replacement pattern for safe in-place updates
 func (s *UpdateService) PerformUpdate(ctx context.Context) error {
+	// 先问策略再碰 GitHub：多实例 / 只读文件系统下下载完再拒绝只是浪费带宽。
+	if err := s.policy.Require(ctx); err != nil {
+		return err
+	}
+
 	info, err := s.CheckUpdate(ctx, true)
 	if err != nil {
 		return err
@@ -207,14 +238,9 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 		}
 	}
 
-	// Get current executable path
-	exePath, err := os.Executable()
+	exePath, err := resolveExecutablePath()
 	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
-	}
-	exePath, err = filepath.EvalSymlinks(exePath)
-	if err != nil {
-		return fmt.Errorf("failed to resolve symlinks: %w", err)
+		return err
 	}
 
 	exeDir := filepath.Dir(exePath)
@@ -279,15 +305,30 @@ func (s *UpdateService) applyReleaseAssets(ctx context.Context, releaseAssets []
 	return nil
 }
 
-// Rollback restores the previous version
-func (s *UpdateService) Rollback() error {
+// resolveExecutablePath returns the symlink-resolved path of the running binary.
+// Every in-place swap and the writability probe must agree on this path, so it
+// lives in one place.
+func resolveExecutablePath() (string, error) {
 	exePath, err := os.Executable()
 	if err != nil {
-		return fmt.Errorf("failed to get executable path: %w", err)
+		return "", fmt.Errorf("failed to get executable path: %w", err)
 	}
 	exePath, err = filepath.EvalSymlinks(exePath)
 	if err != nil {
-		return fmt.Errorf("failed to resolve symlinks: %w", err)
+		return "", fmt.Errorf("failed to resolve symlinks: %w", err)
+	}
+	return exePath, nil
+}
+
+// Rollback restores the previous version from the local .backup binary.
+func (s *UpdateService) Rollback(ctx context.Context) error {
+	if err := s.policy.Require(ctx); err != nil {
+		return err
+	}
+
+	exePath, err := resolveExecutablePath()
+	if err != nil {
+		return err
 	}
 
 	backupFile := exePath + ".backup"
@@ -327,6 +368,10 @@ func (s *UpdateService) ListRollbackVersions(ctx context.Context) ([]RollbackVer
 // The target must be one of the versions returned by ListRollbackVersions;
 // anything else (including the current version) is rejected.
 func (s *UpdateService) RollbackToVersion(ctx context.Context, version string) error {
+	if err := s.policy.Require(ctx); err != nil {
+		return err
+	}
+
 	target := strings.TrimPrefix(strings.TrimSpace(version), "v")
 	if target == "" {
 		return ErrRollbackVersionNotAllowed

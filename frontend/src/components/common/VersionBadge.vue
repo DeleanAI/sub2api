@@ -317,10 +317,25 @@
                   </div>
                 </div>
 
+                <!-- In-app update refused by the server (multi-replica / read-only fs): explain instead of failing after a click -->
+                <p
+                  v-if="!inAppUpdateAllowed"
+                  class="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] leading-4 text-amber-700 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-300"
+                >
+                  <Icon
+                    name="exclamationTriangle"
+                    size="xs"
+                    :stroke-width="2"
+                    class="mt-px flex-shrink-0"
+                  />
+                  <span>{{ inAppUpdateBlockedText }}</span>
+                </p>
+
                 <!-- Update button -->
                 <button
                   @click="handleUpdate"
-                  :disabled="updating"
+                  :disabled="updating || !inAppUpdateAllowed"
+                  :title="inAppUpdateAllowed ? '' : inAppUpdateBlockedText"
                   class="flex w-full items-center justify-center gap-2 rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <svg v-if="updating" class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -576,6 +591,20 @@
                               {{ t('version.rollbackWarning') }}
                             </p>
 
+                            <!-- Online rollback refused for the same reasons as update; the manual command above is the way -->
+                            <p
+                              v-if="!inAppUpdateAllowed"
+                              class="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] leading-4 text-amber-700 dark:border-amber-800/50 dark:bg-amber-900/20 dark:text-amber-300"
+                            >
+                              <Icon
+                                name="exclamationTriangle"
+                                size="xs"
+                                :stroke-width="2"
+                                class="mt-px flex-shrink-0"
+                              />
+                              <span>{{ inAppUpdateBlockedText }}</span>
+                            </p>
+
                             <p
                               v-if="rollbackError"
                               class="rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-600 dark:border-red-800/50 dark:bg-red-900/20 dark:text-red-400"
@@ -585,7 +614,8 @@
 
                             <button
                               @click="handleRollback"
-                              :disabled="rollingBack"
+                              :disabled="rollingBack || !inAppUpdateAllowed"
+                              :title="inAppUpdateAllowed ? '' : inAppUpdateBlockedText"
                               class="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               <svg
@@ -646,6 +676,7 @@ import {
   restartService,
   getRollbackVersions,
   rollback as rollbackAPI,
+  type InAppUpdateBlockCode,
   type RollbackVersionInfo
 } from '@/api/admin/system'
 import { useClipboard } from '@/composables/useClipboard'
@@ -676,6 +707,27 @@ const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
+
+// In-app update gate reported by the server; the same gate covers online rollback.
+const inAppUpdateAllowed = computed(() => appStore.inAppUpdateAllowed)
+
+// Every backend block code needs a localized message; the Record type fails
+// typecheck when a new code is added to InAppUpdateBlockCode without a key here.
+const inAppUpdateBlockedMessageKeys: Record<InAppUpdateBlockCode, string> = {
+  multiple_instances: 'version.inAppUpdateBlockedMultipleInstances',
+  instance_count_unknown: 'version.inAppUpdateBlockedInstanceCountUnknown',
+  executable_not_writable: 'version.inAppUpdateBlockedExecutableNotWritable'
+}
+
+const inAppUpdateBlockedText = computed(() => {
+  if (inAppUpdateAllowed.value) return ''
+  const key = (inAppUpdateBlockedMessageKeys as Record<string, string | undefined>)[
+    appStore.inAppUpdateBlockedCode
+  ]
+  if (key) return t(key, { count: appStore.liveInstances })
+  // Unknown code (newer backend): fall back to the server's own explanation.
+  return appStore.inAppUpdateBlockedReason || t('version.inAppUpdateDisabled')
+})
 
 // Update process states (local to this component)
 const updating = ref(false)

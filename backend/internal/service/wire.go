@@ -42,9 +42,21 @@ func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient)
 	return svc, nil
 }
 
-// ProvideUpdateService creates UpdateService with BuildInfo
-func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, buildInfo BuildInfo) *UpdateService {
-	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType)
+// ProvideUpdateService creates UpdateService with BuildInfo and the in-app update policy.
+func ProvideUpdateService(cache UpdateCache, githubClient GitHubReleaseClient, buildInfo BuildInfo, policy *InAppUpdatePolicy) *UpdateService {
+	return NewUpdateService(cache, githubClient, buildInfo.Version, buildInfo.BuildType, policy)
+}
+
+// ProvideInstanceRegistry 创建并启动实例注册表：本进程开始向 Redis 发心跳。
+func ProvideInstanceRegistry(store InstanceHeartbeatStore, buildInfo BuildInfo) *InstanceRegistry {
+	registry := NewInstanceRegistry(store, buildInfo.Version)
+	registry.Start()
+	return registry
+}
+
+// ProvideInAppUpdatePolicy 用实例注册表与真实的可执行文件目录写入探测构造策略。
+func ProvideInAppUpdatePolicy(instances LiveInstanceCounter) *InAppUpdatePolicy {
+	return NewInAppUpdatePolicy(instances, probeExecutableDirWritable)
 }
 
 // ProvideEmailQueueService creates EmailQueueService with default worker count
@@ -871,6 +883,9 @@ var ProviderSet = wire.NewSet(
 	ProvideSchedulerSnapshotService,
 	NewIdentityService,
 	NewCRSSyncService,
+	ProvideInstanceRegistry,
+	wire.Bind(new(LiveInstanceCounter), new(*InstanceRegistry)),
+	ProvideInAppUpdatePolicy,
 	ProvideUpdateService,
 	ProvideTokenRefreshService,
 	wire.Bind(new(GrokOAuthReconciler), new(*TokenRefreshService)),

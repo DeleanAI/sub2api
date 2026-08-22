@@ -46,9 +46,18 @@ func systemUpdateContext(ctx context.Context) (context.Context, context.CancelFu
 type systemUpdateService interface {
 	CheckUpdate(ctx context.Context, force bool) (*service.UpdateInfo, error)
 	PerformUpdate(ctx context.Context) error
-	Rollback() error
+	Rollback(ctx context.Context) error
 	ListRollbackVersions(ctx context.Context) ([]service.RollbackVersion, error)
 	RollbackToVersion(ctx context.Context, version string) error
+}
+
+// systemOperationFailureReason 把更新/回退的失败归类为幂等锁上的释放原因：策略拒绝
+// （多实例 / 只读文件系统）与真正的执行失败在运维记录里必须能区分开。
+func systemOperationFailureReason(err error, fallback string) string {
+	if errors.Is(err, service.ErrInAppUpdateDisabled) {
+		return service.ErrInAppUpdateDisabled.Reason
+	}
+	return fallback
 }
 
 // NewSystemHandler creates a new SystemHandler
@@ -115,7 +124,7 @@ func (h *SystemHandler) PerformUpdate(c *gin.Context) {
 					"operation_id":       lock.OperationID(),
 				}, nil
 			}
-			releaseReason = "SYSTEM_UPDATE_FAILED"
+			releaseReason = systemOperationFailureReason(err, "SYSTEM_UPDATE_FAILED")
 			return nil, err
 		}
 		succeeded = true
@@ -181,10 +190,10 @@ func (h *SystemHandler) Rollback(c *gin.Context) {
 			defer cancel()
 			err = h.updateSvc.RollbackToVersion(rollbackCtx, targetVersion)
 		} else {
-			err = h.updateSvc.Rollback()
+			err = h.updateSvc.Rollback(ctx)
 		}
 		if err != nil {
-			releaseReason = "SYSTEM_ROLLBACK_FAILED"
+			releaseReason = systemOperationFailureReason(err, "SYSTEM_ROLLBACK_FAILED")
 			return nil, err
 		}
 		succeeded = true

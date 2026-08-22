@@ -6,12 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -26,6 +28,7 @@ type systemHandlerUpdateServiceStub struct {
 	performCtxErr         error
 	performHasDeadline    bool
 	rollbackCall          int
+	rollbackErr           error
 	rollbackToCall        int
 	rollbackToCtxErr      error
 	rollbackToHasDeadline bool
@@ -48,9 +51,9 @@ func (s *systemHandlerUpdateServiceStub) PerformUpdate(ctx context.Context) erro
 	return s.performErr
 }
 
-func (s *systemHandlerUpdateServiceStub) Rollback() error {
+func (s *systemHandlerUpdateServiceStub) Rollback(context.Context) error {
 	s.rollbackCall++
-	return nil
+	return s.rollbackErr
 }
 
 func (s *systemHandlerUpdateServiceStub) ListRollbackVersions(context.Context) ([]service.RollbackVersion, error) {
@@ -321,4 +324,77 @@ func TestSystemHandlerGetRollbackVersionsError(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
+}
+
+type systemUpdateRefusalEnvelope struct {
+	Code     int               `json:"code"`
+	Message  string            `json:"message"`
+	Reason   string            `json:"reason"`
+	Metadata map[string]string `json:"metadata"`
+}
+
+// 策略拒绝必须以 409 + IN_APP_UPDATE_DISABLED 透出，三个会替换二进制的路由一视同仁。
+func TestSystemHandlerReturnsConflictWhenInAppUpdateIsDisabled(t *testing.T) {
+	refusal := infraerrors.Conflict(service.ErrInAppUpdateDisabled.Reason,
+		"3 live instances share this deployment (host-a@0.1.147, host-b@0.1.147, host-c@0.1.147); an in-app update would replace only this process's binary. Upgrade by changing the image tag instead.",
+	).WithMetadata(map[string]string{"block_code": "multiple_instances", "live_instances": "3"})
+
+	requests := []struct {
+		name string
+		body string
+	}{
+		{name: "update", body: ""},
+		{name: "rollback-local-backup", body: ""},
+		{name: "rollback-to-version", body: `{"version":"0.1.146"}`},
+	}
+	paths := map[string]string{
+		"update":                "/api/v1/admin/system/update",
+		"rollback-local-backup": "/api/v1/admin/system/rollback",
+		"rollback-to-version":   "/api/v1/admin/system/rollback",
+	}
+
+	for _, tc := range requests {
+		t.Run(tc.name, func(t *testing.T) {
+			updateSvc := &systemHandlerUpdateServiceStub{performErr: refusal, rollbackErr: refusal, rollbackToErr: refusal}
+			repo := newMemoryIdempotencyRepoStub()
+			router := newSystemHandlerTestRouter(t, updateSvc, repo)
+
+			var body io.Reader
+			if tc.body != "" {
+				body = strings.NewReader(tc.body)
+			}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, paths[tc.name], body)
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			req.Header.Set("Idempotency-Key", "refused-"+tc.name)
+			router.ServeHTTP(rec, req)
+
+			require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+			var envelope systemUpdateRefusalEnvelope
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+			require.Equal(t, http.StatusConflict, envelope.Code)
+			require.Equal(t, "IN_APP_UPDATE_DISABLED", envelope.Reason)
+			require.Contains(t, envelope.Message, "3 live instances")
+			require.Contains(t, envelope.Message, "image")
+			require.Equal(t, "multiple_instances", envelope.Metadata["block_code"])
+			require.Equal(t, "3", envelope.Metadata["live_instances"])
+			// 幂等锁上记录的是策略拒绝，而不是笼统的执行失败。
+			requireSystemLockReason(t, repo, "IN_APP_UPDATE_DISABLED")
+			require.Empty(t, updateSvc.checkForces, "a refusal must not be mistaken for already-up-to-date")
+		})
+	}
+}
+
+func requireSystemLockReason(t *testing.T, repo *memoryIdempotencyRepoStub, wantReason string) {
+	t.Helper()
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	for _, record := range repo.data {
+		if record.ErrorReason != nil && *record.ErrorReason == wantReason {
+			return
+		}
+	}
+	t.Fatalf("system lock error reason %q not found in records: %#v", wantReason, repo.data)
 }
