@@ -248,6 +248,41 @@ See `.env.example` for all available options.
 
 > **Note:** The `docker-deploy.sh` script automatically generates `JWT_SECRET`, `TOTP_ENCRYPTION_KEY`, and `POSTGRES_PASSWORD` for you.
 
+### Connection Settings (external PostgreSQL / Redis)
+
+`docker-compose.standalone.yml`, plain `docker run` (see `DOCKER.md`) and the systemd install connect to
+services you operate yourself. The connection target is accepted in two forms. When the URL form is set
+it is the **only** source for that target and the discrete variables are ignored — the startup log states
+which form was used. Pool and timeout settings (`DATABASE_MAX_OPEN_CONNS`, `REDIS_POOL_SIZE`, ...) always
+come from the discrete variables.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | No | - | `postgres://user:pass@host:port/dbname?sslmode=...`; replaces `DATABASE_HOST/PORT/USER/PASSWORD/DBNAME/SSLMODE`. Extra libpq options (`sslrootcert=`, `application_name=`, ...) are passed through; an unknown option name fails at startup. |
+| `REDIS_URL` | No | - | `redis://[user:pass@]host:port/db` or `rediss://...` (TLS); replaces `REDIS_HOST/PORT/USERNAME/PASSWORD/DB/ENABLE_TLS`. Only the database index may be a query parameter. |
+| `REDIS_SENTINEL_ADDRS` | No | - | Comma-separated Sentinel `host:port` list. Setting it enables Sentinel mode; `REDIS_HOST`/`REDIS_PORT` are then unused. |
+| `REDIS_MASTER_NAME` | No | - | Master name resolved through the Sentinels; required together with `REDIS_SENTINEL_ADDRS`. |
+| `REDIS_SENTINEL_USERNAME` | No | *(empty)* | ACL user for the Sentinel connections themselves. |
+| `REDIS_SENTINEL_PASSWORD` | No | *(empty)* | Password for the Sentinel connections themselves. |
+| `REDIS_TLS_SERVER_NAME` | No | *(dialed host)* | Name used for TLS certificate verification when it differs from the address being dialed; applies to Sentinels and data nodes alike. |
+
+#### Redis High Availability
+
+**Redis Sentinel is supported.** Point `REDIS_SENTINEL_ADDRS` at the Sentinels and name the master in
+`REDIS_MASTER_NAME`; the client discovers the current master and follows failovers. `REDIS_USERNAME`,
+`REDIS_PASSWORD`, `REDIS_DB` and `REDIS_ENABLE_TLS` apply to the data nodes. With TLS, every connection
+verifies the certificate against the host it dials (Sentinels by their configured addresses, the master by
+the address the Sentinels announce); set `REDIS_TLS_SERVER_NAME` only when all nodes share one
+certificate name. Check the startup log line `redis client configured redis.mode=sentinel master=...
+sentinels=N`.
+
+**Redis Cluster is not supported, and this is final rather than pending.** The concurrency-slot and
+scheduler Lua scripts touch keys in different hash slots (`acquireLiveLeaseScript` in
+`backend/internal/repository/concurrency_cache.go`, runtime-built key names in
+`backend/internal/repository/scheduler_cache.go`), which Cluster rejects with `CROSSSLOT`. Any
+`REDIS_CLUSTER_*` variable or `redis.cluster*` config key makes the process refuse to start with that
+explanation.
+
 ### Easy Migration (Local Directory Version)
 
 When using `docker-compose.local.yml`, all data is stored in local directories, making migration simple:
@@ -490,7 +525,7 @@ The main config file is at `/etc/sub2api/config.yaml` (created by Setup Wizard).
 
 - Linux server (Ubuntu 20.04+, Debian 11+, CentOS 8+, etc.)
 - PostgreSQL 14+
-- Redis 6+
+- Redis 6+ (single node or Sentinel; Redis Cluster is not supported — see "Redis High Availability")
 - systemd
 
 ### Directory Structure
@@ -620,7 +655,7 @@ sudo systemctl status redis
 
 1. **Port already in use**: Change `SERVER_PORT` in `.env` or systemd config
 2. **Database connection failed**: Check PostgreSQL is running and credentials are correct
-3. **Redis connection failed**: Check Redis is running and password is correct
+3. **Redis connection failed**: Check Redis is running and password is correct. The startup log line `redis client configured redis.mode=...` shows the address or Sentinel master actually in use; `redis connection configured from redis.url` means the discrete `REDIS_*` connection variables were ignored in favour of `REDIS_URL`
 4. **Permission denied**: Ensure proper file ownership for binary install
 5. **Update button disabled / `409 IN_APP_UPDATE_DISABLED`**: More than one instance is running, the instance count is unknown (check Redis), or the program directory is read-only. Upgrade by changing the image tag instead; see [In-app update with multiple instances](#in-app-update-with-multiple-instances)
 

@@ -836,6 +836,17 @@ database:
   # SSL 模式：disable（禁用）, prefer（优先加密，默认）, require（要求）, verify-ca（验证CA）, verify-full（完全验证）
   # 默认值为 "prefer"，数据库支持 SSL 时自动使用加密连接，不支持时回退明文
   sslmode: "prefer"
+  # Connection URL (optional). When set it is the ONLY source for the connection target:
+  # host/port/user/password/dbname/sslmode above are ignored and the startup log says so.
+  # Extra libpq options in the query string (sslrootcert=...) are passed through; an unknown
+  # option name fails at startup. Pool settings below still apply.
+  # 连接 URL（可选）：设置后它是连接目标的唯一来源，上面的 host/port/user/password/dbname/sslmode
+  # 不再生效（启动日志会说明）。查询串里的其余 libpq 参数原样带入，未知参数名启动即报错。
+  # url: "postgres://user:password@db.example.com:5432/sub2api?sslmode=verify-full&sslrootcert=/certs/ca.pem"
+  # Extra libpq parameters rendered into the DSN (the same names the URL query string accepts).
+  # 其余 libpq 参数（与 URL 查询串接受的名字相同），按名排序写入 DSN。
+  # extra_params:
+  #   sslrootcert: "/certs/ca.pem"
   # Max open connections (高并发场景建议 256+，需配合 PostgreSQL max_connections 调整)
   # 最大打开连接数
   max_open_conns: 256
@@ -878,6 +889,30 @@ redis:
   # Enable TLS/SSL connection
   # 是否启用 TLS/SSL 连接
   enable_tls: false
+  # TLS certificate name override. By default every connection verifies the certificate against
+  # the host it dials (single node: host above; Sentinel: each sentinel and the discovered master by
+  # their own address). Set only when Redis sits behind a name that differs from the dial address.
+  # TLS 证书校验名覆盖：默认按每次拨号的目标主机名校验；仅当证书名与拨号地址不同时设置，对哨兵与数据节点一视同仁。
+  # tls_server_name: ""
+  # Connection URL (optional): overrides host/port/username/password/db/enable_tls; rediss:// enables
+  # TLS. Only the database index may be a query parameter — pool/timeout tuning stays in the keys above.
+  # 连接 URL（可选）：设置后覆盖 host/port/username/password/db/enable_tls；rediss:// 即启用 TLS。
+  # url: "rediss://:password@redis.example.com:6379/0"
+  # Redis Sentinel (high availability). A non-empty sentinel_addrs switches to Sentinel mode: the
+  # master is discovered from the sentinels and host/port above are unused; master_name is required
+  # with it. username/password/db/enable_tls apply to the data nodes, sentinel_username/
+  # sentinel_password to the sentinel connections themselves.
+  # Redis Cluster is NOT supported: the concurrency/scheduler Lua scripts span hash slots
+  # (CROSSSLOT); any redis.cluster* key or REDIS_CLUSTER_* variable makes startup fail.
+  # Redis Sentinel（高可用）：sentinel_addrs 非空即进入 Sentinel 模式，主节点由哨兵发现，上面的 host/port
+  # 不再使用，必须同时设置 master_name。Cluster 不支持（Lua 脚本跨槽位），配置了直接启动失败。
+  # sentinel_addrs:
+  #   - "sentinel-1:26379"
+  #   - "sentinel-2:26379"
+  #   - "sentinel-3:26379"
+  # master_name: "mymaster"
+  # sentinel_username: ""
+  # sentinel_password: ""
 
 # =============================================================================
 # Ops Monitoring (Optional)

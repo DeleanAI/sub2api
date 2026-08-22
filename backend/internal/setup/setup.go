@@ -3,7 +3,6 @@ package setup
 import (
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	_ "github.com/lib/pq"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
@@ -84,6 +82,8 @@ type SetupConfig struct {
 	MigrationTimeoutSeconds int            `json:"migration_timeout_seconds" yaml:"migration_timeout_seconds,omitempty"`
 }
 
+// DatabaseConfig 是安装向导的数据库连接视图：JSON 面向向导表单，YAML 面向写出的 config.yaml。
+// 连接规则（DSN 渲染、DATABASE_URL 解析）不在这里实现，统一通过 connection() 交给 config 包。
 type DatabaseConfig struct {
 	Host     string `json:"host" yaml:"host"`
 	Port     int    `json:"port" yaml:"port"`
@@ -91,8 +91,44 @@ type DatabaseConfig struct {
 	Password string `json:"password" yaml:"password"`
 	DBName   string `json:"dbname" yaml:"dbname"`
 	SSLMode  string `json:"sslmode" yaml:"sslmode"`
+	// ExtraParams 是 DATABASE_URL 带来的其余 libpq 参数（如 sslrootcert）。写进 config.yaml 是为了
+	// 环境变量撤掉之后连接参数仍然完整；它不是向导表单的一部分，所以不接受 JSON 输入。
+	ExtraParams map[string]string `json:"-" yaml:"extra_params,omitempty"`
 }
 
+// connection 转成 config 包的连接描述：DSN 渲染与 URL 解析只在 config 包实现一次，安装流程不再自己拼 DSN。
+func (c *DatabaseConfig) connection() *config.DatabaseConfig {
+	return &config.DatabaseConfig{
+		Host:        c.Host,
+		Port:        c.Port,
+		User:        c.User,
+		Password:    c.Password,
+		DBName:      c.DBName,
+		SSLMode:     c.SSLMode,
+		ExtraParams: c.ExtraParams,
+	}
+}
+
+// resolve 让自动安装与主配置走同一条优先级规则（config.DatabaseConfig.Resolve）：
+// rawURL 非空时覆盖离散字段，会话时区以 appTimezone 为准。
+func (c *DatabaseConfig) resolve(rawURL, appTimezone string) error {
+	conn := c.connection()
+	conn.URL = rawURL
+	if err := conn.Resolve(appTimezone); err != nil {
+		return err
+	}
+	c.Host = conn.Host
+	c.Port = conn.Port
+	c.User = conn.User
+	c.Password = conn.Password
+	c.DBName = conn.DBName
+	c.SSLMode = conn.SSLMode
+	c.ExtraParams = conn.ExtraParams
+	return nil
+}
+
+// RedisConfig 是安装向导的 Redis 连接视图。Sentinel/TLS 名称字段只来自环境变量（AutoSetupFromEnv），
+// 向导表单不暴露它们，但要写进 config.yaml，环境变量撤掉之后拓扑信息才不会丢。
 type RedisConfig struct {
 	Host      string `json:"host" yaml:"host"`
 	Port      int    `json:"port" yaml:"port"`
@@ -100,6 +136,51 @@ type RedisConfig struct {
 	Password  string `json:"password" yaml:"password"`
 	DB        int    `json:"db" yaml:"db"`
 	EnableTLS bool   `json:"enable_tls" yaml:"enable_tls"`
+
+	TLSServerName    string   `json:"-" yaml:"tls_server_name,omitempty"`
+	SentinelAddrs    []string `json:"-" yaml:"sentinel_addrs,omitempty"`
+	MasterName       string   `json:"-" yaml:"master_name,omitempty"`
+	SentinelUsername string   `json:"-" yaml:"sentinel_username,omitempty"`
+	SentinelPassword string   `json:"-" yaml:"sentinel_password,omitempty"`
+}
+
+// connection 转成 config 包的连接描述，客户端由 repository.NewRedisClient 按同一规则构造。
+func (c *RedisConfig) connection() *config.RedisConfig {
+	return &config.RedisConfig{
+		Host:             c.Host,
+		Port:             c.Port,
+		Username:         c.Username,
+		Password:         c.Password,
+		DB:               c.DB,
+		EnableTLS:        c.EnableTLS,
+		TLSServerName:    c.TLSServerName,
+		SentinelAddrs:    c.SentinelAddrs,
+		MasterName:       c.MasterName,
+		SentinelUsername: c.SentinelUsername,
+		SentinelPassword: c.SentinelPassword,
+	}
+}
+
+// resolve 让自动安装与主配置走同一条规则（config.RedisConfig.Resolve）：
+// rawURL 非空时覆盖离散字段，哨兵地址按逗号拆分并校验。
+func (c *RedisConfig) resolve(rawURL string) error {
+	conn := c.connection()
+	conn.URL = rawURL
+	if err := conn.Resolve(); err != nil {
+		return err
+	}
+	c.Host = conn.Host
+	c.Port = conn.Port
+	c.Username = conn.Username
+	c.Password = conn.Password
+	c.DB = conn.DB
+	c.EnableTLS = conn.EnableTLS
+	c.TLSServerName = conn.TLSServerName
+	c.SentinelAddrs = conn.SentinelAddrs
+	c.MasterName = conn.MasterName
+	c.SentinelUsername = conn.SentinelUsername
+	c.SentinelPassword = conn.SentinelPassword
+	return nil
 }
 
 type AdminConfig struct {
@@ -178,15 +259,9 @@ func NeedsSetup() bool {
 	return true
 }
 
-func buildPostgresDSN(cfg *DatabaseConfig, dbName string) string {
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, dbName, cfg.SSLMode,
-	)
-}
-
 func buildDatabaseConnectionDSNs(cfg *DatabaseConfig) (bootstrapDSN, targetDSN string) {
-	return buildPostgresDSN(cfg, "postgres"), buildPostgresDSN(cfg, cfg.DBName)
+	conn := cfg.connection()
+	return conn.DSNForDatabase("postgres"), conn.DSN()
 }
 
 // TestDatabaseConnection tests the database connection and creates database if not exists
@@ -263,23 +338,11 @@ func TestDatabaseConnection(cfg *DatabaseConfig) error {
 	return nil
 }
 
-// TestRedisConnection tests the Redis connection
+// TestRedisConnection tests the Redis connection.
+// 客户端由 repository.NewRedisClient 构造——与主服务同一套单机/Sentinel/TLS 规则，
+// 向导测通的连接就是服务启动后实际使用的连接。
 func TestRedisConnection(cfg *RedisConfig) error {
-	opts := &redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Username: cfg.Username,
-		Password: cfg.Password,
-		DB:       cfg.DB,
-	}
-
-	if cfg.EnableTLS {
-		opts.TLSConfig = &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			ServerName: cfg.Host,
-		}
-	}
-
-	rdb := redis.NewClient(opts)
+	rdb := repository.NewRedisClient(cfg.connection())
 	defer func() {
 		if err := rdb.Close(); err != nil {
 			logger.LegacyPrintf("setup", "failed to close redis client: %v", err)
@@ -352,13 +415,7 @@ func createInstallLock() error {
 }
 
 func initializeDatabase(cfg *SetupConfig) error {
-	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
-		cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode,
-	)
-
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("postgres", cfg.Database.connection().DSN())
 	if err != nil {
 		return err
 	}
@@ -382,13 +439,7 @@ func (cfg *SetupConfig) migrationTimeout() time.Duration {
 }
 
 func createAdminUser(cfg *SetupConfig) (bool, string, error) {
-	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
-		cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode,
-	)
-
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("postgres", cfg.Database.connection().DSN())
 	if err != nil {
 		return false, "", err
 	}
@@ -562,11 +613,15 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 	return defaultValue
 }
 
-// AutoSetupFromEnv performs automatic setup using environment variables
-// This is designed for Docker deployment where all config is passed via env vars
-func AutoSetupFromEnv() error {
-	logger.LegacyPrintf("setup", "%s", "Auto setup enabled, configuring from environment variables...")
-	logger.LegacyPrintf("setup", "Data directory: %s", GetDataDir())
+// setupConfigFromEnv builds the auto-setup configuration from environment variables.
+//
+// 离散变量（DATABASE_HOST、REDIS_HOST ...）在这里读取；DATABASE_URL / REDIS_URL 的优先级、
+// REDIS_SENTINEL_ADDRS 的拆分校验、REDIS_CLUSTER_* 的拒绝都不在这里实现，而是交给 config 包里
+// 主配置加载也在用的同一套规则——两条启动路径对同一组环境变量不能有两种解释。
+func setupConfigFromEnv() (*SetupConfig, error) {
+	if err := config.CheckRedisClusterUnsupported(nil, os.Environ()); err != nil {
+		return nil, err
+	}
 
 	// Get timezone from TZ or TIMEZONE env var (TZ is standard for Docker)
 	tz := getEnvOrDefault("TZ", "")
@@ -574,7 +629,6 @@ func AutoSetupFromEnv() error {
 		tz = getEnvOrDefault("TIMEZONE", "Asia/Shanghai")
 	}
 
-	// Build config from environment variables
 	cfg := &SetupConfig{
 		Database: DatabaseConfig{
 			Host:     getEnvOrDefault("DATABASE_HOST", "localhost"),
@@ -585,12 +639,17 @@ func AutoSetupFromEnv() error {
 			SSLMode:  getEnvOrDefault("DATABASE_SSLMODE", "disable"),
 		},
 		Redis: RedisConfig{
-			Host:      getEnvOrDefault("REDIS_HOST", "localhost"),
-			Port:      getEnvIntOrDefault("REDIS_PORT", 6379),
-			Username:  getEnvOrDefault("REDIS_USERNAME", ""),
-			Password:  getEnvOrDefault("REDIS_PASSWORD", ""),
-			DB:        getEnvIntOrDefault("REDIS_DB", 0),
-			EnableTLS: getEnvOrDefault("REDIS_ENABLE_TLS", "false") == "true",
+			Host:             getEnvOrDefault("REDIS_HOST", "localhost"),
+			Port:             getEnvIntOrDefault("REDIS_PORT", 6379),
+			Username:         getEnvOrDefault("REDIS_USERNAME", ""),
+			Password:         getEnvOrDefault("REDIS_PASSWORD", ""),
+			DB:               getEnvIntOrDefault("REDIS_DB", 0),
+			EnableTLS:        getEnvOrDefault("REDIS_ENABLE_TLS", "false") == "true",
+			TLSServerName:    getEnvOrDefault("REDIS_TLS_SERVER_NAME", ""),
+			SentinelAddrs:    []string{getEnvOrDefault("REDIS_SENTINEL_ADDRS", "")},
+			MasterName:       getEnvOrDefault("REDIS_MASTER_NAME", ""),
+			SentinelUsername: getEnvOrDefault("REDIS_SENTINEL_USERNAME", ""),
+			SentinelPassword: getEnvOrDefault("REDIS_SENTINEL_PASSWORD", ""),
 		},
 		Admin: AdminConfig{
 			Email:    getEnvOrDefault("ADMIN_EMAIL", "admin@sub2api.local"),
@@ -607,6 +666,26 @@ func AutoSetupFromEnv() error {
 		},
 		Timezone:                tz,
 		MigrationTimeoutSeconds: getEnvIntOrDefault("SETUP_MIGRATION_TIMEOUT_SECONDS", 0),
+	}
+
+	if err := cfg.Database.resolve(os.Getenv("DATABASE_URL"), tz); err != nil {
+		return nil, err
+	}
+	if err := cfg.Redis.resolve(os.Getenv("REDIS_URL")); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// AutoSetupFromEnv performs automatic setup using environment variables
+// This is designed for Docker deployment where all config is passed via env vars
+func AutoSetupFromEnv() error {
+	logger.LegacyPrintf("setup", "%s", "Auto setup enabled, configuring from environment variables...")
+	logger.LegacyPrintf("setup", "Data directory: %s", GetDataDir())
+
+	cfg, err := setupConfigFromEnv()
+	if err != nil {
+		return fmt.Errorf("invalid environment configuration: %w", err)
 	}
 
 	// Generate JWT secret if not provided
