@@ -357,7 +357,7 @@ POSTGRES_PASSWORD=your_secure_password_here
 # JWT シークレット（推奨 - 再起動後もユーザーのログイン状態を保持）
 JWT_SECRET=your_jwt_secret_here
 
-# TOTP 暗号化キー（推奨 - 再起動後も二要素認証を維持）
+# 保存データの暗号化キー（release モードでは必須。全インスタンスで同じ値を使用）
 TOTP_ENCRYPTION_KEY=your_totp_key_here
 
 # オプション: 管理者アカウント

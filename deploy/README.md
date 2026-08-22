@@ -233,7 +233,8 @@ docker compose down -v
 |----------|----------|---------|-------------|
 | `POSTGRES_PASSWORD` | **Yes** | - | PostgreSQL password |
 | `JWT_SECRET` | **Recommended** | *(auto-generated)* | JWT secret (fixed for persistent sessions) |
-| `TOTP_ENCRYPTION_KEY` | **Recommended** | *(auto-generated)* | TOTP encryption key (fixed for persistent 2FA) |
+| `TOTP_ENCRYPTION_KEY` | **Yes** (release mode) | - | Encryption key for all data at rest (TOTP secrets, monitor API keys, S3 secrets, ...). Must be identical on every instance; the server refuses to start without it in release mode. |
+| `TOTP_ENCRYPTION_KEY_PREVIOUS` | No | *(empty)* | Previous key(s) during rotation, comma-separated. See [Rotating the encryption key](#rotating-the-encryption-key). |
 | `SERVER_PORT` | No | `8080` | Server port |
 | `ADMIN_EMAIL` | No | `admin@sub2api.local` | Admin email |
 | `ADMIN_PASSWORD` | No | *(auto-generated)* | Admin password |
@@ -247,6 +248,32 @@ docker compose down -v
 See `.env.example` for all available options.
 
 > **Note:** The `docker-deploy.sh` script automatically generates `JWT_SECRET`, `TOTP_ENCRYPTION_KEY`, and `POSTGRES_PASSWORD` for you.
+
+### Rotating the encryption key
+
+`TOTP_ENCRYPTION_KEY` is, despite its name, the key for everything Sub2API stores encrypted: user TOTP secrets, channel monitor API keys, backup and image-storage S3 secrets, Ollama web sessions, prompt-audit endpoint tokens, and the payment resume-token signing key derived from it. Every ciphertext carries the id of the key that wrote it (`v1:<key-id>:...`), so two keys can be valid at the same time and the key can be replaced without losing data:
+
+```bash
+# 1. Generate the new key.
+openssl rand -hex 32
+
+# 2. On EVERY instance: make the new key primary and keep the old one as previous, then restart.
+TOTP_ENCRYPTION_KEY=<new key>
+TOTP_ENCRYPTION_KEY_PREVIOUS=<old key>
+docker compose up -d          # instances now read both old and new ciphertext; new writes use the new key
+
+# 3. Re-encrypt everything that is still under the old key (idempotent; safe to re-run).
+docker compose exec sub2api /app/sub2api encryption-key rotate --dry-run
+docker compose exec sub2api /app/sub2api encryption-key rotate
+
+# 4. When the report says "stored fingerprint updated", remove the previous key and restart.
+TOTP_ENCRYPTION_KEY_PREVIOUS=
+docker compose up -d
+```
+
+The command prints, per storage location, how many rows were rotated, were already current, or failed (with row ids). Failed rows are ciphertext no configured key can open — typically data written by an instance that ran with a different (or auto-generated) key; reset those secrets through the admin UI and re-run. Legacy payment provider configs are converted to the current plaintext format in the same pass. `--old-key`/`--new-key` override the two variables for a single run.
+
+Sub2API records a fingerprint (SHA-256, never the key itself) of the key that encrypted the stored data in the `security_secrets` table and logs it at startup as `encryption_key.fingerprint=<8 chars>`. An instance started with a key that is neither that key nor listed in `TOTP_ENCRYPTION_KEY_PREVIOUS` refuses to start in release mode, which is how a replica with a mismatched key is caught before it encrypts data nobody else can read.
 
 ### Easy Migration (Local Directory Version)
 

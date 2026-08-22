@@ -358,7 +358,7 @@ POSTGRES_PASSWORD=your_secure_password_here
 # JWT 密钥（推荐 - 重启后保持用户登录状态）
 JWT_SECRET=your_jwt_secret_here
 
-# TOTP 加密密钥（推荐 - 重启后保留双因素认证）
+# 落库数据加密密钥（release 模式必填；所有实例必须使用同一个值）
 TOTP_ENCRYPTION_KEY=your_totp_key_here
 
 # 可选：管理员账号
