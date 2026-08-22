@@ -6779,6 +6779,9 @@
               </button>
             </div>
           </div>
+
+          <!-- Custom Markdown pages (stored in the database, shared by all instances) -->
+          <CustomPagesEditor />
 	        </div>
 	        <!-- /Tab: General -->
 
@@ -8762,6 +8765,7 @@ import ProxySelector from "@/components/common/ProxySelector.vue";
 import ImageUpload from "@/components/common/ImageUpload.vue";
 import BackupSettings from "@/views/admin/BackupView.vue";
 import EmailTemplateEditor from "@/views/admin/settings/EmailTemplateEditor.vue";
+import CustomPagesEditor from "@/views/admin/settings/CustomPagesEditor.vue";
 import OpenAIFastPolicyUserSelector from "@/views/admin/settings/OpenAIFastPolicyUserSelector.vue";
 import { useClipboard } from "@/composables/useClipboard";
 import {
