@@ -105,14 +105,19 @@ Defaults are those applied by `AUTO_SETUP`; they are written to `config.yaml` on
 | `DATABASE_SSLMODE` | `disable`, `require`, `verify-ca` or `verify-full` | No | `disable` |
 | `DATABASE_MAX_OPEN_CONNS` | Connection pool: max open connections | No | `256` |
 | `DATABASE_MAX_IDLE_CONNS` | Connection pool: max idle connections | No | `128` |
-| `REDIS_URL` | `redis://[user:pass@]host:port/db`, or `rediss://...` for TLS. Only the database index may be given as a query parameter; tuning stays in `REDIS_*`. | One of `REDIS_URL` or `REDIS_HOST` | - |
-| `REDIS_HOST` | Redis host (ignored when `REDIS_URL` is set) | One of `REDIS_URL` or `REDIS_HOST` | `localhost` |
+| `REDIS_URL` | `redis://[user:pass@]host:port/db`, or `rediss://...` for TLS. Only the database index may be given as a query parameter; tuning stays in `REDIS_*`. | One of `REDIS_URL`, `REDIS_HOST` or `REDIS_SENTINEL_ADDRS` | - |
+| `REDIS_HOST` | Redis host (ignored when `REDIS_URL` or `REDIS_SENTINEL_ADDRS` is set) | One of `REDIS_URL`, `REDIS_HOST` or `REDIS_SENTINEL_ADDRS` | `localhost` |
 | `REDIS_PORT` | Redis port | No | `6379` |
 | `REDIS_USERNAME` | Redis ACL user for the data nodes | No | *(empty)* |
 | `REDIS_PASSWORD` | Redis password for the data nodes | No | *(empty)* |
 | `REDIS_DB` | Database index | No | `0` |
 | `REDIS_ENABLE_TLS` | `true` to connect with TLS (same as `rediss://`) | No | `false` |
-| `REDIS_POOL_SIZE` | Connection pool size | No | `1024` |
+| `REDIS_TLS_SERVER_NAME` | Name used for certificate verification. By default each connection verifies against the host it dials, which is what you want unless Redis sits behind a name that differs from the dial address. | No | *(dialed host)* |
+| `REDIS_SENTINEL_ADDRS` | Comma-separated `host:port` list of Sentinels. Setting it switches to Sentinel mode (see below); `REDIS_HOST`/`REDIS_PORT` are then unused. | No | - |
+| `REDIS_MASTER_NAME` | Master name to ask the Sentinels for. Required together with `REDIS_SENTINEL_ADDRS`. | No | - |
+| `REDIS_SENTINEL_USERNAME` | ACL user for the Sentinel connections themselves | No | *(empty)* |
+| `REDIS_SENTINEL_PASSWORD` | Password for the Sentinel connections themselves | No | *(empty)* |
+| `REDIS_POOL_SIZE` | Connection pool size (applies to single-node and Sentinel mode alike) | No | `1024` |
 | `REDIS_MIN_IDLE_CONNS` | Minimum idle connections | No | `128` |
 
 ### Server and first-start setup
@@ -129,6 +134,23 @@ Defaults are those applied by `AUTO_SETUP`; they are written to `config.yaml` on
 | `TOTP_ENCRYPTION_KEY` | 64 hex characters. Generated on every start when empty, which invalidates existing 2FA enrolments | Recommended | *(generated)* |
 | `TZ` | Timezone for the application and for database sessions | No | `Asia/Shanghai` |
 | `DATA_DIR` | Directory for `config.yaml`, the install lock and log files | No | `/app/data` |
+
+## Redis high availability
+
+**Redis Sentinel is supported.** Set `REDIS_SENTINEL_ADDRS` and `REDIS_MASTER_NAME` (and
+`REDIS_SENTINEL_PASSWORD` when the Sentinels require authentication). The client asks the Sentinels
+for the current master and follows failovers automatically; `REDIS_USERNAME`, `REDIS_PASSWORD`,
+`REDIS_DB` and `REDIS_ENABLE_TLS` apply to the data nodes. With TLS every connection verifies the
+certificate against the host it dials — the Sentinels by their configured addresses, the master by the
+address the Sentinels announce — so each node needs a certificate valid for its own address. Set
+`REDIS_TLS_SERVER_NAME` only when all nodes present a certificate for one shared name. The startup log
+reports the chosen mode (`redis.mode=sentinel master=... sentinels=N` or `redis.mode=single addr=...`).
+
+**Redis Cluster is not supported, and this is final rather than pending.** The concurrency-slot and
+scheduler Lua scripts operate on keys that hash to different slots (`acquireLiveLeaseScript` in
+`internal/repository/concurrency_cache.go`, runtime-built key names in
+`internal/repository/scheduler_cache.go`), which Cluster rejects with `CROSSSLOT`. Any `REDIS_CLUSTER_*`
+variable makes the process refuse to start with that explanation.
 
 ## Supported Architectures
 

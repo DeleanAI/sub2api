@@ -1537,6 +1537,18 @@ type RedisConfig struct {
 	MinIdleConns int `mapstructure:"min_idle_conns"`
 	// EnableTLS: 是否启用 TLS/SSL 连接
 	EnableTLS bool `mapstructure:"enable_tls"`
+	// TLSServerName: 证书校验用的 ServerName。留空时取每次拨号的目标主机名（单机即 host，
+	// Sentinel 模式下哨兵与主节点各按自己的地址校验）；只有 Redis 前面挂了与拨号地址不同的名字时才需要设置，
+	// 设置后对哨兵与数据节点一视同仁。
+	TLSServerName string `mapstructure:"tls_server_name"`
+	// SentinelAddrs: 哨兵地址列表（host:port，环境变量里用逗号分隔）。非空即进入 Sentinel 模式，
+	// 主节点地址由哨兵发现，host/port 不再使用。Redis Cluster 不支持（见 CheckRedisClusterUnsupported）。
+	SentinelAddrs []string `mapstructure:"sentinel_addrs"`
+	// MasterName: 向哨兵询问的主节点名，与 SentinelAddrs 必须同时设置。
+	MasterName string `mapstructure:"master_name"`
+	// SentinelUsername / SentinelPassword: 连接哨兵本身的鉴权（与数据节点的 username/password 无关）。
+	SentinelUsername string `mapstructure:"sentinel_username"`
+	SentinelPassword string `mapstructure:"sentinel_password"`
 }
 
 func (r *RedisConfig) Address() string {
@@ -1776,8 +1788,11 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Security.ForwardedClientIPHeaders = normalizeStringSlice(strings.Split(forwardedClientIPHeadersEnv, ","))
 	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
-	// 连接目标的收口：URL 优先级与 DSN 参数归一都在 connection.go 里只写一次，
+	// 连接目标的收口：Cluster 拒绝、URL 优先级、哨兵地址归一都在 connection.go 里只写一次，
 	// 这里和 setup.AutoSetupFromEnv 是它仅有的两个调用方。
+	if err := CheckRedisClusterUnsupported(viper.AllKeys(), os.Environ()); err != nil {
+		return nil, err
+	}
 	if err := cfg.Database.Resolve(cfg.Timezone); err != nil {
 		return nil, err
 	}
@@ -2144,6 +2159,12 @@ func setDefaults() {
 	viper.SetDefault("redis.pool_size", 1024)
 	viper.SetDefault("redis.min_idle_conns", 128)
 	viper.SetDefault("redis.enable_tls", false)
+	viper.SetDefault("redis.tls_server_name", "")
+	// Sentinel（高可用）。Cluster 没有对应的键：它在结构上不被支持，见 CheckRedisClusterUnsupported。
+	viper.SetDefault("redis.sentinel_addrs", []string{})
+	viper.SetDefault("redis.master_name", "")
+	viper.SetDefault("redis.sentinel_username", "")
+	viper.SetDefault("redis.sentinel_password", "")
 
 	// Batch Image queue
 	viper.SetDefault("batch_image.enabled", false)

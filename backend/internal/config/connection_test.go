@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -196,14 +198,38 @@ func TestApplyRedisURL(t *testing.T) {
 	}
 }
 
+func TestRedisConfigResolveNormalisesSentinelAddrs(t *testing.T) {
+	r := RedisConfig{
+		Host:          "ignored",
+		Port:          6379,
+		SentinelAddrs: []string{" s1:26379, s2:26379 ", "", "s3:26379"},
+		MasterName:    " mymaster ",
+		TLSServerName: " redis.internal ",
+	}
+	require.NoError(t, r.Resolve())
+	require.Equal(t, []string{"s1:26379", "s2:26379", "s3:26379"}, r.SentinelAddrs)
+	require.Equal(t, "mymaster", r.MasterName)
+	require.Equal(t, "redis.internal", r.TLSServerName)
+	require.True(t, r.SentinelEnabled())
+
+	single := RedisConfig{Host: "cache", Port: 6379}
+	require.NoError(t, single.Resolve())
+	require.False(t, single.SentinelEnabled())
+}
+
 func TestRedisConfigValidateConnection(t *testing.T) {
 	cases := []struct {
 		name    string
 		cfg     RedisConfig
 		wantErr string
 	}{
-		{"host is required", RedisConfig{Port: 6379}, "redis.host is required"},
-		{"port must be valid", RedisConfig{Host: "h"}, "redis.port"},
+		{"sentinels without master name", RedisConfig{SentinelAddrs: []string{"s1:26379"}}, "must be set together"},
+		{"master name without sentinels", RedisConfig{Host: "h", Port: 6379, MasterName: "m"}, "must be set together"},
+		{"sentinel addr without port", RedisConfig{SentinelAddrs: []string{"s1"}, MasterName: "m"}, `"s1" must be host:port`},
+		{"sentinel addr bad port", RedisConfig{SentinelAddrs: []string{"s1:abc"}, MasterName: "m"}, "invalid port"},
+		{"sentinel username without password", RedisConfig{SentinelAddrs: []string{"s1:26379"}, MasterName: "m", SentinelUsername: "u"}, "redis.sentinel_username requires redis.sentinel_password"},
+		{"single mode needs a host", RedisConfig{Port: 6379}, "redis.host is required"},
+		{"single mode needs a valid port", RedisConfig{Host: "h"}, "redis.port"},
 		{"negative db", RedisConfig{Host: "h", Port: 6379, DB: -1}, "redis.db"},
 	}
 	for _, tc := range cases {
@@ -213,7 +239,27 @@ func TestRedisConfigValidateConnection(t *testing.T) {
 			require.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
-	require.NoError(t, (&RedisConfig{Host: "h", Port: 6379}).ValidateConnection())
+
+	// host/port 与哨兵同时配置是允许的：host/port 不用，但不是错误
+	both := RedisConfig{Host: "h", Port: 6379, SentinelAddrs: []string{"s1:26379"}, MasterName: "m"}
+	require.NoError(t, both.ValidateConnection())
+}
+
+func TestCheckRedisClusterUnsupported(t *testing.T) {
+	require.NoError(t, CheckRedisClusterUnsupported([]string{"redis.host", "redis.sentinel_addrs"}, []string{"REDIS_HOST=x", "PATH=/bin"}))
+
+	err := CheckRedisClusterUnsupported([]string{"redis.cluster_addrs"}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "redis.cluster_addrs")
+	require.Contains(t, err.Error(), "CROSSSLOT")
+	require.Contains(t, err.Error(), "concurrency_cache.go")
+	require.Contains(t, err.Error(), "scheduler_cache.go")
+	require.Contains(t, err.Error(), "redis.sentinel_addrs")
+
+	err = CheckRedisClusterUnsupported(nil, []string{"REDIS_CLUSTER_ADDRS=a:1,b:2"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "REDIS_CLUSTER_ADDRS")
+	require.NotContains(t, err.Error(), "a:1,b:2")
 }
 
 func TestEnvName(t *testing.T) {
@@ -224,7 +270,7 @@ func TestEnvName(t *testing.T) {
 // clearConnectionEnv 屏蔽开发机 shell 里可能存在的连接变量，让下面的 Load 测试只看到自己设置的值。
 func clearConnectionEnv(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"DATABASE_URL", "REDIS_URL"} {
+	for _, name := range []string{"DATABASE_URL", "REDIS_URL", "REDIS_SENTINEL_ADDRS", "REDIS_MASTER_NAME", "REDIS_SENTINEL_USERNAME", "REDIS_SENTINEL_PASSWORD", "REDIS_TLS_SERVER_NAME"} {
 		t.Setenv(name, "")
 	}
 }
@@ -277,4 +323,55 @@ func TestLoadRedisURLOverridesDiscreteFields(t *testing.T) {
 	require.Equal(t, 1, cfg.Redis.DB)
 	require.True(t, cfg.Redis.EnableTLS)
 	require.Equal(t, 1024, cfg.Redis.PoolSize)
+}
+
+func TestLoadRedisSentinelFromEnvironment(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	clearConnectionEnv(t)
+	t.Setenv("REDIS_SENTINEL_ADDRS", "s1:26379, s2:26379,s3:26379")
+	t.Setenv("REDIS_MASTER_NAME", "mymaster")
+	t.Setenv("REDIS_SENTINEL_PASSWORD", "sentinel-pw")
+	t.Setenv("REDIS_TLS_SERVER_NAME", "redis.internal")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, []string{"s1:26379", "s2:26379", "s3:26379"}, cfg.Redis.SentinelAddrs)
+	require.Equal(t, "mymaster", cfg.Redis.MasterName)
+	require.Equal(t, "sentinel-pw", cfg.Redis.SentinelPassword)
+	require.Equal(t, "redis.internal", cfg.Redis.TLSServerName)
+	require.True(t, cfg.Redis.SentinelEnabled())
+}
+
+func TestLoadRedisSentinelRequiresMasterName(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	clearConnectionEnv(t)
+	t.Setenv("REDIS_SENTINEL_ADDRS", "s1:26379")
+
+	_, err := Load()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "redis.master_name")
+}
+
+func TestLoadRejectsRedisClusterSettings(t *testing.T) {
+	t.Run("environment", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		clearConnectionEnv(t)
+		t.Setenv("REDIS_CLUSTER_ADDRS", "a:7000,b:7000")
+
+		_, err := Load()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "REDIS_CLUSTER_ADDRS")
+		require.Contains(t, err.Error(), "CROSSSLOT")
+	})
+	t.Run("config file", func(t *testing.T) {
+		resetViperWithJWTSecret(t)
+		clearConnectionEnv(t)
+		configFile := filepath.Join(t.TempDir(), "config.yaml")
+		require.NoError(t, os.WriteFile(configFile, []byte("redis:\n  cluster_addrs: [\"a:7000\"]\n"), 0o600))
+		t.Setenv("CONFIG_FILE", configFile)
+
+		_, err := Load()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "redis.cluster_addrs")
+	})
 }

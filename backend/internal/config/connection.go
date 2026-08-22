@@ -17,7 +17,9 @@ import (
 // 连接目标（PostgreSQL / Redis）的解析规则只写在这个文件里。主配置加载（load）和容器自动安装
 // （setup.AutoSetupFromEnv）各自从不同的地方拿到原始值，但都交给这里落成最终字段：
 //   - database.url / redis.url 非空时就是连接目标的唯一来源，离散字段被覆盖，并在启动日志里说明；
-//   - URL 之外的 libpq 参数（如 sslrootcert）进入 DatabaseConfig.ExtraParams，由 DSN 渲染统一带上。
+//   - URL 之外的 libpq 参数（如 sslrootcert）进入 DatabaseConfig.ExtraParams，由 DSN 渲染统一带上；
+//   - 哨兵地址的逗号拆分与去空白；
+//   - Redis Cluster 的显式拒绝（结构上做不到，不是"以后再说"）。
 
 // envKeyReplacer 是 viper 键 → 环境变量名的唯一映射规则：load() 用它注册 SetEnvKeyReplacer，
 // EnvName 用它反推文档/安装流程里的变量名，两边不会各自维护一套拼写。
@@ -354,7 +356,26 @@ func ApplyRedisURL(dst *RedisConfig, raw string) error {
 	return nil
 }
 
-// Resolve 是 Redis 连接配置的收口：应用 redis.url 的优先级，最后做连接字段校验。
+// normalizeSentinelAddrs 是"逗号分隔的 host:port 列表"这条规则唯一的实现：viper 解码环境变量时已经按逗号
+// 切成切片，安装流程则把整条环境变量值放进单元素切片，两种来源在这里汇成同一种形态。
+func normalizeSentinelAddrs(addrs []string) []string {
+	var out []string
+	for _, addr := range addrs {
+		for _, part := range strings.Split(addr, ",") {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+	}
+	return out
+}
+
+// SentinelEnabled 只有一条判定：配置了哨兵地址就是 Sentinel 模式，主节点地址由哨兵发现，host/port 不再使用。
+func (r *RedisConfig) SentinelEnabled() bool {
+	return len(r.SentinelAddrs) > 0
+}
+
+// Resolve 是 Redis 连接配置的收口：应用 redis.url 的优先级、归一哨兵地址，最后做连接字段校验。
 // load() 与 setup.AutoSetupFromEnv 都必须调用它。
 func (r *RedisConfig) Resolve() error {
 	urlUsed := strings.TrimSpace(r.URL) != ""
@@ -362,6 +383,9 @@ func (r *RedisConfig) Resolve() error {
 		return err
 	}
 	r.Host = strings.TrimSpace(r.Host)
+	r.SentinelAddrs = normalizeSentinelAddrs(r.SentinelAddrs)
+	r.MasterName = strings.TrimSpace(r.MasterName)
+	r.TLSServerName = strings.TrimSpace(r.TLSServerName)
 	if urlUsed {
 		slog.Info("redis connection configured from redis.url; discrete redis.host/port/username/password/db/enable_tls are ignored",
 			"addr", r.Address(),
@@ -374,14 +398,63 @@ func (r *RedisConfig) Resolve() error {
 
 // ValidateConnection 校验连接字段（与连接池参数无关），Config.Validate 与安装流程共用。
 func (r *RedisConfig) ValidateConnection() error {
-	if r.Host == "" {
-		return fmt.Errorf("redis.host is required unless redis.url is set")
+	hasSentinels := len(r.SentinelAddrs) > 0
+	hasMaster := r.MasterName != ""
+	if hasSentinels != hasMaster {
+		return fmt.Errorf("redis.sentinel_addrs and redis.master_name must be set together: sentinel mode asks the sentinels for that master name, and a master name without sentinels has nothing to ask")
 	}
-	if r.Port < 1 || r.Port > 65535 {
-		return fmt.Errorf("redis.port must be between 1 and 65535")
+	for i, addr := range r.SentinelAddrs {
+		host, portText, err := net.SplitHostPort(addr)
+		if err != nil || host == "" {
+			return fmt.Errorf("redis.sentinel_addrs[%d]: %q must be host:port", i, addr)
+		}
+		if port, err := strconv.Atoi(portText); err != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("redis.sentinel_addrs[%d]: invalid port in %q", i, addr)
+		}
+	}
+	if r.SentinelUsername != "" && r.SentinelPassword == "" {
+		return fmt.Errorf("redis.sentinel_username requires redis.sentinel_password (sentinel ACL authentication sends both)")
+	}
+	if !hasSentinels {
+		if r.Host == "" {
+			return fmt.Errorf("redis.host is required unless redis.url or redis.sentinel_addrs is set")
+		}
+		if r.Port < 1 || r.Port > 65535 {
+			return fmt.Errorf("redis.port must be between 1 and 65535")
+		}
 	}
 	if r.DB < 0 {
 		return fmt.Errorf("redis.db must be non-negative")
 	}
 	return nil
+}
+
+// CheckRedisClusterUnsupported 对任何 redis.cluster* 配置键或 REDIS_CLUSTER* 环境变量直接报错。
+//
+// 这不是"暂不支持"，而是结构上做不到：internal/repository/concurrency_cache.go 的 acquireLiveLeaseScript
+// 一次操作四个前缀互不相关的 KEYS，internal/repository/scheduler_cache.go 更是在 Lua 里用
+// redis.call('EXPIRE', ARGV[3] .. currentActive, ...) 运行时拼出键名——后者根本无法在 KEYS 里声明，
+// hash tag 也救不了。Redis Cluster 对跨槽位操作返回 CROSSSLOT，这些脚本在 Cluster 上永远跑不起来。
+// 高可用请用 Sentinel（redis.sentinel_addrs + redis.master_name）。
+//
+// configKeys 传 viper.AllKeys()（含配置文件里的键），environ 传 os.Environ()；安装流程没有 viper，
+// 只传环境变量。
+func CheckRedisClusterUnsupported(configKeys []string, environ []string) error {
+	var offenders []string
+	for _, key := range configKeys {
+		if strings.HasPrefix(strings.ToLower(key), "redis.cluster") {
+			offenders = append(offenders, key)
+		}
+	}
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "REDIS_CLUSTER") {
+			offenders = append(offenders, name)
+		}
+	}
+	if len(offenders) == 0 {
+		return nil
+	}
+	sort.Strings(offenders)
+	return fmt.Errorf("redis cluster is not supported and cannot be (found %s): the Lua scripts in internal/repository/concurrency_cache.go (acquireLiveLeaseScript operates on four KEYS with unrelated prefixes) and internal/repository/scheduler_cache.go (keys built at runtime inside Lua, e.g. redis.call('EXPIRE', ARGV[3] .. currentActive, ...)) span hash slots, which Redis Cluster rejects with CROSSSLOT; for high availability use Redis Sentinel via redis.sentinel_addrs + redis.master_name (REDIS_SENTINEL_ADDRS / REDIS_MASTER_NAME)", strings.Join(offenders, ", "))
 }

@@ -1,10 +1,13 @@
 package setup
 
 import (
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,6 +17,7 @@ func clearConnectionEnv(t *testing.T) {
 	for _, name := range []string{
 		"DATABASE_URL", "DATABASE_HOST", "DATABASE_PORT", "DATABASE_USER", "DATABASE_PASSWORD", "DATABASE_DBNAME", "DATABASE_SSLMODE",
 		"REDIS_URL", "REDIS_HOST", "REDIS_PORT", "REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_DB", "REDIS_ENABLE_TLS",
+		"REDIS_SENTINEL_ADDRS", "REDIS_MASTER_NAME", "REDIS_SENTINEL_USERNAME", "REDIS_SENTINEL_PASSWORD", "REDIS_TLS_SERVER_NAME",
 		"TZ", "TIMEZONE",
 	} {
 		t.Setenv(name, "")
@@ -68,21 +72,84 @@ func TestSetupConfigFromEnvRejectsConflictingTimezone(t *testing.T) {
 	require.Contains(t, err.Error(), "TimeZone")
 }
 
-func TestWriteConfigFilePersistsExtraParams(t *testing.T) {
+func TestSetupConfigFromEnvSentinel(t *testing.T) {
+	clearConnectionEnv(t)
+	t.Setenv("REDIS_SENTINEL_ADDRS", "s1:26379, s2:26379,s3:26379")
+	t.Setenv("REDIS_MASTER_NAME", "mymaster")
+	t.Setenv("REDIS_SENTINEL_USERNAME", "sentinel")
+	t.Setenv("REDIS_SENTINEL_PASSWORD", "sentinel-pw")
+	t.Setenv("REDIS_ENABLE_TLS", "true")
+	t.Setenv("REDIS_TLS_SERVER_NAME", "redis.internal")
+
+	cfg, err := setupConfigFromEnv()
+	require.NoError(t, err)
+	require.Equal(t, []string{"s1:26379", "s2:26379", "s3:26379"}, cfg.Redis.SentinelAddrs)
+	require.Equal(t, "mymaster", cfg.Redis.MasterName)
+	require.Equal(t, "sentinel", cfg.Redis.SentinelUsername)
+	require.Equal(t, "sentinel-pw", cfg.Redis.SentinelPassword)
+	require.Equal(t, "redis.internal", cfg.Redis.TLSServerName)
+	require.True(t, cfg.Redis.EnableTLS)
+
+	t.Setenv("REDIS_MASTER_NAME", "")
+	_, err = setupConfigFromEnv()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "redis.master_name")
+}
+
+func TestSetupConfigFromEnvRejectsRedisCluster(t *testing.T) {
+	clearConnectionEnv(t)
+	t.Setenv("REDIS_CLUSTER_ADDRS", "a:7000,b:7000")
+
+	_, err := setupConfigFromEnv()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "REDIS_CLUSTER_ADDRS")
+	require.Contains(t, err.Error(), "CROSSSLOT")
+}
+
+func TestWriteConfigFilePersistsConnectionTopology(t *testing.T) {
 	t.Setenv("DATA_DIR", t.TempDir())
 
 	require.NoError(t, writeConfigFile(&SetupConfig{
 		Database: DatabaseConfig{Host: "db", Port: 5432, DBName: "sub2api", ExtraParams: map[string]string{"sslrootcert": "/certs/ca.pem"}},
+		Redis: RedisConfig{
+			SentinelAddrs:    []string{"s1:26379", "s2:26379"},
+			MasterName:       "mymaster",
+			SentinelPassword: "sentinel-pw",
+			TLSServerName:    "redis.internal",
+			EnableTLS:        true,
+		},
 	}))
 
 	data, err := os.ReadFile(GetConfigFilePath())
 	require.NoError(t, err)
-	require.Contains(t, string(data), "extra_params:")
-	require.Contains(t, string(data), "sslrootcert: /certs/ca.pem")
+	text := string(data)
+	for _, want := range []string{
+		"extra_params:", "sslrootcert: /certs/ca.pem",
+		"sentinel_addrs:", "- s1:26379", "- s2:26379",
+		"master_name: mymaster", "sentinel_password: sentinel-pw", "tls_server_name: redis.internal",
+	} {
+		require.Contains(t, text, want)
+	}
 
-	// 没有额外参数时写出的文件与以前一致
-	require.NoError(t, writeConfigFile(&SetupConfig{Database: DatabaseConfig{Host: "db", Port: 5432, DBName: "sub2api"}}))
+	// 单机安装写出的文件不带拓扑字段，保持与以前一致
+	require.NoError(t, writeConfigFile(&SetupConfig{Redis: RedisConfig{Host: "redis", Port: 6379}}))
 	data, err = os.ReadFile(GetConfigFilePath())
 	require.NoError(t, err)
+	require.False(t, strings.Contains(string(data), "sentinel_addrs"))
 	require.False(t, strings.Contains(string(data), "extra_params"))
+}
+
+func TestTestRedisConnectionUsesSharedClient(t *testing.T) {
+	server := miniredis.RunT(t)
+	host, portText, err := net.SplitHostPort(server.Addr())
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+
+	require.NoError(t, TestRedisConnection(&RedisConfig{Host: host, Port: port}))
+
+	server.Close()
+	err = TestRedisConnection(&RedisConfig{Host: host, Port: port})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ping failed")
 }

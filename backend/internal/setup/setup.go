@@ -3,7 +3,6 @@ package setup
 import (
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	_ "github.com/lib/pq"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gopkg.in/yaml.v3"
 )
@@ -129,7 +127,8 @@ func (c *DatabaseConfig) resolve(rawURL, appTimezone string) error {
 	return nil
 }
 
-// RedisConfig 是安装向导的 Redis 连接视图：JSON 面向向导表单，YAML 面向写出的 config.yaml。
+// RedisConfig 是安装向导的 Redis 连接视图。Sentinel/TLS 名称字段只来自环境变量（AutoSetupFromEnv），
+// 向导表单不暴露它们，但要写进 config.yaml，环境变量撤掉之后拓扑信息才不会丢。
 type RedisConfig struct {
 	Host      string `json:"host" yaml:"host"`
 	Port      int    `json:"port" yaml:"port"`
@@ -137,21 +136,33 @@ type RedisConfig struct {
 	Password  string `json:"password" yaml:"password"`
 	DB        int    `json:"db" yaml:"db"`
 	EnableTLS bool   `json:"enable_tls" yaml:"enable_tls"`
+
+	TLSServerName    string   `json:"-" yaml:"tls_server_name,omitempty"`
+	SentinelAddrs    []string `json:"-" yaml:"sentinel_addrs,omitempty"`
+	MasterName       string   `json:"-" yaml:"master_name,omitempty"`
+	SentinelUsername string   `json:"-" yaml:"sentinel_username,omitempty"`
+	SentinelPassword string   `json:"-" yaml:"sentinel_password,omitempty"`
 }
 
-// connection 转成 config 包的连接描述：REDIS_URL 的解析只在 config 包实现一次。
+// connection 转成 config 包的连接描述，客户端由 repository.NewRedisClient 按同一规则构造。
 func (c *RedisConfig) connection() *config.RedisConfig {
 	return &config.RedisConfig{
-		Host:      c.Host,
-		Port:      c.Port,
-		Username:  c.Username,
-		Password:  c.Password,
-		DB:        c.DB,
-		EnableTLS: c.EnableTLS,
+		Host:             c.Host,
+		Port:             c.Port,
+		Username:         c.Username,
+		Password:         c.Password,
+		DB:               c.DB,
+		EnableTLS:        c.EnableTLS,
+		TLSServerName:    c.TLSServerName,
+		SentinelAddrs:    c.SentinelAddrs,
+		MasterName:       c.MasterName,
+		SentinelUsername: c.SentinelUsername,
+		SentinelPassword: c.SentinelPassword,
 	}
 }
 
-// resolve 让自动安装与主配置走同一条规则（config.RedisConfig.Resolve）：rawURL 非空时覆盖离散字段。
+// resolve 让自动安装与主配置走同一条规则（config.RedisConfig.Resolve）：
+// rawURL 非空时覆盖离散字段，哨兵地址按逗号拆分并校验。
 func (c *RedisConfig) resolve(rawURL string) error {
 	conn := c.connection()
 	conn.URL = rawURL
@@ -164,6 +175,11 @@ func (c *RedisConfig) resolve(rawURL string) error {
 	c.Password = conn.Password
 	c.DB = conn.DB
 	c.EnableTLS = conn.EnableTLS
+	c.TLSServerName = conn.TLSServerName
+	c.SentinelAddrs = conn.SentinelAddrs
+	c.MasterName = conn.MasterName
+	c.SentinelUsername = conn.SentinelUsername
+	c.SentinelPassword = conn.SentinelPassword
 	return nil
 }
 
@@ -322,23 +338,11 @@ func TestDatabaseConnection(cfg *DatabaseConfig) error {
 	return nil
 }
 
-// TestRedisConnection tests the Redis connection
+// TestRedisConnection tests the Redis connection.
+// 客户端由 repository.NewRedisClient 构造——与主服务同一套单机/Sentinel/TLS 规则，
+// 向导测通的连接就是服务启动后实际使用的连接。
 func TestRedisConnection(cfg *RedisConfig) error {
-	opts := &redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Username: cfg.Username,
-		Password: cfg.Password,
-		DB:       cfg.DB,
-	}
-
-	if cfg.EnableTLS {
-		opts.TLSConfig = &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			ServerName: cfg.Host,
-		}
-	}
-
-	rdb := redis.NewClient(opts)
+	rdb := repository.NewRedisClient(cfg.connection())
 	defer func() {
 		if err := rdb.Close(); err != nil {
 			logger.LegacyPrintf("setup", "failed to close redis client: %v", err)
@@ -611,9 +615,14 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 
 // setupConfigFromEnv builds the auto-setup configuration from environment variables.
 //
-// 离散变量（DATABASE_HOST、REDIS_HOST ...）在这里读取；DATABASE_URL / REDIS_URL 的优先级不在这里实现，
-// 而是交给 config 包里主配置加载也在用的同一套规则——两条启动路径对同一组环境变量不能有两种解释。
+// 离散变量（DATABASE_HOST、REDIS_HOST ...）在这里读取；DATABASE_URL / REDIS_URL 的优先级、
+// REDIS_SENTINEL_ADDRS 的拆分校验、REDIS_CLUSTER_* 的拒绝都不在这里实现，而是交给 config 包里
+// 主配置加载也在用的同一套规则——两条启动路径对同一组环境变量不能有两种解释。
 func setupConfigFromEnv() (*SetupConfig, error) {
+	if err := config.CheckRedisClusterUnsupported(nil, os.Environ()); err != nil {
+		return nil, err
+	}
+
 	// Get timezone from TZ or TIMEZONE env var (TZ is standard for Docker)
 	tz := getEnvOrDefault("TZ", "")
 	if tz == "" {
@@ -630,12 +639,17 @@ func setupConfigFromEnv() (*SetupConfig, error) {
 			SSLMode:  getEnvOrDefault("DATABASE_SSLMODE", "disable"),
 		},
 		Redis: RedisConfig{
-			Host:      getEnvOrDefault("REDIS_HOST", "localhost"),
-			Port:      getEnvIntOrDefault("REDIS_PORT", 6379),
-			Username:  getEnvOrDefault("REDIS_USERNAME", ""),
-			Password:  getEnvOrDefault("REDIS_PASSWORD", ""),
-			DB:        getEnvIntOrDefault("REDIS_DB", 0),
-			EnableTLS: getEnvOrDefault("REDIS_ENABLE_TLS", "false") == "true",
+			Host:             getEnvOrDefault("REDIS_HOST", "localhost"),
+			Port:             getEnvIntOrDefault("REDIS_PORT", 6379),
+			Username:         getEnvOrDefault("REDIS_USERNAME", ""),
+			Password:         getEnvOrDefault("REDIS_PASSWORD", ""),
+			DB:               getEnvIntOrDefault("REDIS_DB", 0),
+			EnableTLS:        getEnvOrDefault("REDIS_ENABLE_TLS", "false") == "true",
+			TLSServerName:    getEnvOrDefault("REDIS_TLS_SERVER_NAME", ""),
+			SentinelAddrs:    []string{getEnvOrDefault("REDIS_SENTINEL_ADDRS", "")},
+			MasterName:       getEnvOrDefault("REDIS_MASTER_NAME", ""),
+			SentinelUsername: getEnvOrDefault("REDIS_SENTINEL_USERNAME", ""),
+			SentinelPassword: getEnvOrDefault("REDIS_SENTINEL_PASSWORD", ""),
 		},
 		Admin: AdminConfig{
 			Email:    getEnvOrDefault("ADMIN_EMAIL", "admin@sub2api.local"),
