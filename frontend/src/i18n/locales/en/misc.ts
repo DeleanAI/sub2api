@@ -56,7 +56,14 @@ export default {
     deployScript: 'Script',
     deployDocker: 'Docker',
     dockerEditCompose: 'Edit the image tag in docker-compose.yml',
-    dockerRecreate: 'Recreate the container'
+    dockerRecreate: 'Recreate the container',
+    inAppUpdateDisabled: 'In-app update is disabled for this deployment.',
+    inAppUpdateBlockedMultipleInstances:
+      '{count} instances are running. Updating in place would replace only this one and leave the others on the old version. Upgrade by changing the image tag instead.',
+    inAppUpdateBlockedInstanceCountUnknown:
+      'The number of running instances cannot be determined (instance registry unavailable). Upgrade by changing the image tag instead.',
+    inAppUpdateBlockedExecutableNotWritable:
+      'The program directory is read-only, so the binary cannot be replaced in place. Upgrade by changing the image tag instead.'
   },
 
   // Recharge / Subscription Page

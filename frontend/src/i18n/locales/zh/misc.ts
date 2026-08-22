@@ -55,7 +55,14 @@ export default {
     deployScript: '脚本部署',
     deployDocker: 'Docker',
     dockerEditCompose: '修改 docker-compose.yml 中的镜像版本',
-    dockerRecreate: '重新创建容器'
+    dockerRecreate: '重新创建容器',
+    inAppUpdateDisabled: '当前部署已禁用在线更新。',
+    inAppUpdateBlockedMultipleInstances:
+      '检测到 {count} 个实例同时运行，在线更新只会替换当前这一个实例，其余实例仍是旧版本。请改为更换镜像版本升级。',
+    inAppUpdateBlockedInstanceCountUnknown:
+      '无法确定正在运行的实例数量（实例注册表不可用）。请改为更换镜像版本升级。',
+    inAppUpdateBlockedExecutableNotWritable:
+      '程序目录为只读，无法原地替换二进制文件。请改为更换镜像版本升级。'
   },
 
   // Recharge / Subscription Page

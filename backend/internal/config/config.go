@@ -660,16 +660,17 @@ type PricingConfig struct {
 type ServerConfig struct {
 	Host                     string    `mapstructure:"host"`
 	Port                     int       `mapstructure:"port"`
-	Mode                     string    `mapstructure:"mode"`                  // debug/release
-	EnableServerTiming       bool      `mapstructure:"enable_server_timing"`  // Admin UI Server-Timing response header
-	FrontendURL              string    `mapstructure:"frontend_url"`          // 前端基础 URL，用于生成邮件中的外部链接
-	ReadHeaderTimeout        int       `mapstructure:"read_header_timeout"`   // 读取请求头超时（秒）
-	MaxHeaderBytes           int       `mapstructure:"max_header_bytes"`      // 请求头最大字节数（HTTP/2 映射为 header-list 上限）
-	IdleTimeout              int       `mapstructure:"idle_timeout"`          // 空闲连接超时（秒）
-	TrustedProxies           []string  `mapstructure:"trusted_proxies"`       // 可信代理列表（CIDR/IP）
-	TrustedProxiesConfigured bool      `mapstructure:"-" json:"-" yaml:"-"`   // 是否显式配置了可信代理列表
-	MaxRequestBodySize       int64     `mapstructure:"max_request_body_size"` // 全局最大请求体限制
-	H2C                      H2CConfig `mapstructure:"h2c"`                   // HTTP/2 Cleartext 配置
+	Mode                     string    `mapstructure:"mode"`                      // debug/release
+	EnableServerTiming       bool      `mapstructure:"enable_server_timing"`      // Admin UI Server-Timing response header
+	FrontendURL              string    `mapstructure:"frontend_url"`              // 前端基础 URL，用于生成邮件中的外部链接
+	ReadHeaderTimeout        int       `mapstructure:"read_header_timeout"`       // 读取请求头超时（秒）
+	MaxHeaderBytes           int       `mapstructure:"max_header_bytes"`          // 请求头最大字节数（HTTP/2 映射为 header-list 上限）
+	IdleTimeout              int       `mapstructure:"idle_timeout"`              // 空闲连接超时（秒）
+	ReadinessTimeoutSeconds  int       `mapstructure:"readiness_timeout_seconds"` // /readyz 单个依赖探测超时（秒）
+	TrustedProxies           []string  `mapstructure:"trusted_proxies"`           // 可信代理列表（CIDR/IP）
+	TrustedProxiesConfigured bool      `mapstructure:"-" json:"-" yaml:"-"`       // 是否显式配置了可信代理列表
+	MaxRequestBodySize       int64     `mapstructure:"max_request_body_size"`     // 全局最大请求体限制
+	H2C                      H2CConfig `mapstructure:"h2c"`                       // HTTP/2 Cleartext 配置
 }
 
 // H2CConfig HTTP/2 Cleartext 配置
@@ -1476,6 +1477,11 @@ type GatewaySchedulingConfig struct {
 	FullRebuildIntervalSeconds int `mapstructure:"full_rebuild_interval_seconds"`
 }
 
+// ReadinessTimeout 返回 /readyz 单个依赖探测的超时。
+func (s *ServerConfig) ReadinessTimeout() time.Duration {
+	return time.Duration(s.ReadinessTimeoutSeconds) * time.Second
+}
+
 func (s *ServerConfig) Address() string {
 	return fmt.Sprintf("%s:%d", s.Host, s.Port)
 }
@@ -1975,6 +1981,9 @@ func setDefaults() {
 	viper.SetDefault("server.read_header_timeout", 10) // 10秒读取请求头
 	viper.SetDefault("server.max_header_bytes", 64*1024)
 	viper.SetDefault("server.idle_timeout", 120) // 120秒空闲超时
+	// /readyz 对每个依赖的探测超时。要短于编排器的 probe timeoutSeconds，否则探针先于我们超时，
+	// 响应体里的依赖明细永远到不了编排器的日志。
+	viper.SetDefault("server.readiness_timeout_seconds", 2)
 	viper.SetDefault("server.max_request_body_size", int64(256*1024*1024))
 	// H2C 默认配置
 	viper.SetDefault("server.h2c.enabled", false)
@@ -2629,6 +2638,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.IdleTimeout <= 0 {
 		return fmt.Errorf("server.idle_timeout must be positive")
+	}
+	if c.Server.ReadinessTimeoutSeconds < 1 || c.Server.ReadinessTimeoutSeconds > 30 {
+		return fmt.Errorf("server.readiness_timeout_seconds must be between 1 and 30 seconds")
 	}
 	if c.Server.MaxRequestBodySize < 0 {
 		return fmt.Errorf("server.max_request_body_size must be non-negative")

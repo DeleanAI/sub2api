@@ -6,6 +6,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/probe"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -22,8 +23,8 @@ func Logger() gin.HandlerFunc {
 		// 处理请求
 		c.Next()
 
-		// 跳过健康检查等高频探针路径的日志
-		if path == "/health" || path == "/setup/status" {
+		// 跳过探针（liveness/readiness）与安装状态轮询等高频路径的日志
+		if probe.IsPath(path) || path == "/setup/status" {
 			return
 		}
 

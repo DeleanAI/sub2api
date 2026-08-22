@@ -11,6 +11,15 @@ export interface ReleaseInfo {
   html_url: string
 }
 
+/**
+ * Machine-readable reason why the server refuses an in-app update/rollback.
+ * Mirrors service.InAppUpdateBlockCode on the backend; keep both lists in sync.
+ */
+export type InAppUpdateBlockCode =
+  | 'multiple_instances'
+  | 'instance_count_unknown'
+  | 'executable_not_writable'
+
 export interface VersionInfo {
   current_version: string
   latest_version: string
@@ -19,6 +28,16 @@ export interface VersionInfo {
   cached: boolean
   warning?: string
   build_type: string // "source" for manual builds, "release" for CI builds
+  /**
+   * False when replacing the running binary is refused (multiple replicas,
+   * unknown instance count, read-only filesystem). Update/rollback requests
+   * then fail with 409 IN_APP_UPDATE_DISABLED, so the UI disables them up front.
+   */
+  in_app_update_allowed: boolean
+  in_app_update_blocked_code?: InAppUpdateBlockCode | string
+  in_app_update_blocked_reason?: string
+  /** Live instances registered in Redis; -1 when unknown. */
+  live_instances: number
 }
 
 /**

@@ -43,6 +43,11 @@ export const useAppStore = defineStore('app', () => {
   const hasUpdate = ref<boolean>(false)
   const buildType = ref<string>('source')
   const releaseInfo = ref<ReleaseInfo | null>(null)
+  // In-app update gate; defaults to "not allowed" so nothing is offered before the server has answered.
+  const inAppUpdateAllowed = ref<boolean>(false)
+  const inAppUpdateBlockedCode = ref<string>('')
+  const inAppUpdateBlockedReason = ref<string>('')
+  const liveInstances = ref<number>(-1)
 
   // Auto-incrementing ID for toasts
   let toastIdCounter = 0
@@ -249,7 +254,11 @@ export const useAppStore = defineStore('app', () => {
         has_update: hasUpdate.value,
         build_type: buildType.value,
         release_info: releaseInfo.value || undefined,
-        cached: true
+        cached: true,
+        in_app_update_allowed: inAppUpdateAllowed.value,
+        in_app_update_blocked_code: inAppUpdateBlockedCode.value || undefined,
+        in_app_update_blocked_reason: inAppUpdateBlockedReason.value || undefined,
+        live_instances: liveInstances.value
       }
     }
 
@@ -266,6 +275,11 @@ export const useAppStore = defineStore('app', () => {
       hasUpdate.value = data.has_update
       buildType.value = data.build_type || 'source'
       releaseInfo.value = data.release_info || null
+      // Fail closed: only an explicit true from the server enables in-app update.
+      inAppUpdateAllowed.value = data.in_app_update_allowed === true
+      inAppUpdateBlockedCode.value = data.in_app_update_blocked_code || ''
+      inAppUpdateBlockedReason.value = data.in_app_update_blocked_reason || ''
+      liveInstances.value = typeof data.live_instances === 'number' ? data.live_instances : -1
       versionLoaded.value = true
       return data
     } catch (error) {
@@ -459,6 +473,10 @@ export const useAppStore = defineStore('app', () => {
     hasUpdate,
     buildType,
     releaseInfo,
+    inAppUpdateAllowed,
+    inAppUpdateBlockedCode,
+    inAppUpdateBlockedReason,
+    liveInstances,
 
     // Computed
     hasActiveToasts,

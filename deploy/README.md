@@ -507,6 +507,51 @@ The main config file is at `/etc/sub2api/config.yaml` (created by Setup Wizard).
 
 ---
 
+## Health and Readiness Probes
+
+Sub2API exposes two probe endpoints. They answer different questions and fail independently, so wire them to different orchestrator probes:
+
+| Endpoint | Question | Depends on | Response |
+|----------|----------|------------|----------|
+| `GET /health` | Is the process alive? (**liveness**) | Nothing | Always `200 {"status":"ok"}` while the process runs |
+| `GET /readyz` | Can this instance serve traffic? (**readiness**) | PostgreSQL and Redis | `200 {"status":"ready","checks":{"postgres":"ok","redis":"ok"}}` or `503 {"status":"not_ready","checks":{"postgres":"ok","redis":"error: ..."}}` |
+
+`/readyz` probes every dependency concurrently, each with its own timeout (`server.readiness_timeout_seconds`, default `2`, env `SERVER_READINESS_TIMEOUT_SECONDS`). Error texts are redacted (no DSNs or passwords), the response carries `Cache-Control: no-store`, and a dependency that turns unhealthy or recovers is logged once per transition. Neither endpoint requires authentication, and neither is written to the access log.
+
+Why two endpoints: a dependency outage must fail readiness (stop routing traffic to the instance) but must **not** fail liveness. If `/health` depended on the database, Kubernetes would restart every replica during a database blip and turn a recoverable outage into a crash loop.
+
+Kubernetes example:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8080
+  periodSeconds: 10
+  timeoutSeconds: 3       # must exceed server.readiness_timeout_seconds
+  failureThreshold: 3     # tolerate a single slow probe under load instead of evicting the pod
+```
+
+The Docker Compose files in this directory keep using `/health` for the container healthcheck (process-level liveness). Point an external load balancer or ingress health check at `/readyz` instead, so an instance that lost its database or Redis is taken out of rotation rather than kept in it.
+
+### In-app update with multiple instances
+
+The admin panel's in-app update and online rollback replace the running binary of the **one process that served the request**. With several replicas that produces version skew (one replica on the new version, the rest on the old one, possibly with migrations already applied), and in a container the change lives in the writable layer and is undone by the next restart. The server therefore refuses the operation with HTTP 409 and error code `IN_APP_UPDATE_DISABLED`, and the UI disables the buttons up front, when any of these holds:
+
+- **More than one live instance.** Every process heartbeats into the Redis sorted set `instances:heartbeat` every 15s and counts as live for 45s after its last heartbeat; a gracefully stopped process deregisters immediately, a crashed one drops out after the window.
+- **The instance count is unknown** (Redis unreachable or an instance record the server cannot decode). This fails closed: an unknown topology is treated as multi-instance.
+- **The executable's directory is not writable**, for example a read-only root filesystem. The check creates and removes a temp file next to the binary, which is exactly what the update would have to do.
+
+`GET /api/v1/admin/system/check-updates` reports the decision as `in_app_update_allowed`, `in_app_update_blocked_code`, `in_app_update_blocked_reason` and `live_instances` (`-1` when unknown); refusals are also logged with the reason. Upgrade such deployments by changing the image tag (`docker compose pull && docker compose up -d`, or the image in your Kubernetes manifest) or by running `install.sh upgrade` on every host.
+
+---
+
 ## Troubleshooting
 
 ### Docker
@@ -577,6 +622,7 @@ sudo systemctl status redis
 2. **Database connection failed**: Check PostgreSQL is running and credentials are correct
 3. **Redis connection failed**: Check Redis is running and password is correct
 4. **Permission denied**: Ensure proper file ownership for binary install
+5. **Update button disabled / `409 IN_APP_UPDATE_DISABLED`**: More than one instance is running, the instance count is unknown (check Redis), or the program directory is read-only. Upgrade by changing the image tag instead; see [In-app update with multiple instances](#in-app-update-with-multiple-instances)
 
 ---
 

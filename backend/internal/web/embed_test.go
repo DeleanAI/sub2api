@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/probe"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -518,7 +519,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		server, err := NewFrontendServer(provider)
 		require.NoError(t, err)
 
-		apiPaths := []string{
+		apiPaths := append(probe.Paths(),
 			"/api/v1/users",
 			"/models",
 			"/v1/models",
@@ -527,10 +528,9 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			"/backend-api/codex/responses/compact",
 			"/antigravity/test",
 			"/setup/init",
-			"/health",
 			"/responses",
 			"/responses/compact",
-		}
+		)
 
 		for _, path := range apiPaths {
 			t.Run(path, func(t *testing.T) {
@@ -678,6 +678,13 @@ func TestFrontendServer_Middleware(t *testing.T) {
 	})
 }
 
+// 探针路径被 SPA 兜底吞掉的话，编排器拿到的是 200 + HTML，故障实例永远摘不掉。
+func TestEmbeddedFrontendBypassesEveryProbePath(t *testing.T) {
+	for _, path := range probe.Paths() {
+		require.True(t, shouldBypassEmbeddedFrontend(path), "probe path=%s", path)
+	}
+}
+
 func TestEmbeddedFrontendBypassesBareVideoAPIRoutes(t *testing.T) {
 	for _, path := range []string{
 		"/videos/generations",
@@ -780,7 +787,7 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 	t.Run("skips_api_routes", func(t *testing.T) {
 		middleware := ServeEmbeddedFrontend()
 
-		apiPaths := []string{
+		apiPaths := append(probe.Paths(),
 			"/api/users",
 			"/models",
 			"/v1/models",
@@ -789,10 +796,9 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 			"/backend-api/codex/responses/compact",
 			"/antigravity/test",
 			"/setup/init",
-			"/health",
 			"/responses",
 			"/responses/compact",
-		}
+		)
 
 		for _, path := range apiPaths {
 			t.Run(path, func(t *testing.T) {

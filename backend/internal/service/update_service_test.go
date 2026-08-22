@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +61,7 @@ func TestUpdateServicePerformUpdateNoUpdateReturnsSentinel(t *testing.T) {
 		},
 		"0.1.132",
 		"release",
+		allowAllInAppUpdatePolicy(),
 	)
 
 	err := svc.PerformUpdate(context.Background())
@@ -75,6 +77,7 @@ func newRollbackTestService(current string, releases []*GitHubRelease) *UpdateSe
 		&updateServiceGitHubClientStub{recentReleases: releases},
 		current,
 		"release",
+		allowAllInAppUpdatePolicy(),
 	)
 }
 
@@ -137,6 +140,7 @@ func TestUpdateServiceListRollbackVersionsPropagatesFetchError(t *testing.T) {
 		&updateServiceGitHubClientStub{recentErr: errors.New("github unavailable")},
 		"0.1.147",
 		"release",
+		allowAllInAppUpdatePolicy(),
 	)
 
 	_, err := svc.ListRollbackVersions(context.Background())
@@ -184,4 +188,93 @@ func TestUpdateServiceRollbackToVersionAcceptsVPrefix(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrRollbackVersionNotAllowed)
 	require.Contains(t, err.Error(), "no compatible release found")
+}
+
+func allowAllInAppUpdatePolicy() *InAppUpdatePolicy {
+	return NewInAppUpdatePolicy(&stubLiveInstanceCounter{instances: singleInstance()}, writableProbeOK)
+}
+
+// panickingGitHubClient 证明拒绝发生在任何网络访问之前。
+type panickingGitHubClient struct{}
+
+func (panickingGitHubClient) FetchLatestRelease(context.Context, string) (*GitHubRelease, error) {
+	panic("GitHub must not be contacted when the in-app update policy refuses")
+}
+
+func (panickingGitHubClient) FetchRecentReleases(context.Context, string, int) ([]*GitHubRelease, error) {
+	panic("GitHub must not be contacted when the in-app update policy refuses")
+}
+
+func (panickingGitHubClient) DownloadFile(context.Context, string, string, int64) error {
+	panic("nothing may be downloaded when the in-app update policy refuses")
+}
+
+func (panickingGitHubClient) FetchChecksumFile(context.Context, string) ([]byte, error) {
+	panic("nothing may be downloaded when the in-app update policy refuses")
+}
+
+// binaryReplacingOperations 枚举所有会替换运行中二进制的入口；每一个都必须先过策略。
+var binaryReplacingOperations = map[string]func(ctx context.Context, svc *UpdateService) error{
+	"PerformUpdate":     func(ctx context.Context, svc *UpdateService) error { return svc.PerformUpdate(ctx) },
+	"Rollback":          func(ctx context.Context, svc *UpdateService) error { return svc.Rollback(ctx) },
+	"RollbackToVersion": func(ctx context.Context, svc *UpdateService) error { return svc.RollbackToVersion(ctx, "0.1.146") },
+}
+
+func TestUpdateServiceRefusesEveryBinaryReplacingOperationWhenPolicyBlocks(t *testing.T) {
+	policies := map[string]*InAppUpdatePolicy{
+		"multiple instances": NewInAppUpdatePolicy(&stubLiveInstanceCounter{instances: append(singleInstance(), InstanceInfo{ID: "peer", Hostname: "host-b"})}, writableProbeOK),
+		"count unknown":      NewInAppUpdatePolicy(&stubLiveInstanceCounter{err: errors.New("redis down")}, writableProbeOK),
+		"read-only exe dir":  NewInAppUpdatePolicy(&stubLiveInstanceCounter{instances: singleInstance()}, func() error { return errors.New("read-only file system") }),
+		"nil policy":         nil,
+	}
+
+	for policyName, policy := range policies {
+		for opName, op := range binaryReplacingOperations {
+			t.Run(policyName+"/"+opName, func(t *testing.T) {
+				svc := NewUpdateService(&updateServiceCacheStub{}, panickingGitHubClient{}, "0.1.147", "release", policy)
+
+				err := op(context.Background(), svc)
+
+				require.ErrorIs(t, err, ErrInAppUpdateDisabled)
+				require.NotEmpty(t, infraerrors.Message(err), "refusal must carry an operator-facing reason")
+			})
+		}
+	}
+}
+
+// 裁决随调用实时评估，不随 release 信息一起缓存。
+func TestUpdateServiceCheckUpdateCarriesFreshInAppUpdateDecision(t *testing.T) {
+	counter := &stubLiveInstanceCounter{instances: singleInstance()}
+	svc := NewUpdateService(
+		&updateServiceCacheStub{},
+		&updateServiceGitHubClientStub{release: &GitHubRelease{TagName: "v0.1.148", Name: "v0.1.148"}},
+		"0.1.147",
+		"release",
+		NewInAppUpdatePolicy(counter, writableProbeOK),
+	)
+
+	info, err := svc.CheckUpdate(context.Background(), true)
+	require.NoError(t, err)
+	require.True(t, info.HasUpdate)
+	require.True(t, info.InAppUpdateAllowed)
+	require.Empty(t, info.InAppUpdateBlockedCode)
+	require.Empty(t, info.InAppUpdateBlockedReason)
+	require.Equal(t, 1, info.LiveInstances)
+
+	// 第二个实例上线；下一次（命中缓存的）检查必须立刻反映出来。
+	counter.instances = append(singleInstance(), InstanceInfo{ID: "peer", Hostname: "host-b", Version: "0.1.147"})
+	info, err = svc.CheckUpdate(context.Background(), false)
+	require.NoError(t, err)
+	require.True(t, info.Cached)
+	require.False(t, info.InAppUpdateAllowed)
+	require.Equal(t, string(InAppUpdateBlockMultipleInstances), info.InAppUpdateBlockedCode)
+	require.Contains(t, info.InAppUpdateBlockedReason, "2 live instances")
+	require.Equal(t, 2, info.LiveInstances)
+
+	counter.err = errors.New("redis down")
+	info, err = svc.CheckUpdate(context.Background(), false)
+	require.NoError(t, err)
+	require.False(t, info.InAppUpdateAllowed)
+	require.Equal(t, string(InAppUpdateBlockInstanceCountUnknown), info.InAppUpdateBlockedCode)
+	require.Equal(t, LiveInstancesUnknown, info.LiveInstances)
 }
