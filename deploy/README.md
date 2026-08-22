@@ -170,6 +170,31 @@ SELECT
   (SELECT COUNT(*) FROM user_allowed_groups) AS new_pair_count;
 ```
 
+### Custom pages (Markdown)
+
+Custom pages (`custom_menu_items` entries whose URL is `md:<slug>`) and their images are
+stored in PostgreSQL (`custom_pages`, `custom_page_assets`) since this version, so every replica
+serves the same content and nothing is lost when a pod restarts.
+
+- **First start after upgrading**: if `custom_pages` is empty and `<DATA_DIR>/pages/*.md` exist,
+  they are imported once together with `<DATA_DIR>/pages/<slug>/**` (images). The log line
+  `custom_pages.imported_from_disk count=N assets=M` confirms it. Replicas starting at the same
+  time serialize the import through the leader lock; the insert is `ON CONFLICT DO NOTHING` anyway.
+- **After that** the directory is never read again. If the table is non-empty and files are still
+  on disk, startup logs a `custom_pages.disk_files_ignored` warning listing them; delete the
+  directory and manage pages in *Admin → Settings → General → Custom Pages* (or via
+  `/api/v1/admin/pages`).
+- Limits: page content ≤ 1 MiB, one asset ≤ 5 MiB, ≤ 200 assets per page.
+
+### Static asset overrides (`<DATA_DIR>/public`)
+
+Files under `<DATA_DIR>/public` override the embedded frontend files with the same path (branding:
+logo, favicon, …). The directory is resolved from the data directory (`DATA_DIR` →
+`/app/data` → `pricing.data_dir`), never from the process working directory, and the resolved
+path is logged at startup (`Frontend static override directory: …`). It is **per instance**: in a
+multi-replica deployment mount identical content on every replica (or use custom page assets,
+which live in the database).
+
 ### datamanagementd（数据管理）联动
 
 如需启用管理后台“数据管理”功能，请额外部署宿主机 `datamanagementd`：
