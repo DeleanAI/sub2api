@@ -124,6 +124,24 @@ func RegisterAdminRoutes(
 
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
+
+		// 自定义页面（Markdown + 附件，存数据库）
+		registerCustomPageRoutes(admin, h)
+	}
+}
+
+// registerCustomPageRoutes 注册自定义页面管理接口。挂在 /admin 组下即自动审计：
+// 动作名由 method + 路由推导（admin.pages.update / admin.pages.assets.delete ...）。
+func registerCustomPageRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	pages := admin.Group("/pages")
+	{
+		pages.GET("", h.Admin.CustomPage.List)
+		pages.GET("/:slug", h.Admin.CustomPage.Get)
+		pages.PUT("/:slug", h.Admin.CustomPage.Save)
+		pages.DELETE("/:slug", h.Admin.CustomPage.Delete)
+		pages.GET("/:slug/assets", h.Admin.CustomPage.ListAssets)
+		pages.PUT("/:slug/assets/*path", h.Admin.CustomPage.SaveAsset)
+		pages.DELETE("/:slug/assets/*path", h.Admin.CustomPage.DeleteAsset)
 	}
 }
 

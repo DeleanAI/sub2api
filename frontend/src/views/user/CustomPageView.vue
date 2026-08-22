@@ -126,14 +126,7 @@ import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { buildApiUrl } from '@/api/client'
 import { buildEmbeddedUrl, detectTheme } from '@/utils/embedded-url'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
-
-interface TocItem {
-  id: string
-  text: string
-  level: number
-}
+import { renderCustomPageMarkdown, type CustomPageTocItem as TocItem } from '@/utils/customPageMarkdown'
 
 const { t, locale } = useI18n()
 const route = useRoute()
@@ -190,37 +183,6 @@ const isValidUrl = computed(() => {
   return url.startsWith('http://') || url.startsWith('https://')
 })
 
-function generateHeadingId(text: string, index: number): string {
-  const base = text
-    .toLowerCase()
-    .replace(/[^\w一-鿿]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return base ? `${base}-${index}` : `heading-${index}`
-}
-
-function isRelativeMarkdownAsset(src: string): boolean {
-  const trimmed = src.trim()
-  if (!trimmed || /^[a-z][a-z0-9+.-]*:/i.test(trimmed) || trimmed.startsWith('//') || trimmed.startsWith('/')) {
-    return false
-  }
-  const [pathPart] = trimmed.split(/([?#].*)/, 2)
-  return pathPart
-    .split('/')
-    .filter((part) => part && part !== '.')
-    .every((part) => part !== '..' && !part.includes('\\'))
-}
-
-function buildPageImageUrl(slug: string, src: string): string {
-  const trimmed = src.trim()
-  const [pathPart, suffix = ''] = trimmed.split(/([?#].*)/, 2)
-  const encodedPath = pathPart
-    .split('/')
-    .filter((part) => part && part !== '.')
-    .map((part) => encodeURIComponent(part))
-    .join('/')
-  return buildApiUrl(`/pages/${encodeURIComponent(slug)}/images/${encodedPath}${suffix}`)
-}
-
 async function fetchAndRenderMarkdown(slug: string) {
   loading.value = true
   tocItems.value = []
@@ -233,35 +195,12 @@ async function fetchAndRenderMarkdown(slug: string) {
       renderedHtml.value = `<p class="text-red-500">${t('common.pageNotFound')}</p>`
       return
     }
-    let raw = await resp.text()
+    const raw = await resp.text()
 
-    raw = raw.replace(
-      /!\[([^\]]*)\]\(([^)]+)\)/g,
-      (match, alt, src) => isRelativeMarkdownAsset(src) ? `![${alt}](${buildPageImageUrl(slug, src)})` : match
-    )
-
-    const html = marked.parse(raw) as string
-    const sanitized = DOMPurify.sanitize(html, {
-      ADD_TAGS: ['iframe'],
-      ADD_ATTR: ['allowfullscreen', 'frameborder', 'src'],
-    })
-
-    // Inject IDs into headings and build TOC
-    const toc: TocItem[] = []
-    let headingIndex = 0
-    const withIds = sanitized.replace(
-      /<(h[1-4])[^>]*>(.*?)<\/h[1-4]>/gi,
-      (_, tag: string, content: string) => {
-        const level = parseInt(tag[1])
-        const text = content.replace(/<[^>]+>/g, '').trim()
-        const id = generateHeadingId(text, headingIndex++)
-        toc.push({ id, text, level })
-        return `<${tag} id="${id}">${content}</${tag}>`
-      }
-    )
-
-    renderedHtml.value = withIds
-    tocItems.value = toc
+    // 与后台编辑器预览共用同一套渲染：相对图片改写、sanitize、标题锚点都只实现一次。
+    const rendered = renderCustomPageMarkdown(slug, raw)
+    renderedHtml.value = rendered.html
+    tocItems.value = rendered.toc
   } catch {
     renderedHtml.value = '<p class="text-red-500">Failed to load page</p>'
   } finally {

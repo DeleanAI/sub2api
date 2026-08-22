@@ -685,6 +685,24 @@ func ProvideBackupService(
 	return svc
 }
 
+// customPageImportTimeout 限制启动期磁盘导入的耗时；导入在 HTTP 服务起来之前同步完成，
+// 这样第一个请求看到的就是数据库里的内容，不存在"请求路径回退读磁盘"的窗口。
+const customPageImportTimeout = 2 * time.Minute
+
+// ProvideCustomPageService 创建自定义页面服务，并把旧版 <DATA_DIR>/pages 一次性导入数据库。
+// 导入失败不阻塞启动：页面在表为空时会 404，日志里有明确原因，下次启动会再次尝试（表仍为空）。
+func ProvideCustomPageService(repo CustomPageRepository, lockCache LeaderLockCache, db *sql.DB, cfg *config.Config) *CustomPageService {
+	svc := NewCustomPageService(repo)
+	svc.SetLeaderLock(lockCache, db)
+
+	ctx, cancel := context.WithTimeout(context.Background(), customPageImportTimeout)
+	defer cancel()
+	if _, err := svc.ImportFromDisk(ctx, config.CustomPagesImportDir(cfg.Pricing.DataDir)); err != nil {
+		logger.LegacyPrintf("service.custom_page", "Warning: importing legacy custom pages from disk failed, pages stay unavailable until the next start retries: %v", err)
+	}
+	return svc
+}
+
 // ProvideOpsService constructs OpsService and wires the SettingService-backed quota
 // auto-pause cache sink. Mirrors the SetCleanupReloader pattern: OpsService doesn't
 // hold a *SettingService reference, but wire injects a tiny callback so writes to
@@ -860,6 +878,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSettingService,
 	NewDataManagementService,
 	ProvideBackupService,
+	ProvideCustomPageService,
 	ProvideOpsSystemLogSink,
 	ProvideOpsService,
 	ProvideOpsIngressRejectAggregator,

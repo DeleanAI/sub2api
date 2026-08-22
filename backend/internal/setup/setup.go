@@ -37,28 +37,11 @@ func setupDefaultAdminConcurrency() int {
 	return defaultUserConcurrency
 }
 
-// GetDataDir returns the data directory for storing config and lock files.
-// Priority: DATA_DIR env > /app/data (if exists and writable) > current directory
+// GetDataDir returns the directory holding config.yaml and the install lock file.
+// 解析规则只有 config.ResolveDataDir 一份；这里只声明用途相关的回退值：
+// 裸机安装时安装标记和二进制放在工作目录（/opt/sub2api），运行期数据在 ./data。
 func GetDataDir() string {
-	// Check DATA_DIR environment variable first
-	if dir := os.Getenv("DATA_DIR"); dir != "" {
-		return dir
-	}
-
-	// Check if /app/data exists and is writable (Docker environment)
-	dockerDataDir := "/app/data"
-	if info, err := os.Stat(dockerDataDir); err == nil && info.IsDir() {
-		// Try to check if writable by creating a temp file
-		testFile := dockerDataDir + "/.write_test"
-		if f, err := os.Create(testFile); err == nil {
-			_ = f.Close()
-			_ = os.Remove(testFile)
-			return dockerDataDir
-		}
-	}
-
-	// Default to current directory
-	return "."
+	return config.ResolveDataDir(".")
 }
 
 // GetConfigFilePath returns the full path to config.yaml

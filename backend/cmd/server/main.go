@@ -121,9 +121,13 @@ func runSetupServer() {
 	// Register setup routes
 	setup.RegisterRoutes(r)
 
-	// Serve embedded frontend if available
+	// Serve embedded frontend if available.
+	// 安装向导阶段还没有 config.yaml，静态覆盖目录只能取运行期数据目录的默认值；
+	// 规则与主服务一致（config.StaticOverrideDir），不再是 CWD 相对的 data/public。
 	if web.HasEmbeddedFrontend() {
-		r.Use(web.ServeEmbeddedFrontend())
+		overrideDir := config.StaticOverrideDir(config.DefaultRuntimeDataDir())
+		log.Printf("Frontend static override directory: %s", overrideDir)
+		r.Use(web.ServeEmbeddedFrontend(overrideDir))
 	}
 
 	// Get server address from config.yaml or environment variables (SERVER_HOST, SERVER_PORT)

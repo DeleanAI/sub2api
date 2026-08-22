@@ -1079,8 +1079,11 @@ pricing:
   # Hash verification URL (optional)
   # 哈希校验 URL（可选）
   hash_url: "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/refs/heads/main//model_prices_and_context_window.sha256"
-  # Local data directory for caching
-  # 本地数据缓存目录
+  # Runtime data directory: pricing cache, legacy custom-pages import source (<data_dir>/pages),
+  # frontend static overrides (<data_dir>/public). Relative paths are resolved against the
+  # working directory once at startup. Default when omitted: DATA_DIR env > /app/data > ./data
+  # 运行期数据目录：定价缓存、旧版自定义页面导入源（<data_dir>/pages）、前端静态覆盖（<data_dir>/public）。
+  # 相对路径只在启动时按工作目录解析一次。省略时默认：DATA_DIR 环境变量 > /app/data > ./data
   data_dir: "./data"
   # Fallback pricing file
   # 备用定价文件

@@ -1,12 +1,10 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
@@ -15,26 +13,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var validSlugPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
-
-const maxPageFileSize = 1 << 20 // 1MB
-
+// PageHandler 对外提供自定义页面的读取接口。
+// 页面与附件来自 PostgreSQL（issue #7）；这里不再碰磁盘，所以任何副本返回的内容都一致。
+// 可见性仍由 custom_menu_items 设置驱动：只有挂在菜单上的 slug 才对外可见。
 type PageHandler struct {
-	pagesDir       string
+	pages          *service.CustomPageService
 	settingService *service.SettingService
 }
 
-func NewPageHandler(dataDir string, settingService *service.SettingService) *PageHandler {
-	pagesDir := filepath.Join(dataDir, "pages")
-	_ = os.MkdirAll(pagesDir, 0755)
-	return &PageHandler{pagesDir: pagesDir, settingService: settingService}
+// NewPageHandler 创建页面读取处理器。
+func NewPageHandler(pages *service.CustomPageService, settingService *service.SettingService) *PageHandler {
+	return &PageHandler{pages: pages, settingService: settingService}
 }
 
 // GetPageContent serves raw markdown content for a given slug.
 // GET /api/v1/pages/:slug
 func (h *PageHandler) GetPageContent(c *gin.Context) {
 	slug := c.Param("slug")
-	if !validSlugPattern.MatchString(slug) || len(slug) > 64 {
+	if err := service.ValidateCustomPageSlug(slug); err != nil {
 		response.BadRequest(c, "Invalid page slug")
 		return
 	}
@@ -46,63 +42,42 @@ func (h *PageHandler) GetPageContent(c *gin.Context) {
 		return
 	}
 
-	filePath := filepath.Join(h.pagesDir, slug+".md")
-	cleaned := filepath.Clean(filePath)
-	if !strings.HasPrefix(cleaned, filepath.Clean(h.pagesDir)) {
-		response.BadRequest(c, "Invalid page slug")
-		return
-	}
-
-	info, err := os.Stat(cleaned)
-	if err != nil || info.IsDir() {
-		c.JSON(http.StatusNotFound, gin.H{"error": "page not found"})
-		return
-	}
-	if info.Size() > maxPageFileSize {
-		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "page too large"})
-		return
-	}
-
-	content, err := os.ReadFile(cleaned)
+	page, err := h.pages.GetPage(c.Request.Context(), slug)
 	if err != nil {
+		if errors.Is(err, service.ErrCustomPageNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "page not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read page"})
 		return
 	}
 
-	c.Data(http.StatusOK, "text/markdown; charset=utf-8", content)
+	c.Data(http.StatusOK, "text/markdown; charset=utf-8", []byte(page.Content))
 }
 
 // ListPages returns available page slugs.
 // GET /api/v1/pages
 func (h *PageHandler) ListPages(c *gin.Context) {
-	entries, err := os.ReadDir(h.pagesDir)
+	pages, err := h.pages.ListPages(c.Request.Context())
 	if err != nil {
-		response.Success(c, []string{})
+		response.ErrorFrom(c, err)
 		return
 	}
-
-	slugs := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if strings.HasSuffix(name, ".md") {
-			slugs = append(slugs, strings.TrimSuffix(name, ".md"))
-		}
+	slugs := make([]string, 0, len(pages))
+	for i := range pages {
+		slugs = append(slugs, pages[i].Slug)
 	}
 	response.Success(c, slugs)
 }
 
-// ServePageImage serves images from data/pages/{slug}/ directory.
+// ServePageImage serves a page asset.
 // GET /api/v1/pages/:slug/images/*filename
 // No JWT required (browser img tags can't carry tokens), but visibility is checked.
 func (h *PageHandler) ServePageImage(c *gin.Context) {
 	slug := c.Param("slug")
-	filename := c.Param("filename")
-	filename = strings.TrimPrefix(filename, "/")
+	filename := strings.TrimPrefix(c.Param("filename"), "/")
 
-	if !validSlugPattern.MatchString(slug) || len(slug) > 64 {
+	if err := service.ValidateCustomPageSlug(slug); err != nil {
 		c.Status(http.StatusNotFound)
 		return
 	}
@@ -112,93 +87,19 @@ func (h *PageHandler) ServePageImage(c *gin.Context) {
 		return
 	}
 
-	imagesDir := filepath.Join(h.pagesDir, slug)
-	cleaned, ok := resolvePageImagePath(h.pagesDir, imagesDir, filename)
-	if !ok {
-		c.Status(http.StatusNotFound)
-		return
-	}
-
-	info, err := os.Stat(cleaned)
-	if err != nil || info.IsDir() {
-		c.Status(http.StatusNotFound)
-		return
-	}
-
-	c.File(cleaned)
-}
-
-func resolvePageImagePath(pagesDir, imagesDir, filename string) (string, bool) {
-	relPath, ok := cleanPageImageRelativePath(filename)
-	if !ok {
-		return "", false
-	}
-
-	cleanedPagesDir := filepath.Clean(pagesDir)
-	cleanedImagesDir := filepath.Clean(imagesDir)
-	cleanedTarget := filepath.Clean(filepath.Join(cleanedImagesDir, relPath))
-	if !isPathWithinBase(cleanedTarget, cleanedImagesDir) {
-		return "", false
-	}
-
-	realPagesDir, err := filepath.EvalSymlinks(cleanedPagesDir)
+	asset, err := h.pages.GetAsset(c.Request.Context(), slug, filename)
 	if err != nil {
-		return "", false
-	}
-	realImagesDir, err := filepath.EvalSymlinks(cleanedImagesDir)
-	if err != nil || !isPathWithinBase(realImagesDir, realPagesDir) {
-		return "", false
-	}
-	realTarget, err := filepath.EvalSymlinks(cleanedTarget)
-	if err != nil || !isPathWithinBase(realTarget, realImagesDir) {
-		return "", false
-	}
-	return realTarget, true
-}
-
-func cleanPageImageRelativePath(filename string) (string, bool) {
-	if filename == "" {
-		return "", false
-	}
-	if strings.HasPrefix(filename, "/") {
-		return "", false
-	}
-	decoded, err := url.PathUnescape(filename)
-	if err != nil {
-		return "", false
-	}
-	if decoded == "" || strings.HasPrefix(decoded, "/") || strings.Contains(decoded, "\\") || strings.ContainsRune(decoded, 0) {
-		return "", false
-	}
-
-	parts := make([]string, 0)
-	for _, part := range strings.Split(decoded, "/") {
-		switch part {
-		case "", ".":
-			continue
-		case "..":
-			return "", false
-		default:
-			parts = append(parts, part)
+		if errors.Is(err, service.ErrCustomPageAssetNotFound) || errors.Is(err, service.ErrCustomPageInvalidAssetPath) {
+			c.Status(http.StatusNotFound)
+			return
 		}
-	}
-	if len(parts) == 0 {
-		return "", false
+		c.Status(http.StatusInternalServerError)
+		return
 	}
 
-	relPath := filepath.Join(parts...)
-	if filepath.IsAbs(relPath) || filepath.VolumeName(relPath) != "" {
-		return "", false
-	}
-	return relPath, true
-}
-
-func isPathWithinBase(path, base string) bool {
-	rel, err := filepath.Rel(filepath.Clean(base), filepath.Clean(path))
-	if err != nil {
-		return false
-	}
-	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	// ServeContent 负责 If-Modified-Since / Range；Content-Type 以存储的类型为准，不做嗅探。
+	c.Header("Content-Type", asset.ContentType)
+	http.ServeContent(c.Writer, c.Request, asset.Path, asset.UpdatedAt, bytes.NewReader(asset.Data))
 }
 
 // findSlugVisibility looks up the slug in custom_menu_items and returns (visibility, found).
@@ -258,9 +159,7 @@ func (h *PageHandler) checkImageSlugVisibility(c *gin.Context, slug string) bool
 }
 
 // RegisterPageRoutes registers page routes on a router group.
-func RegisterPageRoutes(v1 *gin.RouterGroup, dataDir string, jwtAuth gin.HandlerFunc, adminAuth gin.HandlerFunc, settingService *service.SettingService) {
-	h := NewPageHandler(dataDir, settingService)
-
+func RegisterPageRoutes(v1 *gin.RouterGroup, h *PageHandler, jwtAuth gin.HandlerFunc, adminAuth gin.HandlerFunc, settingService *service.SettingService) {
 	// Authenticated page content (JWT required + visibility check)
 	pages := v1.Group("/pages")
 	pages.Use(jwtAuth)
