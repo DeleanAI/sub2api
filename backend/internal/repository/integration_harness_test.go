@@ -38,6 +38,9 @@ var (
 	integrationDB        *sql.DB
 	integrationEntClient *dbent.Client
 	integrationRedis     *redisclient.Client
+	// integrationDSN 是容器里 PostgreSQL 的连接串；需要一个干净数据库做全局断言的
+	// 测试（如密钥轮换）用它派生出自己的库，而不是在共享库里清表。
+	integrationDSN string
 
 	redisNamespaceSeq uint64
 )
@@ -90,6 +93,7 @@ func TestMain(m *testing.M) {
 		log.Printf("failed to get postgres dsn: %v", err)
 		os.Exit(1)
 	}
+	integrationDSN = dsn
 
 	integrationDB, err = openSQLWithRetry(ctx, dsn, 30*time.Second)
 	if err != nil {
