@@ -41,11 +41,13 @@ type FrontendServer struct {
 	baseHTML    []byte
 	cache       *HTMLCache
 	settings    PublicSettingsProvider
-	overrideDir string // local file override directory
+	overrideDir string // local file override directory (absolute; resolved by the caller from the data dir)
 }
 
-// NewFrontendServer creates a new frontend server with settings injection
-func NewFrontendServer(settingsProvider PublicSettingsProvider) (*FrontendServer, error) {
+// NewFrontendServer creates a new frontend server with settings injection.
+// overrideDir 由调用方从统一的数据目录解析（config.StaticOverrideDir），这里不再自己拼
+// CWD 相对路径，否则同一份配置在不同工作目录下会指向不同的覆盖目录。传空表示关闭覆盖。
+func NewFrontendServer(settingsProvider PublicSettingsProvider, overrideDir string) (*FrontendServer, error) {
 	distFS, err := fs.Sub(frontendFS, "dist")
 	if err != nil {
 		return nil, err
@@ -72,7 +74,7 @@ func NewFrontendServer(settingsProvider PublicSettingsProvider) (*FrontendServer
 		baseHTML:    baseHTML,
 		cache:       cache,
 		settings:    settingsProvider,
-		overrideDir: filepath.Join("data", "public"),
+		overrideDir: overrideDir,
 	}, nil
 }
 
@@ -299,14 +301,14 @@ func replaceNoncePlaceholder(html []byte, nonce string) []byte {
 }
 
 // ServeEmbeddedFrontend returns a middleware for serving embedded frontend
-// This is the legacy function for backward compatibility when no settings provider is available
-func ServeEmbeddedFrontend() gin.HandlerFunc {
+// This is the legacy function for backward compatibility when no settings provider is available.
+// overrideDir 同 NewFrontendServer：由调用方从数据目录解析，传空关闭覆盖。
+func ServeEmbeddedFrontend(overrideDir string) gin.HandlerFunc {
 	distFS, err := fs.Sub(frontendFS, "dist")
 	if err != nil {
 		panic("failed to get dist subdirectory: " + err.Error())
 	}
 	fileServer := http.FileServer(http.FS(distFS))
-	overrideDir := filepath.Join("data", "public")
 
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path

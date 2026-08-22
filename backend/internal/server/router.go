@@ -72,10 +72,13 @@ func SetupRouter(
 
 	// Serve embedded frontend with settings injection if available
 	if web.HasEmbeddedFrontend() {
-		frontendServer, err := web.NewFrontendServer(settingService) //nolint:staticcheck // SA4023: the !embed stub always errors; embed builds can return nil
-		if err != nil {                                              //nolint:staticcheck // SA4023: see above
+		// 静态覆盖目录挂在统一的数据目录下（绝对路径），启动时打印一次，便于多副本部署核对挂载。
+		overrideDir := config.StaticOverrideDir(cfg.Pricing.DataDir)
+		log.Printf("Frontend static override directory: %s (per-instance; mount identically on every replica)", overrideDir)
+		frontendServer, err := web.NewFrontendServer(settingService, overrideDir) //nolint:staticcheck // SA4023: the !embed stub always errors; embed builds can return nil
+		if err != nil {                                                           //nolint:staticcheck // SA4023: see above
 			log.Printf("Warning: Failed to create frontend server with settings injection: %v, using legacy mode", err)
-			r.Use(web.ServeEmbeddedFrontend())
+			r.Use(web.ServeEmbeddedFrontend(overrideDir))
 			settingService.SetOnUpdateCallback(refreshFrameOrigins)
 		} else {
 			// Register combined callback: invalidate HTML cache + refresh frame origins
@@ -131,5 +134,6 @@ func registerRoutes(
 	routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg)
 	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, auditLog, settingService, panelRateLimiter)
 
-	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
+	// 自定义页面读取接口：内容来自数据库，不再传数据目录。
+	handler.RegisterPageRoutes(v1, h.Page, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
 }

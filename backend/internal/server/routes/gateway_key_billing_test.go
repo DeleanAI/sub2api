@@ -90,7 +90,7 @@ func newKeyBillingRouteTestRouter(runMode string) (*gin.Engine, *keyBillingRoute
 
 	router := gin.New()
 	if web.HasEmbeddedFrontend() {
-		router.Use(web.ServeEmbeddedFrontend())
+		router.Use(web.ServeEmbeddedFrontend(""))
 	}
 	RegisterGatewayRoutes(
 		router,

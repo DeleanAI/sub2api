@@ -1813,6 +1813,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 
 	cfg.RunMode = NormalizeRunMode(cfg.RunMode)
+	// 配置文件里的相对 data_dir（如 config.example.yaml 的 "./data"）在加载时一次性转成绝对路径，
+	// 之后所有派生目录（pages 导入源、public 覆盖目录）都不再依赖进程工作目录。
+	cfg.Pricing.DataDir = normalizeRuntimeDataDir(cfg.Pricing.DataDir)
 	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
 	if cfg.Server.Mode == "" {
 		cfg.Server.Mode = "debug"
@@ -2261,7 +2264,8 @@ func setDefaults() {
 	// Pricing - 从 model-price-repo 同步模型定价和上下文窗口数据（固定到 commit，避免分支漂移）
 	viper.SetDefault("pricing.remote_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.json")
 	viper.SetDefault("pricing.hash_url", "https://raw.githubusercontent.com/Wei-Shaw/model-price-repo/main/model_prices_and_context_window.sha256")
-	viper.SetDefault("pricing.data_dir", "./data")
+	// 运行期数据目录跟随 DATA_DIR / /app/data，而不是固定的 CWD 相对路径；见 data_dir.go。
+	viper.SetDefault("pricing.data_dir", DefaultRuntimeDataDir())
 	viper.SetDefault("pricing.fallback_file", "./resources/model-pricing/model_prices_and_context_window.json")
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)
