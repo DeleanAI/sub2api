@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/probe"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 )
@@ -354,13 +355,14 @@ func tryServeOverrideFile(c *gin.Context, overrideDir, cleanPath string) bool {
 
 func shouldBypassEmbeddedFrontend(path string) bool {
 	trimmed := strings.TrimSpace(path)
-	return strings.HasPrefix(trimmed, "/api/") ||
+	// 探针路径（/health、/readyz）必须绕过 SPA 兜底：编排器要的是状态码，不是 index.html。
+	return probe.IsPath(trimmed) ||
+		strings.HasPrefix(trimmed, "/api/") ||
 		strings.HasPrefix(trimmed, "/v1/") ||
 		strings.HasPrefix(trimmed, "/v1beta/") ||
 		strings.HasPrefix(trimmed, "/backend-api/") ||
 		strings.HasPrefix(trimmed, "/antigravity/") ||
 		strings.HasPrefix(trimmed, "/setup/") ||
-		trimmed == "/health" ||
 		trimmed == "/models" ||
 		trimmed == "/responses" ||
 		strings.HasPrefix(trimmed, "/responses/") ||

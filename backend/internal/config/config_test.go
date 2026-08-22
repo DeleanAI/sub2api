@@ -86,6 +86,8 @@ func TestLoadHTTPIngressSafetyDefaults(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.Equal(t, 10, cfg.Server.ReadHeaderTimeout)
+	require.Equal(t, 2, cfg.Server.ReadinessTimeoutSeconds)
+	require.Equal(t, 2*time.Second, cfg.Server.ReadinessTimeout())
 	require.Equal(t, 64*1024, cfg.Server.MaxHeaderBytes)
 	require.Empty(t, cfg.Server.TrustedProxies)
 	require.False(t, cfg.Server.TrustedProxiesConfigured)
@@ -1557,6 +1559,16 @@ func TestValidateConfigErrors(t *testing.T) {
 			name:    "server max request body size",
 			mutate:  func(c *Config) { c.Server.MaxRequestBodySize = -1 },
 			wantErr: "server.max_request_body_size",
+		},
+		{
+			name:    "server readiness timeout zero",
+			mutate:  func(c *Config) { c.Server.ReadinessTimeoutSeconds = 0 },
+			wantErr: "server.readiness_timeout_seconds",
+		},
+		{
+			name:    "server readiness timeout too long",
+			mutate:  func(c *Config) { c.Server.ReadinessTimeoutSeconds = 31 },
+			wantErr: "server.readiness_timeout_seconds",
 		},
 		{
 			name: "h2c zero concurrent streams",

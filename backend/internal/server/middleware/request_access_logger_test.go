@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/probe"
 	"github.com/gin-gonic/gin"
 )
 
@@ -263,24 +264,29 @@ func TestLogger_AccessLogUsesForwardedClientIPFromTrustedProxy(t *testing.T) {
 	t.Fatalf("access log event not found")
 }
 
-func TestLogger_HealthPathSkipped(t *testing.T) {
+// 探针被编排器每几秒命中一次，任何一个探针路径都不能写访问日志。
+func TestLogger_ProbePathsSkipped(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	sink := initMiddlewareTestLogger(t)
 
 	r := gin.New()
 	r.Use(Logger())
-	r.GET("/health", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
-	r.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status=%d", w.Code)
+	for _, path := range probe.Paths() {
+		r.GET(path, func(c *gin.Context) {
+			c.Status(http.StatusOK)
+		})
 	}
-	if len(sink.list()) != 0 {
-		t.Fatalf("health endpoint should not write access log")
+
+	for _, path := range probe.Paths() {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("path=%s status=%d", path, w.Code)
+		}
+		if got := len(sink.list()); got != 0 {
+			t.Fatalf("probe path %s should not write access log, got %d events", path, got)
+		}
 	}
 }
 

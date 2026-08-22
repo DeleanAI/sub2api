@@ -507,6 +507,41 @@ The main config file is at `/etc/sub2api/config.yaml` (created by Setup Wizard).
 
 ---
 
+## Health and Readiness Probes
+
+Sub2API exposes two probe endpoints. They answer different questions and fail independently, so wire them to different orchestrator probes:
+
+| Endpoint | Question | Depends on | Response |
+|----------|----------|------------|----------|
+| `GET /health` | Is the process alive? (**liveness**) | Nothing | Always `200 {"status":"ok"}` while the process runs |
+| `GET /readyz` | Can this instance serve traffic? (**readiness**) | PostgreSQL and Redis | `200 {"status":"ready","checks":{"postgres":"ok","redis":"ok"}}` or `503 {"status":"not_ready","checks":{"postgres":"ok","redis":"error: ..."}}` |
+
+`/readyz` probes every dependency concurrently, each with its own timeout (`server.readiness_timeout_seconds`, default `2`, env `SERVER_READINESS_TIMEOUT_SECONDS`). Error texts are redacted (no DSNs or passwords), the response carries `Cache-Control: no-store`, and a dependency that turns unhealthy or recovers is logged once per transition. Neither endpoint requires authentication, and neither is written to the access log.
+
+Why two endpoints: a dependency outage must fail readiness (stop routing traffic to the instance) but must **not** fail liveness. If `/health` depended on the database, Kubernetes would restart every replica during a database blip and turn a recoverable outage into a crash loop.
+
+Kubernetes example:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8080
+  periodSeconds: 10
+  timeoutSeconds: 3       # must exceed server.readiness_timeout_seconds
+  failureThreshold: 3     # tolerate a single slow probe under load instead of evicting the pod
+```
+
+The Docker Compose files in this directory keep using `/health` for the container healthcheck (process-level liveness). Point an external load balancer or ingress health check at `/readyz` instead, so an instance that lost its database or Redis is taken out of rotation rather than kept in it.
+
+---
+
 ## Troubleshooting
 
 ### Docker
