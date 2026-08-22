@@ -38,6 +38,8 @@ var (
 	integrationDB        *sql.DB
 	integrationEntClient *dbent.Client
 	integrationRedis     *redisclient.Client
+	// integrationDSN 是共享容器的连接串；需要一个干净库的测试据此派生出 scratch 库（见 openScratchDatabase）。
+	integrationDSN string
 
 	redisNamespaceSeq uint64
 )
@@ -91,6 +93,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	integrationDSN = dsn
 	integrationDB, err = openSQLWithRetry(ctx, dsn, 30*time.Second)
 	if err != nil {
 		log.Printf("failed to open sql db: %v", err)

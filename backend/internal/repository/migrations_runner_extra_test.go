@@ -2,11 +2,8 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io/fs"
-	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -378,9 +375,4 @@ func TestPgAdvisoryLockAndUnlock_ErrorBranches(t *testing.T) {
 		require.GreaterOrEqual(t, time.Since(start), migrationsLockRetryInterval)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
-}
-
-func migrationChecksum(content string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(content)))
-	return hex.EncodeToString(sum[:])
 }

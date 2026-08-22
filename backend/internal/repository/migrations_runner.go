@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/migrations"
 )
 
@@ -124,10 +125,12 @@ func ApplyMigrations(ctx context.Context, db *sql.DB) error {
 //  2. 确保 schema_migrations 表存在
 //  3. 按文件名排序读取所有 .sql 文件
 //  4. 对于每个迁移文件：
-//     - 计算文件内容的 SHA256 校验和
+//     - 计算文件内容的 SHA256 校验和（覆盖整份文件，含 goose Down 段，保持历史记录可比）
 //     - 检查该迁移是否已应用（通过 filename 查询）
 //     - 如果已应用，验证校验和是否匹配
-//     - 如果未应用，在事务中执行迁移并记录
+//     - 如果未应用，只取可执行部分（migrations.ExecutableSQL：无 goose 注解时是整份文件，
+//     有注解时仅 Up 段），在事务中执行并记录。Down 段永远不执行——运行器是前向单向的，
+//     旧实现把整份文件交给 PostgreSQL，Up 刚建的表被紧随其后的 Down 删掉（issue #1）。
 //  5. 释放 Advisory Lock
 //
 // 参数：
@@ -191,8 +194,7 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 
 		// 计算文件内容的 SHA256 校验和，用于检测文件是否被修改。
 		// 这是一种防篡改机制：如果有人修改了已应用的迁移文件，系统会拒绝启动。
-		sum := sha256.Sum256([]byte(content))
-		checksum := hex.EncodeToString(sum[:])
+		checksum := migrationChecksum(content)
 
 		// 检查该迁移是否已经应用
 		var existing string
@@ -222,7 +224,19 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 			return fmt.Errorf("check migration %s: %w", name, rowErr)
 		}
 
-		nonTx, err := validateMigrationExecutionMode(name, content)
+		// 只执行可执行部分。规则只在 migrations.ExecutableSQL 一处定义：
+		// 无 goose 注解 → 整份文件；有注解 → 仅 Up 段，且结构不合法的文件直接拒绝。
+		execSQL, err := migrations.ExecutableSQL(content)
+		if err != nil {
+			return fmt.Errorf("validate migration %s: %w", name, err)
+		}
+		if execSQL != content {
+			logger.LegacyPrintf("repository.migrations",
+				"[Migrations] %s: executing the goose Up section only; the Down section is never run because the runner is forward-only",
+				name)
+		}
+
+		nonTx, err := validateMigrationExecutionMode(name, execSQL)
 		if err != nil {
 			return fmt.Errorf("validate migration %s: %w", name, err)
 		}
@@ -234,16 +248,12 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 
 			// *_notx.sql：用于 CREATE/DROP INDEX CONCURRENTLY 场景，必须非事务执行。
 			// 逐条语句执行，避免将多条 CONCURRENTLY 语句放入同一个隐式事务块。
-			statements := splitSQLStatements(content)
+			statements := migrations.SplitStatements(execSQL)
 			for i, stmt := range statements {
-				trimmed := strings.TrimSpace(stmt)
-				if trimmed == "" {
+				if strings.TrimSpace(migrations.StripComments(stmt)) == "" {
 					continue
 				}
-				if stripSQLLineComment(trimmed) == "" {
-					continue
-				}
-				if _, err := lockConn.ExecContext(ctx, trimmed); err != nil {
+				if _, err := lockConn.ExecContext(ctx, stmt); err != nil {
 					return fmt.Errorf("apply migration %s (non-tx statement %d): %w", name, i+1, err)
 				}
 			}
@@ -259,8 +269,8 @@ func applyMigrationsFS(ctx context.Context, db *sql.DB, fsys fs.FS) error {
 			return fmt.Errorf("begin migration %s: %w", name, err)
 		}
 
-		// 执行迁移 SQL
-		if _, err := tx.ExecContext(ctx, content); err != nil {
+		// 执行迁移 SQL（仅可执行部分）
+		if _, err := tx.ExecContext(ctx, execSQL); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %s: %w", name, err)
 		}
@@ -286,6 +296,13 @@ type migrationConnection interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+// migrationQuerier 是只读查询所需的最小接口；*sql.DB、*sql.Conn、*sql.Tx 都满足，
+// 只读的迁移计划（migrations_plan.go）可以在事务里跑。
+type migrationQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 func prepareNonTransactionalMigration(ctx context.Context, db migrationConnection, name string) error {
@@ -430,7 +447,7 @@ func ensureAtlasBaselineAligned(ctx context.Context, db migrationConnection, fsy
 	return nil
 }
 
-func tableExists(ctx context.Context, db migrationConnection, tableName string) (bool, error) {
+func tableExists(ctx context.Context, db migrationQuerier, tableName string) (bool, error) {
 	var exists bool
 	err := db.QueryRowContext(ctx, `
 		SELECT EXISTS (
@@ -456,11 +473,16 @@ func latestMigrationBaseline(fsys fs.FS) (string, string, string, error) {
 	if err != nil {
 		return "", "", "", err
 	}
-	content := strings.TrimSpace(string(contentBytes))
-	sum := sha256.Sum256([]byte(content))
-	hash := hex.EncodeToString(sum[:])
+	hash := migrationChecksum(string(contentBytes))
 	version := strings.TrimSuffix(name, ".sql")
 	return version, version, hash, nil
+}
+
+// migrationChecksum 是 schema_migrations.checksum 的唯一算法：整份文件去掉首尾空白后的 SHA256。
+// 它覆盖整份文件而不是仅可执行部分，这样既有库里的记录在运行器改为只执行 Up 段之后依然匹配。
+func migrationChecksum(content string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(content)))
+	return hex.EncodeToString(sum[:])
 }
 
 func checksumSet(values ...string) map[string]struct{} {
@@ -508,9 +530,9 @@ func validateMigrationExecutionMode(name, content string) (bool, error) {
 		return false, errors.New("*_notx.sql must not contain transaction control statements (BEGIN/COMMIT/ROLLBACK)")
 	}
 
-	statements := splitSQLStatements(content)
+	statements := migrations.SplitStatements(content)
 	for _, stmt := range statements {
-		normalizedStmt := strings.ToUpper(stripSQLLineComment(strings.TrimSpace(stmt)))
+		normalizedStmt := strings.ToUpper(strings.TrimSpace(migrations.StripComments(stmt)))
 		if normalizedStmt == "" {
 			continue
 		}
@@ -534,28 +556,6 @@ func validateMigrationExecutionMode(name, content string) (bool, error) {
 	}
 
 	return true, nil
-}
-
-func splitSQLStatements(content string) []string {
-	parts := strings.Split(content, ";")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if strings.TrimSpace(part) == "" {
-			continue
-		}
-		out = append(out, part)
-	}
-	return out
-}
-
-func stripSQLLineComment(s string) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		if idx := strings.Index(line, "--"); idx >= 0 {
-			lines[i] = line[:idx]
-		}
-	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // pgAdvisoryLock 获取 PostgreSQL Advisory Lock。
