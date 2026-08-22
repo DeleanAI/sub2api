@@ -285,6 +285,8 @@ export default {
     resetNow: 'Now',
     resetPending: 'Pending refresh',
     accountMultiplier: 'Account rate',
+    modelMultiplier: 'Model rate',
+    modelMultiplierNotEvaluated: 'Per-model rate not evaluated for this row (treated as 1)',
     avgDuration: 'Avg Duration',
     inSelectedRange: 'in selected range',
     perRequest: 'per request',

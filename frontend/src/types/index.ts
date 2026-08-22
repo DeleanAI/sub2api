@@ -545,6 +545,13 @@ export interface ReasoningEffortMapping {
   to: string
 }
 
+// 分组逐模型倍率规则：token 计费时按列表顺序取第一条命中模型的倍率乘入有效倍率
+// （有效倍率 = (用户覆盖 ?? 分组默认) × 高峰因子 × 逐模型因子）。
+export interface GroupModelRateMultiplier {
+  model_pattern: string
+  multiplier: number
+}
+
 export interface Group {
   id: number
   name: string
@@ -561,6 +568,8 @@ export interface Group {
   weekly_limit_usd: number | null
   monthly_limit_usd: number | null
   long_context_pricing_enabled: boolean
+  // 分组逐模型倍率有序列表（空/缺失表示未配置）
+  model_rate_multipliers?: GroupModelRateMultiplier[] | null
   // 图片生成计费配置
   allow_image_generation: boolean
   allow_batch_image_generation: boolean
@@ -772,6 +781,8 @@ export interface CreateGroupRequest {
   monthly_limit_usd?: number | null
   long_context_pricing_enabled?: boolean
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
+  // 分组逐模型倍率；创建时省略表示未配置，更新时省略表示不修改、空数组表示清空
+  model_rate_multipliers?: GroupModelRateMultiplier[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
   image_rate_independent?: boolean
@@ -834,6 +845,8 @@ export interface UpdateGroupRequest {
   monthly_limit_usd?: number | null
   long_context_pricing_enabled?: boolean
   model_pricing?: import('@/api/admin/channels').ChannelModelPricing[]
+  // 分组逐模型倍率；创建时省略表示未配置，更新时省略表示不修改、空数组表示清空
+  model_rate_multipliers?: GroupModelRateMultiplier[]
   allow_image_generation?: boolean
   allow_batch_image_generation?: boolean
   image_rate_independent?: boolean
@@ -1016,7 +1029,8 @@ export interface TempUnschedulableStatus {
 
 export interface UpstreamBillingData {
   object: 'sub2api.key_billing'
-  schema_version: 1
+  // v2 在 v1 基础上只增字段：model_rate_multipliers 与按 ?model= 查询时的 model / model_rate_multiplier
+  schema_version: 1 | 2
   billing_scope: 'token'
   group_rate_multiplier: number
   user_rate_multiplier?: number
@@ -1026,6 +1040,10 @@ export interface UpstreamBillingData {
   peak_end?: string
   peak_rate_multiplier?: number
   applied_peak_multiplier?: number
+  model_rate_multipliers?: GroupModelRateMultiplier[]
+  model?: string
+  model_rate_multiplier?: number
+  matched_model_pattern?: string
   effective_rate_multiplier: number
   timezone?: string
   observed_at: string
@@ -1648,6 +1666,8 @@ export interface UsageLog {
   actual_cost: number
   rate_multiplier: number
   long_context_billing_applied: boolean
+  // 分组逐模型倍率快照；null/缺失表示该行未评估逐模型倍率（按 1 处理）
+  model_rate_multiplier?: number | null
   billing_type: number
 
   request_type?: UsageRequestType

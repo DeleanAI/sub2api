@@ -34,6 +34,8 @@ const messages: Record<string, string> = {
   'usage.serviceTierStandard': 'Standard',
   'usage.rate': 'Rate',
   'usage.accountMultiplier': 'Account rate',
+  'usage.modelMultiplier': 'Model rate',
+  'usage.modelMultiplierNotEvaluated': 'Per-model rate not evaluated',
   'usage.original': 'Original',
   'usage.userBilled': 'User billed',
   'usage.accountBilled': 'Account billed',
@@ -87,6 +89,7 @@ const DataTableStub = {
         <slot name="cell-billing_mode" :row="row" />
         <slot name="cell-tokens" :row="row" />
         <slot name="cell-cost" :row="row" />
+        <slot name="cell-model_rate_multiplier" :row="row" />
         <slot name="cell-request_id" :row="row" />
       </div>
     </div>
@@ -638,5 +641,79 @@ describe('admin UsageTable deleted-user badge', () => {
 
     expect(wrapper.text()).not.toContain('Deleted')
     expect(wrapper.text()).toContain('active@test.com')
+  })
+})
+
+describe('admin UsageTable per-model rate multiplier snapshot', () => {
+  const mountRows = (rows: Record<string, unknown>[]) =>
+    mount(UsageTable, {
+      props: { data: rows, loading: false, columns: [] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+
+  it('renders the snapshot cell and marks a non-1 factor as a markup', () => {
+    const wrapper = mountRows([
+      { ...baseImageRow, request_id: 'req-model-rate-2x', billing_mode: 'token', model_rate_multiplier: 2 },
+      { ...baseImageRow, request_id: 'req-model-rate-1x', billing_mode: 'token', model_rate_multiplier: 1 },
+      { ...baseImageRow, request_id: 'req-model-rate-null', model_rate_multiplier: null },
+    ])
+
+    const cells = wrapper.findAll('[data-testid="model-rate-multiplier-cell"]')
+    expect(cells).toHaveLength(2)
+    expect(cells[0].text()).toBe('2.00x')
+    expect(cells[0].classes().some((cls) => cls.includes('amber'))).toBe(true)
+    expect(cells[1].text()).toBe('1.00x')
+    expect(cells[1].classes().some((cls) => cls.includes('amber'))).toBe(false)
+  })
+
+  it('shows the model rate in the cost tooltip only when the row was evaluated', async () => {
+    const wrapper = mountRows([
+      {
+        request_id: 'req-model-rate-tooltip',
+        actual_cost: 0.2,
+        total_cost: 0.1,
+        account_rate_multiplier: 1,
+        rate_multiplier: 1,
+        model_rate_multiplier: 2,
+        input_cost: 0.1,
+        output_cost: 0,
+        cache_creation_cost: 0,
+        cache_read_cost: 0,
+        input_tokens: 100,
+        output_tokens: 0,
+      },
+    ])
+
+    const triggers = wrapper.findAll('.group.relative')
+    await triggers[triggers.length - 1].trigger('mouseenter')
+    await nextTick()
+
+    const row = wrapper.get('[data-testid="model-rate-multiplier-row"]')
+    expect(row.text()).toContain('Model rate')
+    expect(row.text()).toContain('2.00x')
+  })
+
+  it('omits the tooltip row for rows without a snapshot', async () => {
+    const wrapper = mountRows([
+      {
+        request_id: 'req-model-rate-none',
+        actual_cost: 0.1,
+        total_cost: 0.1,
+        account_rate_multiplier: 1,
+        rate_multiplier: 1,
+        input_cost: 0.1,
+        output_cost: 0,
+        cache_creation_cost: 0,
+        cache_read_cost: 0,
+        input_tokens: 100,
+        output_tokens: 0,
+      },
+    ])
+
+    const triggers = wrapper.findAll('.group.relative')
+    await triggers[triggers.length - 1].trigger('mouseenter')
+    await nextTick()
+
+    expect(wrapper.find('[data-testid="model-rate-multiplier-row"]').exists()).toBe(false)
   })
 })

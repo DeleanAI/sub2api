@@ -1014,6 +1014,22 @@ export default {
         longContextHint: 'When checked, channel intervals or official preset tiers apply. Otherwise the first tier is used unless the account explicitly enables long-context billing.',
         add: 'Add model price'
       },
+      modelRateMultipliers: {
+        title: 'Per-model rate multipliers',
+        description:
+          'Multiply the group rate for matching models: effective = (user override ?? group rate) × peak factor × model factor. Token billing only; per-request image/video multipliers are unaffected. Prices keep tracking the price table, unlike per-model pricing which pins absolute prices.',
+        add: 'Add rule',
+        empty: 'No per-model multipliers configured; every model is billed at the group rate.',
+        pattern: 'Model pattern',
+        patternPlaceholder: 'e.g. claude-opus-* or gpt-5.4',
+        multiplier: 'Factor',
+        preview: 'Effective rate preview',
+        previewFormula: '{base} × {factor} = {effective}',
+        orderHint: 'Rules are matched in order and the first match wins; put specific patterns before wildcard ones. Exact names and trailing * wildcards are supported, case-insensitive.',
+        patternRequired: 'Model pattern is required',
+        multiplierRange: 'Factor must be greater than 0 and at most 100',
+        duplicatePattern: 'Duplicate model pattern (case-insensitive)'
+      },
       voicePricing: {
         title: 'Grok Voice Pricing',
         description: 'Optional per-group prices for Voice realtime / TTS / STT (USD). Leave empty to leave unpriced.',
