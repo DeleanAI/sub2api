@@ -248,6 +248,19 @@ See `.env.example` for all available options.
 
 > **Note:** The `docker-deploy.sh` script automatically generates `JWT_SECRET`, `TOTP_ENCRYPTION_KEY`, and `POSTGRES_PASSWORD` for you.
 
+### Connection Settings (external PostgreSQL / Redis)
+
+`docker-compose.standalone.yml`, plain `docker run` (see `DOCKER.md`) and the systemd install connect to
+services you operate yourself. The connection target is accepted in two forms. When the URL form is set
+it is the **only** source for that target and the discrete variables are ignored — the startup log states
+which form was used. Pool and timeout settings (`DATABASE_MAX_OPEN_CONNS`, `REDIS_POOL_SIZE`, ...) always
+come from the discrete variables.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | No | - | `postgres://user:pass@host:port/dbname?sslmode=...`; replaces `DATABASE_HOST/PORT/USER/PASSWORD/DBNAME/SSLMODE`. Extra libpq options (`sslrootcert=`, `application_name=`, ...) are passed through; an unknown option name fails at startup. |
+| `REDIS_URL` | No | - | `redis://[user:pass@]host:port/db` or `rediss://...` (TLS); replaces `REDIS_HOST/PORT/USERNAME/PASSWORD/DB/ENABLE_TLS`. Only the database index may be a query parameter. |
+
 ### Easy Migration (Local Directory Version)
 
 When using `docker-compose.local.yml`, all data is stored in local directories, making migration simple:
@@ -575,7 +588,7 @@ sudo systemctl status redis
 
 1. **Port already in use**: Change `SERVER_PORT` in `.env` or systemd config
 2. **Database connection failed**: Check PostgreSQL is running and credentials are correct
-3. **Redis connection failed**: Check Redis is running and password is correct
+3. **Redis connection failed**: Check Redis is running and password is correct. The startup log line `redis connection configured from redis.url` means the discrete `REDIS_*` connection variables were ignored in favour of `REDIS_URL`
 4. **Permission denied**: Ensure proper file ownership for binary install
 
 ---

@@ -1483,12 +1483,18 @@ func (s *ServerConfig) Address() string {
 // DatabaseConfig 数据库连接配置
 // 性能优化：新增连接池参数，避免频繁创建/销毁连接
 type DatabaseConfig struct {
+	// URL: 完整连接串 postgres://user:pass@host:port/dbname?sslmode=...。非空时它是连接目标的唯一来源，
+	// 下面的离散连接字段被覆盖（规则与解析见 connection.go）。
+	URL      string `mapstructure:"url"`
 	Host     string `mapstructure:"host"`
 	Port     int    `mapstructure:"port"`
 	User     string `mapstructure:"user"`
 	Password string `mapstructure:"password"`
 	DBName   string `mapstructure:"dbname"`
 	SSLMode  string `mapstructure:"sslmode"`
+	// ExtraParams: 其余 libpq 连接参数（如 sslrootcert），来自 URL 查询串或配置文件；
+	// 参数名必须在 connection.go 的允许表内，渲染进 DSN 时按名排序。
+	ExtraParams map[string]string `mapstructure:"extra_params"`
 	// 连接池配置（性能优化：可配置化连接池参数）
 	// MaxOpenConns: 最大打开连接数，控制数据库连接上限，防止资源耗尽
 	MaxOpenConns int `mapstructure:"max_open_conns"`
@@ -1507,41 +1513,12 @@ type DatabaseConfig struct {
 	UserPlatformQuotaFlushBatchSize int `mapstructure:"user_platform_quota_flush_batch_size"`
 }
 
-func (d *DatabaseConfig) DSN() string {
-	// 当密码为空时不包含 password 参数，避免 libpq 解析错误
-	if d.Password == "" {
-		return fmt.Sprintf(
-			"host=%s port=%d user=%s dbname=%s sslmode=%s",
-			d.Host, d.Port, d.User, d.DBName, d.SSLMode,
-		)
-	}
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		d.Host, d.Port, d.User, d.Password, d.DBName, d.SSLMode,
-	)
-}
-
-// DSNWithTimezone returns DSN with timezone setting
-func (d *DatabaseConfig) DSNWithTimezone(tz string) string {
-	if tz == "" {
-		tz = "Asia/Shanghai"
-	}
-	// 当密码为空时不包含 password 参数，避免 libpq 解析错误
-	if d.Password == "" {
-		return fmt.Sprintf(
-			"host=%s port=%d user=%s dbname=%s sslmode=%s TimeZone=%s",
-			d.Host, d.Port, d.User, d.DBName, d.SSLMode, tz,
-		)
-	}
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s TimeZone=%s",
-		d.Host, d.Port, d.User, d.Password, d.DBName, d.SSLMode, tz,
-	)
-}
-
 // RedisConfig Redis 连接配置
 // 性能优化：新增连接池和超时参数，提升高并发场景下的吞吐量
 type RedisConfig struct {
+	// URL: 完整连接串 redis://user:pass@host:port/db 或 rediss://...。非空时覆盖
+	// host/port/username/password/db/enable_tls（规则与解析见 connection.go）。
+	URL      string `mapstructure:"url"`
 	Host     string `mapstructure:"host"`
 	Port     int    `mapstructure:"port"`
 	Username string `mapstructure:"username"`
@@ -1765,7 +1742,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 
 	// 环境变量支持
 	viper.AutomaticEnv()
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.SetEnvKeyReplacer(envKeyReplacer)
 	if tz, ok := os.LookupEnv("TZ"); ok && strings.TrimSpace(tz) != "" {
 		// AutomaticEnv 会先把 timezone 映射到 TIMEZONE；显式 Set 保证标准 TZ 变量优先。
 		viper.Set("timezone", strings.TrimSpace(tz))
@@ -1799,6 +1776,14 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Security.ForwardedClientIPHeaders = normalizeStringSlice(strings.Split(forwardedClientIPHeadersEnv, ","))
 	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
+	// 连接目标的收口：URL 优先级与 DSN 参数归一都在 connection.go 里只写一次，
+	// 这里和 setup.AutoSetupFromEnv 是它仅有的两个调用方。
+	if err := cfg.Database.Resolve(cfg.Timezone); err != nil {
+		return nil, err
+	}
+	if err := cfg.Redis.Resolve(); err != nil {
+		return nil, err
+	}
 	if cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs == 0 {
 		cfg.Gateway.OpenAIScheduler.StickyEscapeTTFTMs = 15000
 	}
@@ -2129,6 +2114,8 @@ func setDefaults() {
 	viper.SetDefault("dingtalk_connect.username_overwrite_policy", "if_empty")
 
 	// Database
+	// database.url 非空时覆盖下面的离散连接字段（规则见 connection.go）
+	viper.SetDefault("database.url", "")
 	viper.SetDefault("database.host", "localhost")
 	viper.SetDefault("database.port", 5432)
 	viper.SetDefault("database.user", "postgres")
@@ -2144,6 +2131,8 @@ func setDefaults() {
 	viper.SetDefault("database.user_platform_quota_flush_batch_size", 1000)
 
 	// Redis
+	// redis.url 非空时覆盖 host/port/username/password/db/enable_tls（规则见 connection.go）
+	viper.SetDefault("redis.url", "")
 	viper.SetDefault("redis.host", "localhost")
 	viper.SetDefault("redis.port", 6379)
 	viper.SetDefault("redis.username", "")
@@ -3001,6 +2990,9 @@ func (c *Config) Validate() error {
 	if c.Billing.MinimumBalanceReserve < 0 {
 		return fmt.Errorf("billing.minimum_balance_reserve must be non-negative")
 	}
+	if err := c.Database.ValidateConnection(); err != nil {
+		return err
+	}
 	if c.Database.MaxOpenConns <= 0 {
 		return fmt.Errorf("database.max_open_conns must be positive")
 	}
@@ -3015,6 +3007,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Database.ConnMaxIdleTimeMinutes < 0 {
 		return fmt.Errorf("database.conn_max_idle_time_minutes must be non-negative")
+	}
+	if err := c.Redis.ValidateConnection(); err != nil {
+		return err
 	}
 	if c.Redis.DialTimeoutSeconds <= 0 {
 		return fmt.Errorf("redis.dial_timeout_seconds must be positive")

@@ -84,6 +84,8 @@ type SetupConfig struct {
 	MigrationTimeoutSeconds int            `json:"migration_timeout_seconds" yaml:"migration_timeout_seconds,omitempty"`
 }
 
+// DatabaseConfig 是安装向导的数据库连接视图：JSON 面向向导表单，YAML 面向写出的 config.yaml。
+// 连接规则（DSN 渲染、DATABASE_URL 解析）不在这里实现，统一通过 connection() 交给 config 包。
 type DatabaseConfig struct {
 	Host     string `json:"host" yaml:"host"`
 	Port     int    `json:"port" yaml:"port"`
@@ -91,8 +93,43 @@ type DatabaseConfig struct {
 	Password string `json:"password" yaml:"password"`
 	DBName   string `json:"dbname" yaml:"dbname"`
 	SSLMode  string `json:"sslmode" yaml:"sslmode"`
+	// ExtraParams 是 DATABASE_URL 带来的其余 libpq 参数（如 sslrootcert）。写进 config.yaml 是为了
+	// 环境变量撤掉之后连接参数仍然完整；它不是向导表单的一部分，所以不接受 JSON 输入。
+	ExtraParams map[string]string `json:"-" yaml:"extra_params,omitempty"`
 }
 
+// connection 转成 config 包的连接描述：DSN 渲染与 URL 解析只在 config 包实现一次，安装流程不再自己拼 DSN。
+func (c *DatabaseConfig) connection() *config.DatabaseConfig {
+	return &config.DatabaseConfig{
+		Host:        c.Host,
+		Port:        c.Port,
+		User:        c.User,
+		Password:    c.Password,
+		DBName:      c.DBName,
+		SSLMode:     c.SSLMode,
+		ExtraParams: c.ExtraParams,
+	}
+}
+
+// resolve 让自动安装与主配置走同一条优先级规则（config.DatabaseConfig.Resolve）：
+// rawURL 非空时覆盖离散字段，会话时区以 appTimezone 为准。
+func (c *DatabaseConfig) resolve(rawURL, appTimezone string) error {
+	conn := c.connection()
+	conn.URL = rawURL
+	if err := conn.Resolve(appTimezone); err != nil {
+		return err
+	}
+	c.Host = conn.Host
+	c.Port = conn.Port
+	c.User = conn.User
+	c.Password = conn.Password
+	c.DBName = conn.DBName
+	c.SSLMode = conn.SSLMode
+	c.ExtraParams = conn.ExtraParams
+	return nil
+}
+
+// RedisConfig 是安装向导的 Redis 连接视图：JSON 面向向导表单，YAML 面向写出的 config.yaml。
 type RedisConfig struct {
 	Host      string `json:"host" yaml:"host"`
 	Port      int    `json:"port" yaml:"port"`
@@ -100,6 +137,34 @@ type RedisConfig struct {
 	Password  string `json:"password" yaml:"password"`
 	DB        int    `json:"db" yaml:"db"`
 	EnableTLS bool   `json:"enable_tls" yaml:"enable_tls"`
+}
+
+// connection 转成 config 包的连接描述：REDIS_URL 的解析只在 config 包实现一次。
+func (c *RedisConfig) connection() *config.RedisConfig {
+	return &config.RedisConfig{
+		Host:      c.Host,
+		Port:      c.Port,
+		Username:  c.Username,
+		Password:  c.Password,
+		DB:        c.DB,
+		EnableTLS: c.EnableTLS,
+	}
+}
+
+// resolve 让自动安装与主配置走同一条规则（config.RedisConfig.Resolve）：rawURL 非空时覆盖离散字段。
+func (c *RedisConfig) resolve(rawURL string) error {
+	conn := c.connection()
+	conn.URL = rawURL
+	if err := conn.Resolve(); err != nil {
+		return err
+	}
+	c.Host = conn.Host
+	c.Port = conn.Port
+	c.Username = conn.Username
+	c.Password = conn.Password
+	c.DB = conn.DB
+	c.EnableTLS = conn.EnableTLS
+	return nil
 }
 
 type AdminConfig struct {
@@ -178,15 +243,9 @@ func NeedsSetup() bool {
 	return true
 }
 
-func buildPostgresDSN(cfg *DatabaseConfig, dbName string) string {
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, dbName, cfg.SSLMode,
-	)
-}
-
 func buildDatabaseConnectionDSNs(cfg *DatabaseConfig) (bootstrapDSN, targetDSN string) {
-	return buildPostgresDSN(cfg, "postgres"), buildPostgresDSN(cfg, cfg.DBName)
+	conn := cfg.connection()
+	return conn.DSNForDatabase("postgres"), conn.DSN()
 }
 
 // TestDatabaseConnection tests the database connection and creates database if not exists
@@ -352,13 +411,7 @@ func createInstallLock() error {
 }
 
 func initializeDatabase(cfg *SetupConfig) error {
-	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
-		cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode,
-	)
-
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("postgres", cfg.Database.connection().DSN())
 	if err != nil {
 		return err
 	}
@@ -382,13 +435,7 @@ func (cfg *SetupConfig) migrationTimeout() time.Duration {
 }
 
 func createAdminUser(cfg *SetupConfig) (bool, string, error) {
-	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
-		cfg.Database.Password, cfg.Database.DBName, cfg.Database.SSLMode,
-	)
-
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("postgres", cfg.Database.connection().DSN())
 	if err != nil {
 		return false, "", err
 	}
@@ -562,19 +609,17 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 	return defaultValue
 }
 
-// AutoSetupFromEnv performs automatic setup using environment variables
-// This is designed for Docker deployment where all config is passed via env vars
-func AutoSetupFromEnv() error {
-	logger.LegacyPrintf("setup", "%s", "Auto setup enabled, configuring from environment variables...")
-	logger.LegacyPrintf("setup", "Data directory: %s", GetDataDir())
-
+// setupConfigFromEnv builds the auto-setup configuration from environment variables.
+//
+// 离散变量（DATABASE_HOST、REDIS_HOST ...）在这里读取；DATABASE_URL / REDIS_URL 的优先级不在这里实现，
+// 而是交给 config 包里主配置加载也在用的同一套规则——两条启动路径对同一组环境变量不能有两种解释。
+func setupConfigFromEnv() (*SetupConfig, error) {
 	// Get timezone from TZ or TIMEZONE env var (TZ is standard for Docker)
 	tz := getEnvOrDefault("TZ", "")
 	if tz == "" {
 		tz = getEnvOrDefault("TIMEZONE", "Asia/Shanghai")
 	}
 
-	// Build config from environment variables
 	cfg := &SetupConfig{
 		Database: DatabaseConfig{
 			Host:     getEnvOrDefault("DATABASE_HOST", "localhost"),
@@ -607,6 +652,26 @@ func AutoSetupFromEnv() error {
 		},
 		Timezone:                tz,
 		MigrationTimeoutSeconds: getEnvIntOrDefault("SETUP_MIGRATION_TIMEOUT_SECONDS", 0),
+	}
+
+	if err := cfg.Database.resolve(os.Getenv("DATABASE_URL"), tz); err != nil {
+		return nil, err
+	}
+	if err := cfg.Redis.resolve(os.Getenv("REDIS_URL")); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// AutoSetupFromEnv performs automatic setup using environment variables
+// This is designed for Docker deployment where all config is passed via env vars
+func AutoSetupFromEnv() error {
+	logger.LegacyPrintf("setup", "%s", "Auto setup enabled, configuring from environment variables...")
+	logger.LegacyPrintf("setup", "Data directory: %s", GetDataDir())
+
+	cfg, err := setupConfigFromEnv()
+	if err != nil {
+		return fmt.Errorf("invalid environment configuration: %w", err)
 	}
 
 	// Generate JWT secret if not provided

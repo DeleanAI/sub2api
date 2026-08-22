@@ -8,55 +8,127 @@ Sub2API is an AI API Gateway Platform for distributing and managing AI product s
 docker run -d \
   --name sub2api \
   -p 8080:8080 \
-  -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
-  -e REDIS_URL="redis://host:6379" \
+  -v sub2api_data:/app/data \
+  -e AUTO_SETUP=true \
+  -e DATABASE_URL="postgres://user:pass@db-host:5432/sub2api?sslmode=disable" \
+  -e REDIS_URL="redis://:redis-pass@redis-host:6379/0" \
+  -e JWT_SECRET="$(openssl rand -hex 32)" \
+  -e TOTP_ENCRYPTION_KEY="$(openssl rand -hex 32)" \
   weishaw/sub2api:latest
 ```
+
+On the first start with `AUTO_SETUP=true` the container connects to PostgreSQL and Redis, applies the
+database migrations, creates the admin account (the password is printed to the logs once when
+`ADMIN_PASSWORD` is empty) and writes `config.yaml` into `/app/data`. Mount `/app/data` so that file and
+the install lock survive restarts; without it every restart runs the setup again.
 
 ## Docker Compose
 
 ```yaml
-version: '3.8'
-
 services:
   sub2api:
     image: weishaw/sub2api:latest
     ports:
       - "8080:8080"
+    volumes:
+      - sub2api_data:/app/data
     environment:
+      - AUTO_SETUP=true
       - DATABASE_URL=postgres://postgres:postgres@db:5432/sub2api?sslmode=disable
-      - REDIS_URL=redis://redis:6379
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=change-me-to-a-random-secret-of-32-or-more-characters
+      - TOTP_ENCRYPTION_KEY=change-me-to-64-hex-characters
+      - TZ=Asia/Shanghai
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   db:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     environment:
+      # postgres:18 keeps its data under /var/lib/postgresql/18/docker by default; point PGDATA at the
+      # mounted volume or the database is re-initialised on every `compose down && up`.
+      - PGDATA=/var/lib/postgresql/data
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=sub2api
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sub2api"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
+    command: redis-server --save 60 1 --appendonly yes --appendfsync everysec
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
+  sub2api_data:
   postgres_data:
   redis_data:
 ```
 
+This is the minimum that boots. The maintained Compose files with connection-pool tuning, resource
+limits and security options live in the repository under `deploy/` (`docker-compose.yml` bundles
+PostgreSQL and Redis, `docker-compose.standalone.yml` connects to services you run yourself).
+
 ## Environment Variables
+
+Every variable below is read by the backend. `DATABASE_URL` / `REDIS_URL` and the discrete
+`DATABASE_*` / `REDIS_*` forms are alternatives: when a URL is set it is the **only** source for that
+connection target and the discrete connection variables are ignored (the startup log says which form
+was used). Pool and timeout settings always come from the discrete variables.
+
+Defaults are those applied by `AUTO_SETUP`; they are written to `config.yaml` on the first start.
+
+### Database and Redis connection
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | Yes | - |
-| `REDIS_URL` | Redis connection string | Yes | - |
-| `PORT` | Server port | No | `8080` |
-| `GIN_MODE` | Gin framework mode (`debug`/`release`) | No | `release` |
+| `DATABASE_URL` | PostgreSQL connection URL `postgres://user:pass@host:port/dbname?sslmode=...`. Extra libpq options such as `sslrootcert=` or `application_name=` are passed through; an unknown option name fails at startup naming the option. | One of `DATABASE_URL` or `DATABASE_HOST` | - |
+| `DATABASE_HOST` | PostgreSQL host (ignored when `DATABASE_URL` is set) | One of `DATABASE_URL` or `DATABASE_HOST` | `localhost` |
+| `DATABASE_PORT` | PostgreSQL port | No | `5432` |
+| `DATABASE_USER` | PostgreSQL user | No | `postgres` |
+| `DATABASE_PASSWORD` | PostgreSQL password | No | *(empty)* |
+| `DATABASE_DBNAME` | Database name (created on first start if missing) | No | `sub2api` |
+| `DATABASE_SSLMODE` | `disable`, `require`, `verify-ca` or `verify-full` | No | `disable` |
+| `DATABASE_MAX_OPEN_CONNS` | Connection pool: max open connections | No | `256` |
+| `DATABASE_MAX_IDLE_CONNS` | Connection pool: max idle connections | No | `128` |
+| `REDIS_URL` | `redis://[user:pass@]host:port/db`, or `rediss://...` for TLS. Only the database index may be given as a query parameter; tuning stays in `REDIS_*`. | One of `REDIS_URL` or `REDIS_HOST` | - |
+| `REDIS_HOST` | Redis host (ignored when `REDIS_URL` is set) | One of `REDIS_URL` or `REDIS_HOST` | `localhost` |
+| `REDIS_PORT` | Redis port | No | `6379` |
+| `REDIS_USERNAME` | Redis ACL user for the data nodes | No | *(empty)* |
+| `REDIS_PASSWORD` | Redis password for the data nodes | No | *(empty)* |
+| `REDIS_DB` | Database index | No | `0` |
+| `REDIS_ENABLE_TLS` | `true` to connect with TLS (same as `rediss://`) | No | `false` |
+| `REDIS_POOL_SIZE` | Connection pool size | No | `1024` |
+| `REDIS_MIN_IDLE_CONNS` | Minimum idle connections | No | `128` |
+
+### Server and first-start setup
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `AUTO_SETUP` | `true` initialises the instance from the environment on the first start instead of serving the setup wizard | Yes, for unattended deployments | `false` |
+| `SERVER_HOST` | Listen address inside the container | No | `0.0.0.0` |
+| `SERVER_PORT` | Listen port inside the container | No | `8080` |
+| `SERVER_MODE` | `release` or `debug` | No | `release` |
+| `ADMIN_EMAIL` | Admin account created on the first start | No | `admin@sub2api.local` |
+| `ADMIN_PASSWORD` | Admin password; generated and printed to the logs once when empty | No | *(generated)* |
+| `JWT_SECRET` | 32+ bytes. Generated on every start when empty, which logs all users out on restart | Recommended | *(generated)* |
+| `TOTP_ENCRYPTION_KEY` | 64 hex characters. Generated on every start when empty, which invalidates existing 2FA enrolments | Recommended | *(generated)* |
+| `TZ` | Timezone for the application and for database sessions | No | `Asia/Shanghai` |
+| `DATA_DIR` | Directory for `config.yaml`, the install lock and log files | No | `/app/data` |
 
 ## Supported Architectures
 

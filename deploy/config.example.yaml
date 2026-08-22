@@ -830,6 +830,17 @@ database:
   # SSL 模式：disable（禁用）, prefer（优先加密，默认）, require（要求）, verify-ca（验证CA）, verify-full（完全验证）
   # 默认值为 "prefer"，数据库支持 SSL 时自动使用加密连接，不支持时回退明文
   sslmode: "prefer"
+  # Connection URL (optional). When set it is the ONLY source for the connection target:
+  # host/port/user/password/dbname/sslmode above are ignored and the startup log says so.
+  # Extra libpq options in the query string (sslrootcert=...) are passed through; an unknown
+  # option name fails at startup. Pool settings below still apply.
+  # 连接 URL（可选）：设置后它是连接目标的唯一来源，上面的 host/port/user/password/dbname/sslmode
+  # 不再生效（启动日志会说明）。查询串里的其余 libpq 参数原样带入，未知参数名启动即报错。
+  # url: "postgres://user:password@db.example.com:5432/sub2api?sslmode=verify-full&sslrootcert=/certs/ca.pem"
+  # Extra libpq parameters rendered into the DSN (the same names the URL query string accepts).
+  # 其余 libpq 参数（与 URL 查询串接受的名字相同），按名排序写入 DSN。
+  # extra_params:
+  #   sslrootcert: "/certs/ca.pem"
   # Max open connections (高并发场景建议 256+，需配合 PostgreSQL max_connections 调整)
   # 最大打开连接数
   max_open_conns: 256
@@ -872,6 +883,10 @@ redis:
   # Enable TLS/SSL connection
   # 是否启用 TLS/SSL 连接
   enable_tls: false
+  # Connection URL (optional): overrides host/port/username/password/db/enable_tls; rediss:// enables
+  # TLS. Only the database index may be a query parameter — pool/timeout tuning stays in the keys above.
+  # 连接 URL（可选）：设置后覆盖 host/port/username/password/db/enable_tls；rediss:// 即启用 TLS。
+  # url: "rediss://:password@redis.example.com:6379/0"
 
 # =============================================================================
 # Ops Monitoring (Optional)
