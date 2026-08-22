@@ -102,6 +102,19 @@ services:
       - SETUP_MIGRATION_TIMEOUT_SECONDS=${SETUP_MIGRATION_TIMEOUT_SECONDS:-0}
 
       # =======================================================================
+      # Encryption Key (TOTP secrets, monitor API keys, S3 secrets, ...)
+      # =======================================================================
+      # REQUIRED. This is the key every instance uses to encrypt data at rest;
+      # the standalone compose is the usual way to add an instance, so it must
+      # carry the SAME key as the other instances or 2FA/logins fail randomly.
+      # In release mode the server refuses to start without it.
+      # Generate once: openssl rand -hex 32
+      - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:?TOTP_ENCRYPTION_KEY is required (openssl rand -hex 32); use the same value on every instance}
+      # Previous key(s) during rotation, comma-separated. See deploy/README.md
+      # "Rotating the encryption key".
+      - TOTP_ENCRYPTION_KEY_PREVIOUS=${TOTP_ENCRYPTION_KEY_PREVIOUS:-}
+
+      # =======================================================================
       # Timezone Configuration
       # =======================================================================
       - TZ=${TZ:-Asia/Shanghai}

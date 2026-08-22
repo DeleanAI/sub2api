@@ -13,7 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/repository"
+
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
@@ -110,7 +110,9 @@ func (r postgresPromptAuditSettingRepository) Delete(ctx context.Context, key st
 
 func promptAuditTestEncryptor(t *testing.T) service.SecretEncryptor {
 	t.Helper()
-	encryptor, err := repository.NewAESEncryptor(&config.Config{Totp: config.TotpConfig{EncryptionKey: strings.Repeat("42", 32)}})
+	// 直接从配置构造密钥环：repository 现在依赖本包（轮换注册表），测试再反向依赖
+	// repository 会形成 import cycle。
+	encryptor, err := config.TotpConfig{EncryptionKey: strings.Repeat("42", 32)}.KeyRing()
 	require.NoError(t, err)
 	return encryptor
 }

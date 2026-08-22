@@ -950,15 +950,20 @@ jwt:
 # TOTP 双因素认证配置
 # =============================================================================
 totp:
-  # IMPORTANT: Set a fixed encryption key for TOTP secrets.
-  # 重要：设置固定的 TOTP 加密密钥。
-  # If left empty, a random key will be generated on each startup, causing all
-  # existing TOTP configurations to become invalid (users won't be able to
-  # login with 2FA).
-  # 如果留空，每次启动将生成随机密钥，导致现有的 TOTP 配置失效（用户无法使用
-  # 双因素认证登录）。
+  # REQUIRED in release mode. Despite the name this is the key for all data at
+  # rest: TOTP secrets, channel monitor API keys, backup/image storage S3
+  # secrets, Ollama web sessions, prompt-audit endpoint tokens. Every instance
+  # must use the same value; the server refuses to start without it in release
+  # mode (debug mode generates a per-process key and warns).
+  # 重要：release 模式必填。这把密钥加密所有落库敏感数据，所有实例必须一致；
+  # release 模式缺失时服务拒绝启动（debug 模式自动生成并告警）。
   # Generate with / 生成命令: openssl rand -hex 32
   encryption_key: ""
+  # Previous key(s) during rotation, comma-separated hex. Set the new key above,
+  # the old key here, restart, run `sub2api encryption-key rotate`, then clear.
+  # 轮换期间的历史密钥（逗号分隔）：新密钥写上面、旧密钥写这里并重启，执行
+  # `sub2api encryption-key rotate` 后再清空。
+  encryption_key_previous: ""
 
 # =============================================================================
 # LinuxDo Connect OAuth Login (SSO)

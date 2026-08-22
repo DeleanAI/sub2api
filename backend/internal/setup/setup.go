@@ -78,8 +78,14 @@ type SetupConfig struct {
 	Admin                   AdminConfig    `json:"admin" yaml:"-"` // Not stored in config file
 	Server                  ServerConfig   `json:"server" yaml:"server"`
 	JWT                     JWTConfig      `json:"jwt" yaml:"jwt"`
+	Totp                    TotpConfig     `json:"totp" yaml:"totp"`
 	Timezone                string         `json:"timezone" yaml:"timezone"` // e.g. "Asia/Shanghai", "UTC"
 	MigrationTimeoutSeconds int            `json:"migration_timeout_seconds" yaml:"migration_timeout_seconds,omitempty"`
+}
+
+// TotpConfig 是落库密文密钥（名字沿用配置键 totp.encryption_key）。
+type TotpConfig struct {
+	EncryptionKey string `json:"encryption_key" yaml:"encryption_key"`
 }
 
 // DatabaseConfig 是安装向导的数据库连接视图：JSON 面向向导表单，YAML 面向写出的 config.yaml。
@@ -375,6 +381,9 @@ func Install(cfg *SetupConfig) error {
 		cfg.JWT.Secret = secret
 		logger.LegacyPrintf("setup", "%s", "Warning: JWT secret auto-generated. Consider setting a fixed secret for production.")
 	}
+	if err := ensureEncryptionKey(cfg); err != nil {
+		return err
+	}
 
 	// Test connections
 	if err := TestDatabaseConnection(&cfg.Database); err != nil {
@@ -510,6 +519,27 @@ func createAdminUser(cfg *SetupConfig) (bool, string, error) {
 	return true, decision.reason, nil
 }
 
+// ensureEncryptionKey 在初始化时为落库密文密钥补一个随机值并写进 config.yaml。
+//
+// 与 JWT secret 同一条规则：运维没给的长期密钥由向导生成一次并持久化，而不是
+// 留空让服务每次启动各自生成。生成的密钥只对这一份 config.yaml 有效——再加
+// 实例时必须把同一把密钥带过去（环境变量优先于 config.yaml），否则第二个
+// 实例会在启动时被密钥指纹校验拒绝。
+func ensureEncryptionKey(cfg *SetupConfig) error {
+	cfg.Totp.EncryptionKey = strings.TrimSpace(cfg.Totp.EncryptionKey)
+	if cfg.Totp.EncryptionKey != "" {
+		return nil
+	}
+	key, err := generateSecret(32)
+	if err != nil {
+		return fmt.Errorf("failed to generate encryption key: %w", err)
+	}
+	cfg.Totp.EncryptionKey = key
+	logger.LegacyPrintf("setup", "%s", "Warning: encryption key (totp.encryption_key) auto-generated and persisted to config.yaml. "+
+		"Every additional instance must use this same key: set TOTP_ENCRYPTION_KEY explicitly for multi-instance deployments.")
+	return nil
+}
+
 func writeConfigFile(cfg *SetupConfig) error {
 	// Ensure timezone has a default value
 	tz := cfg.Timezone
@@ -526,6 +556,7 @@ func writeConfigFile(cfg *SetupConfig) error {
 			Secret     string `yaml:"secret"`
 			ExpireHour int    `yaml:"expire_hour"`
 		} `yaml:"jwt"`
+		Totp    TotpConfig `yaml:"totp"`
 		Default struct {
 			UserConcurrency int     `yaml:"user_concurrency"`
 			UserBalance     float64 `yaml:"user_balance"`
@@ -548,6 +579,7 @@ func writeConfigFile(cfg *SetupConfig) error {
 			Secret:     cfg.JWT.Secret,
 			ExpireHour: cfg.JWT.ExpireHour,
 		},
+		Totp: cfg.Totp,
 		Default: struct {
 			UserConcurrency int     `yaml:"user_concurrency"`
 			UserBalance     float64 `yaml:"user_balance"`
@@ -664,6 +696,7 @@ func setupConfigFromEnv() (*SetupConfig, error) {
 			Secret:     getEnvOrDefault("JWT_SECRET", ""),
 			ExpireHour: getEnvIntOrDefault("JWT_EXPIRE_HOUR", 24),
 		},
+		Totp:                    TotpConfig{EncryptionKey: getEnvOrDefault("TOTP_ENCRYPTION_KEY", "")},
 		Timezone:                tz,
 		MigrationTimeoutSeconds: getEnvIntOrDefault("SETUP_MIGRATION_TIMEOUT_SECONDS", 0),
 	}
@@ -696,6 +729,9 @@ func AutoSetupFromEnv() error {
 		}
 		cfg.JWT.Secret = secret
 		logger.LegacyPrintf("setup", "%s", "Warning: JWT secret auto-generated. Consider setting a fixed secret for production.")
+	}
+	if err := ensureEncryptionKey(cfg); err != nil {
+		return err
 	}
 
 	// Test database connection

@@ -12,6 +12,7 @@ import (
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/secretcipher"
 )
 
 // Strategy represents a load balancing strategy for provider instance selection.
@@ -40,9 +41,10 @@ type LoadBalancer interface {
 
 // DefaultLoadBalancer implements LoadBalancer using database queries.
 type DefaultLoadBalancer struct {
-	db            *dbent.Client
-	encryptionKey []byte
-	counter       atomic.Uint64
+	db *dbent.Client
+	// encryptionKeys 只用于读升级前的旧格式渠道配置密文：主密钥在前，历史密钥在后。
+	encryptionKeys [][]byte
+	counter        atomic.Uint64
 }
 
 type contextKey string
@@ -50,8 +52,23 @@ type contextKey string
 const wxpayJSAPIAppIDContextKey contextKey = "payment.wxpay.jsapi_app_id"
 
 // NewDefaultLoadBalancer creates a new load balancer.
-func NewDefaultLoadBalancer(db *dbent.Client, encryptionKey []byte) *DefaultLoadBalancer {
-	return &DefaultLoadBalancer{db: db, encryptionKey: encryptionKey}
+// previousKeys 是轮换后仍需尝试的历史密钥（可空）。
+func NewDefaultLoadBalancer(db *dbent.Client, encryptionKey []byte, previousKeys ...[]byte) *DefaultLoadBalancer {
+	return &DefaultLoadBalancer{db: db, encryptionKeys: legacyDecryptKeys(encryptionKey, previousKeys)}
+}
+
+// legacyDecryptKeys 把主密钥与历史密钥排成旧格式密文的尝试顺序，跳过未配置的空值。
+func legacyDecryptKeys(primary []byte, previous [][]byte) [][]byte {
+	keys := make([][]byte, 0, 1+len(previous))
+	if len(primary) > 0 {
+		keys = append(keys, primary)
+	}
+	for _, key := range previous {
+		if len(key) > 0 {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
 
 func WithWxpayJSAPIAppID(ctx context.Context, appID string) context.Context {
@@ -314,36 +331,37 @@ func (lb *DefaultLoadBalancer) buildSelection(selected *dbent.PaymentProviderIns
 	}, nil
 }
 
-// decryptConfig parses a stored provider config.
-// New records are plaintext JSON; legacy records are AES-256-GCM ciphertext.
-// Unreadable values (legacy ciphertext without a valid key, or malformed data)
-// are treated as empty so the service keeps running while the admin re-enters
-// the config via the UI.
+// decryptConfig parses a stored provider config via DecodeProviderConfig.
 //
-// TODO(deprecated-legacy-ciphertext): The AES fallback branch below is a
-// transitional compatibility shim for pre-plaintext records. Remove it (and
-// the encryptionKey field + the Decrypt import) after a few releases once all
-// live deployments have re-saved their provider configs through the UI.
+// Unreadable values are still treated as empty so payments keep running while the
+// admin re-enters the config — but never silently: a config that only *looks*
+// unset because this instance holds the wrong encryption key is logged at error
+// level with the key ids involved. Legacy ciphertext is logged at debug level
+// here because this runs on every instance selection; the admin read path and
+// `sub2api encryption-key rotate` surface the same condition at warn level.
 func (lb *DefaultLoadBalancer) decryptConfig(stored string) (map[string]string, error) {
-	if stored == "" {
+	config, legacy, err := DecodeProviderConfig(stored, lb.encryptionKeys)
+	if err != nil {
+		slog.Error("payment provider config unreadable; treating as empty so it can be re-entered. "+
+			"If TOTP_ENCRYPTION_KEY was changed, put the old key in TOTP_ENCRYPTION_KEY_PREVIOUS and run `sub2api encryption-key rotate`",
+			"error", err, "configured_key_ids", keyIDs(lb.encryptionKeys))
 		return nil, nil
 	}
-	var config map[string]string
-	if err := json.Unmarshal([]byte(stored), &config); err == nil {
-		return config, nil
+	if legacy {
+		slog.Debug("payment provider config is still legacy ciphertext; `sub2api encryption-key rotate` converts it to the current format")
 	}
-	// Deprecated: legacy AES-256-GCM ciphertext fallback — scheduled for removal.
-	if len(lb.encryptionKey) == AES256KeySize {
-		//nolint:staticcheck // SA1019: intentional legacy fallback, scheduled for removal
-		if plaintext, err := Decrypt(stored, lb.encryptionKey); err == nil {
-			if err := json.Unmarshal([]byte(plaintext), &config); err == nil {
-				return config, nil
-			}
+	return config, nil
+}
+
+// keyIDs 返回密钥的短标识，供日志定位是哪把钥匙缺席。
+func keyIDs(keys [][]byte) []string {
+	ids := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if len(key) == AES256KeySize {
+			ids = append(ids, secretcipher.KeyID(key))
 		}
 	}
-	slog.Warn("payment provider config unreadable, treating as empty for re-entry",
-		"stored_len", len(stored))
-	return nil, nil
+	return ids
 }
 
 // GetInstanceDailyAmount returns the total completed order amount for an instance today.

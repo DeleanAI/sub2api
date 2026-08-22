@@ -195,14 +195,32 @@ type UpdatePlanRequest struct {
 // PaymentConfigService manages payment configuration and CRUD for
 // provider instances, channels, and subscription plans.
 type PaymentConfigService struct {
-	entClient     *dbent.Client
-	settingRepo   SettingRepository
+	entClient   *dbent.Client
+	settingRepo SettingRepository
+	// encryptionKey 是当前主密钥：续签 token 的签名密钥，也是旧格式渠道配置密文的首选解密密钥。
 	encryptionKey []byte
+	// previousEncryptionKeys 是轮换后仍然有效的历史密钥：读旧密文、校验旧签名时依次尝试。
+	previousEncryptionKeys [][]byte
 }
 
 // NewPaymentConfigService creates a new PaymentConfigService.
-func NewPaymentConfigService(entClient *dbent.Client, settingRepo SettingRepository, encryptionKey []byte) *PaymentConfigService {
-	return &PaymentConfigService{entClient: entClient, settingRepo: settingRepo, encryptionKey: encryptionKey}
+// previousKeys 是 TOTP_ENCRYPTION_KEY_PREVIOUS 里的历史密钥（可空）。
+func NewPaymentConfigService(entClient *dbent.Client, settingRepo SettingRepository, encryptionKey []byte, previousKeys ...[]byte) *PaymentConfigService {
+	return &PaymentConfigService{entClient: entClient, settingRepo: settingRepo, encryptionKey: encryptionKey, previousEncryptionKeys: previousKeys}
+}
+
+// legacyDecryptKeys 返回旧格式渠道配置密文的尝试顺序：主密钥在前，历史密钥在后。
+func (s *PaymentConfigService) legacyDecryptKeys() [][]byte {
+	keys := make([][]byte, 0, 1+len(s.previousEncryptionKeys))
+	if len(s.encryptionKey) > 0 {
+		keys = append(keys, s.encryptionKey)
+	}
+	for _, key := range s.previousEncryptionKeys {
+		if len(key) > 0 {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
 
 // IsPaymentEnabled returns whether the payment system is enabled.

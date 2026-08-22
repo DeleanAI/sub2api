@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -246,5 +247,44 @@ func TestBuildDatabaseConnectionDSNsUsesPostgresForBootstrap(t *testing.T) {
 	}
 	if !strings.Contains(targetDSN, "dbname=sub2api") {
 		t.Fatalf("target DSN = %q, want configured database", targetDSN)
+	}
+}
+
+// 规则：向导/自动初始化不把落库密文密钥留空——运维没给就生成一次并写进 config.yaml。
+func TestEnsureEncryptionKeyGeneratesOnceAndKeepsProvided(t *testing.T) {
+	cfg := &SetupConfig{}
+	if err := ensureEncryptionKey(cfg); err != nil {
+		t.Fatalf("ensureEncryptionKey() error = %v", err)
+	}
+	if len(cfg.Totp.EncryptionKey) != 64 {
+		t.Fatalf("generated key = %q, want 64 hex chars", cfg.Totp.EncryptionKey)
+	}
+	if _, err := hex.DecodeString(cfg.Totp.EncryptionKey); err != nil {
+		t.Fatalf("generated key is not hex: %v", err)
+	}
+
+	provided := &SetupConfig{Totp: TotpConfig{EncryptionKey: " " + strings.Repeat("ab", 32) + " "}}
+	if err := ensureEncryptionKey(provided); err != nil {
+		t.Fatalf("ensureEncryptionKey() error = %v", err)
+	}
+	if provided.Totp.EncryptionKey != strings.Repeat("ab", 32) {
+		t.Fatalf("provided key must be kept (trimmed), got %q", provided.Totp.EncryptionKey)
+	}
+}
+
+func TestWriteConfigFileIncludesEncryptionKey(t *testing.T) {
+	t.Setenv("DATA_DIR", t.TempDir())
+
+	key := strings.Repeat("cd", 32)
+	if err := writeConfigFile(&SetupConfig{Totp: TotpConfig{EncryptionKey: key}}); err != nil {
+		t.Fatalf("writeConfigFile() error = %v", err)
+	}
+
+	data, err := os.ReadFile(GetConfigFilePath())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), "totp:\n    encryption_key: "+key) && !strings.Contains(string(data), "encryption_key: "+key) {
+		t.Fatalf("config missing totp.encryption_key, got:\n%s", string(data))
 	}
 }

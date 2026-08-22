@@ -36,33 +36,10 @@ import (
 //   - *sql.DB: 底层的 SQL 数据库连接，可用于直接执行原生 SQL
 //   - error: 初始化过程中的错误
 func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
-	// 优先初始化时区设置，确保所有时间操作使用统一的时区。
-	// 这对于跨时区部署和日志时间戳的一致性至关重要。
-	if err := timezone.Init(cfg.Timezone); err != nil {
+	drv, err := openEntDriver(cfg)
+	if err != nil {
 		return nil, nil, err
 	}
-
-	// 构建包含时区信息的数据库连接字符串 (DSN)。
-	// 时区信息会传递给 PostgreSQL，确保数据库层面的时间处理正确。
-	dsn := cfg.Database.DSNWithTimezone(cfg.Timezone)
-
-	// 使用 Ent 的 SQL 驱动打开 PostgreSQL 连接。
-	// dialect.Postgres 指定使用 PostgreSQL 方言进行 SQL 生成。
-	var drv *entsql.Driver
-	if cfg.Server.EnableServerTiming {
-		connector, err := pq.NewConnector(dsn)
-		if err != nil {
-			return nil, nil, err
-		}
-		drv = entsql.OpenDB(dialect.Postgres, sql.OpenDB(newServerTimingConnector(connector)))
-	} else {
-		var err error
-		drv, err = entsql.Open(dialect.Postgres, dsn)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	applyDBPoolSettings(drv.DB(), cfg)
 
 	// 确保数据库 schema 已准备就绪。
 	// SQL 迁移文件是 schema 的权威来源（source of truth）。
@@ -106,4 +83,49 @@ func InitEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
 	}
 
 	return client, drv.DB(), nil
+}
+
+// OpenEnt 只建立数据库连接并返回 ent 客户端：不跑迁移、不补齐密钥、不做任何写入。
+//
+// 给运维子命令（如 `sub2api encryption-key rotate`）用：它们与正在运行的服务
+// 共用同一版本二进制，schema 必然已经由服务启动时迁移到位，再跑一遍迁移和
+// 密钥引导只会在维护操作里混入启动逻辑的副作用。
+func OpenEnt(cfg *config.Config) (*ent.Client, *sql.DB, error) {
+	drv, err := openEntDriver(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return ent.NewClient(ent.Driver(drv)), drv.DB(), nil
+}
+
+// openEntDriver 初始化时区并按配置打开 PostgreSQL 连接池（lib/pq）。
+func openEntDriver(cfg *config.Config) (*entsql.Driver, error) {
+	// 优先初始化时区设置，确保所有时间操作使用统一的时区。
+	// 这对于跨时区部署和日志时间戳的一致性至关重要。
+	if err := timezone.Init(cfg.Timezone); err != nil {
+		return nil, err
+	}
+
+	// 构建包含时区信息的数据库连接字符串 (DSN)。
+	// 时区信息会传递给 PostgreSQL，确保数据库层面的时间处理正确。
+	dsn := cfg.Database.DSNWithTimezone(cfg.Timezone)
+
+	// 使用 Ent 的 SQL 驱动打开 PostgreSQL 连接。
+	// dialect.Postgres 指定使用 PostgreSQL 方言进行 SQL 生成。
+	var drv *entsql.Driver
+	if cfg.Server.EnableServerTiming {
+		connector, err := pq.NewConnector(dsn)
+		if err != nil {
+			return nil, err
+		}
+		drv = entsql.OpenDB(dialect.Postgres, sql.OpenDB(newServerTimingConnector(connector)))
+	} else {
+		var err error
+		drv, err = entsql.Open(dialect.Postgres, dsn)
+		if err != nil {
+			return nil, err
+		}
+	}
+	applyDBPoolSettings(drv.DB(), cfg)
+	return drv, nil
 }

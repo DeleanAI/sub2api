@@ -497,6 +497,10 @@ func (s *ChannelMonitorService) validateProbeAPIKey(m *ChannelMonitor, newPlainK
 	}
 	plain, err := s.encryptor.Decrypt(m.APIKey)
 	if err != nil {
+		// 不在这里报错（交给 Get/RunCheck 的 APIKeyDecryptFailed 链路），但必须留痕：
+		// 解不开意味着密钥环里没有加密它的那把钥匙。
+		slog.Warn("channel_monitor: stored api key cannot be decrypted while validating an update; deferring to the decrypt-failed path",
+			"monitor_id", m.ID, "error", err)
 		return nil
 	}
 	if strings.TrimSpace(plain) == "" {

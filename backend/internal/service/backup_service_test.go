@@ -311,7 +311,7 @@ func seedS3Config(t *testing.T, repo *mockSettingRepo) {
 		Prefix:          "backups",
 	}
 	data, _ := json.Marshal(cfg)
-	require.NoError(t, repo.Set(context.Background(), settingKeyBackupS3Config, string(data)))
+	require.NoError(t, repo.Set(context.Background(), SettingKeyBackupS3Config, string(data)))
 }
 
 // ─── Tests ───
@@ -330,7 +330,7 @@ func TestBackupService_S3ConfigEncryption(t *testing.T) {
 	require.NoError(t, err)
 
 	// 直接读取数据库中存储的值，应该是加密后的
-	raw, _ := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+	raw, _ := repo.GetValue(context.Background(), SettingKeyBackupS3Config)
 	var stored BackupS3Config
 	require.NoError(t, json.Unmarshal([]byte(raw), &stored))
 	require.Equal(t, "ENC:my-secret", stored.SecretAccessKey)
@@ -386,7 +386,7 @@ func TestBackupService_UpdateS3Config_RejectsEphemeralKey(t *testing.T) {
 	require.ErrorIs(t, err, ErrSecretEncryptionKeyNotConfigured)
 
 	// 不应写入任何配置。
-	raw, _ := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+	raw, _ := repo.GetValue(context.Background(), SettingKeyBackupS3Config)
 	require.Empty(t, raw)
 }
 
@@ -1068,7 +1068,7 @@ func TestBackupService_Schedule_CronValidation(t *testing.T) {
 
 func TestBackupService_LoadS3Config_Corrupted(t *testing.T) {
 	repo := newMockSettingRepo()
-	_ = repo.Set(context.Background(), settingKeyBackupS3Config, "not json!!!!")
+	_ = repo.Set(context.Background(), SettingKeyBackupS3Config, "not json!!!!")
 	svc := newTestBackupService(repo, &mockDumper{}, newMockObjectStore())
 
 	cfg, err := svc.loadS3Config(context.Background())

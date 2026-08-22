@@ -60,3 +60,40 @@ func TestProvideEncryptionKeyRejectsConfiguredInvalidLength(t *testing.T) {
 		t.Fatal("expected error for invalid key length")
 	}
 }
+
+func TestProvidePreviousEncryptionKeysFollowsPrimaryConfiguration(t *testing.T) {
+	t.Parallel()
+
+	previous := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+	cfg := &config.Config{
+		Totp: config.TotpConfig{
+			EncryptionKey:           "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			EncryptionKeyPrevious:   previous + ", ",
+			EncryptionKeyConfigured: true,
+		},
+	}
+	keys, err := ProvidePreviousEncryptionKeys(cfg)
+	if err != nil {
+		t.Fatalf("ProvidePreviousEncryptionKeys returned error: %v", err)
+	}
+	if len(keys) != 1 || len(keys[0]) != 32 {
+		t.Fatalf("previous keys = %d entries, want 1 x 32 bytes", len(keys))
+	}
+
+	// 主密钥是自动生成的：历史密钥同样不提供，和 ProvideEncryptionKey 一致。
+	cfg.Totp.EncryptionKeyConfigured = false
+	keys, err = ProvidePreviousEncryptionKeys(cfg)
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("auto-generated primary must yield no previous keys, got %d keys, err=%v", len(keys), err)
+	}
+
+	// 历史密钥与主密钥重复是配置错误：两个 provider 都报错。
+	cfg.Totp.EncryptionKeyConfigured = true
+	cfg.Totp.EncryptionKeyPrevious = cfg.Totp.EncryptionKey
+	if _, err := ProvidePreviousEncryptionKeys(cfg); err == nil {
+		t.Fatal("expected error for previous key duplicating the primary")
+	}
+	if _, err := ProvideEncryptionKey(cfg); err == nil {
+		t.Fatal("expected error for previous key duplicating the primary")
+	}
+}

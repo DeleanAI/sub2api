@@ -4,6 +4,7 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -14,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/secretcipher"
 	"github.com/spf13/viper"
 	"golang.org/x/net/http/httpguts"
 )
@@ -1616,13 +1618,62 @@ type JWTConfig struct {
 }
 
 // TotpConfig TOTP 双因素认证配置
+//
+// 名字叫 TOTP 是历史原因：这把密钥实际上是全局的落库密文密钥，TOTP 密钥、
+// 渠道监控 API Key、备份/图片存储的 S3 密钥、Ollama 会话、审计节点 Token
+// 都用它加密，支付续签签名密钥也由它派生。
 type TotpConfig struct {
-	// EncryptionKey 用于加密 TOTP 密钥的 AES-256 密钥（32 字节 hex 编码）
-	// 如果为空，将自动生成一个随机密钥（仅适用于开发环境）
+	// EncryptionKey 当前主密钥（32 字节 hex 编码）。所有新写入的密文都用它。
+	//
+	// server.mode=release 时必须配置：留空会让每个进程各自生成一把随机密钥，
+	// 多实例之间互相解不开对方写的数据，且故障表现为随机的认证失败。
+	// server.mode=debug 时留空会自动生成并告警，只适合单机开发。
 	EncryptionKey string `mapstructure:"encryption_key"`
+	// EncryptionKeyPrevious 历史密钥，逗号分隔的 hex 列表。
+	//
+	// 轮换流程：把新密钥写进 encryption_key、旧密钥放进这里并重启，所有实例
+	// 即可同时解密新旧密文；再执行 `sub2api encryption-key rotate` 把存量密文
+	// 重写到新密钥下，最后把这里清空。
+	EncryptionKeyPrevious string `mapstructure:"encryption_key_previous"`
 	// EncryptionKeyConfigured 标记加密密钥是否为手动配置（非自动生成）
 	// 只有手动配置了密钥才允许在管理后台启用 TOTP 功能
 	EncryptionKeyConfigured bool `mapstructure:"-"`
+}
+
+// validateKeyRing 校验主密钥与历史密钥能组成一个合法的密钥环。
+// 密钥格式规则只在 secretcipher 里定义一次，这里只是把它接到启动校验上。
+func (c TotpConfig) validateKeyRing() error {
+	if strings.TrimSpace(c.EncryptionKey) == "" {
+		if len(c.PreviousKeys()) > 0 {
+			return fmt.Errorf("totp.encryption_key_previous is set but totp.encryption_key is empty; previous keys only make sense next to a primary key")
+		}
+		return nil
+	}
+	_, err := c.KeyRing()
+	return err
+}
+
+// KeyRing 用主密钥与历史密钥构造密钥环。所有需要加解密落库密文的地方
+// （加密器、启动指纹校验、支付密钥派生、轮换命令）都从这里拿，避免各自解析配置。
+func (c TotpConfig) KeyRing() (*secretcipher.Ring, error) {
+	ring, err := secretcipher.NewRing(c.EncryptionKey, c.PreviousKeys())
+	if err != nil {
+		return nil, fmt.Errorf("totp.encryption_key: %w", err)
+	}
+	return ring, nil
+}
+
+// PreviousKeys 返回 EncryptionKeyPrevious 拆分后的历史密钥列表（去空白、去空项）。
+
+// 重复与格式错误不在这里处理：Validate 通过 secretcipher.NewRing 统一校验。
+func (c TotpConfig) PreviousKeys() []string {
+	var keys []string
+	for _, raw := range strings.Split(c.EncryptionKeyPrevious, ",") {
+		if key := strings.TrimSpace(raw); key != "" {
+			keys = append(keys, key)
+		}
+	}
+	return keys
 }
 
 type TurnstileConfig struct {
@@ -1905,18 +1956,8 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Gateway.UserMessageQueue.Mode = ""
 	}
 
-	// Auto-generate TOTP encryption key if not set (32 bytes = 64 hex chars for AES-256)
-	cfg.Totp.EncryptionKey = strings.TrimSpace(cfg.Totp.EncryptionKey)
-	if cfg.Totp.EncryptionKey == "" {
-		key, err := generateJWTSecret(32) // Reuse the same random generation function
-		if err != nil {
-			return nil, fmt.Errorf("generate totp encryption key error: %w", err)
-		}
-		cfg.Totp.EncryptionKey = key
-		cfg.Totp.EncryptionKeyConfigured = false
-		slog.Warn("TOTP encryption key auto-generated. Consider setting a fixed key for production.")
-	} else {
-		cfg.Totp.EncryptionKeyConfigured = true
+	if err := applyEncryptionKeyPolicy(&cfg); err != nil {
+		return nil, err
 	}
 
 	originalJWTSecret := cfg.JWT.Secret
@@ -2260,8 +2301,9 @@ func setDefaults() {
 	viper.SetDefault("jwt.refresh_token_expire_days", 30)  // 30天Refresh Token有效期
 	viper.SetDefault("jwt.refresh_window_minutes", 2)      // 过期前2分钟开始允许刷新
 
-	// TOTP
+	// TOTP（实际是全局落库密文密钥，见 TotpConfig）
 	viper.SetDefault("totp.encryption_key", "")
+	viper.SetDefault("totp.encryption_key_previous", "")
 
 	// Default
 	// Admin credentials are created via the setup flow (web wizard / CLI / AUTO_SETUP).
@@ -2686,10 +2728,14 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("api_key_auth_cache.invalid_abuse.capacity must be between 256 and 1000000")
 		}
 	}
+	if err := c.Totp.validateKeyRing(); err != nil {
+		return err
+	}
 	jwtSecret := strings.TrimSpace(c.JWT.Secret)
 	if jwtSecret == "" {
 		return fmt.Errorf("jwt.secret is required")
 	}
+
 	// NOTE: 按 UTF-8 编码后的字节长度计算。
 	// 选择 bytes 而不是 rune 计数，确保二进制/随机串的长度语义更接近“熵”而非“字符数”。
 	if len([]byte(jwtSecret)) < 32 {
@@ -3718,7 +3764,41 @@ func isWeakJWTSecret(secret string) bool {
 	return exists
 }
 
+// applyEncryptionKeyPolicy 是"加密密钥未配置时怎么办"的唯一决策点。
+//
+// 规则：release 模式下密钥是启动前置条件；debug 模式下允许每进程自动生成。
+// 放在配置加载里而不是某个服务的构造函数里，是为了让服务、运维子命令、
+// 自动初始化等所有入口共享同一条规则——任何一个入口在没有密钥的情况下
+// 启动，都会制造出一批只有它自己能解开的密文。
+func applyEncryptionKeyPolicy(cfg *Config) error {
+	cfg.Totp.EncryptionKey = strings.TrimSpace(cfg.Totp.EncryptionKey)
+	cfg.Totp.EncryptionKeyPrevious = strings.TrimSpace(cfg.Totp.EncryptionKeyPrevious)
+	if cfg.Totp.EncryptionKey != "" {
+		cfg.Totp.EncryptionKeyConfigured = true
+		return nil
+	}
+	if cfg.Server.Mode == "release" {
+		return errors.New("totp.encryption_key is required when server.mode=release: " +
+			"every process would otherwise encrypt with its own random key and other instances could not read the data. " +
+			"Generate one with `openssl rand -hex 32` and set it as the TOTP_ENCRYPTION_KEY environment variable " +
+			"(or totp.encryption_key in config.yaml) on every instance; use SERVER_MODE=debug only for local development")
+	}
+	key, err := generateJWTSecret(KeyBytesAES256)
+	if err != nil {
+		return fmt.Errorf("generate totp encryption key error: %w", err)
+	}
+	cfg.Totp.EncryptionKey = key
+	cfg.Totp.EncryptionKeyConfigured = false
+	slog.Warn("TOTP encryption key auto-generated because totp.encryption_key is empty and server.mode=debug; " +
+		"data encrypted by this process cannot be read by any other process. Set TOTP_ENCRYPTION_KEY for anything beyond local development.")
+	return nil
+}
+
+// KeyBytesAES256 是落库密文密钥的字节长度（AES-256）。
+const KeyBytesAES256 = secretcipher.KeySize
+
 func generateJWTSecret(byteLength int) (string, error) {
+
 	if byteLength <= 0 {
 		byteLength = 32
 	}

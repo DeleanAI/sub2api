@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const settingKeyImageStorageConfig = "image_storage_config"
+const SettingKeyImageStorageConfig = "image_storage_config"
 
 // ErrImageStorageIncomplete 表示开关已打开但凭证不全，无法启用异步生图。
 var ErrImageStorageIncomplete = errors.New("image storage is enabled but bucket/access_key_id/secret_access_key are incomplete")
@@ -192,7 +192,7 @@ func (s *ImageStorageSettingService) Update(ctx context.Context, in ImageStorage
 	if err != nil {
 		return nil, fmt.Errorf("marshal image storage settings: %w", err)
 	}
-	if err := s.settingRepo.Set(ctx, settingKeyImageStorageConfig, string(data)); err != nil {
+	if err := s.settingRepo.Set(ctx, SettingKeyImageStorageConfig, string(data)); err != nil {
 		return nil, fmt.Errorf("save image storage settings: %w", err)
 	}
 	s.Invalidate()
@@ -269,13 +269,7 @@ func (s *ImageStorageSettingService) toImageStorageConfig(ctx context.Context, i
 			cfg.Bucket = backupCfg.Bucket
 		}
 	} else if cfg.SecretAccessKey != "" {
-		decrypted, err := s.encryptor.Decrypt(cfg.SecretAccessKey)
-		if err != nil {
-			// 兼容未加密的旧数据，与备份配置的处理保持一致。
-			logger.L().Warn("image_storage secret decrypt failed; treating the stored value as plaintext", zap.Error(err))
-		} else {
-			cfg.SecretAccessKey = decrypted
-		}
+		cfg.SecretAccessKey = decryptStoredSecret(s.encryptor, cfg.SecretAccessKey, "image storage secret_access_key")
 	}
 	return cfg, nil
 }
@@ -293,7 +287,7 @@ func (s *ImageStorageSettingService) load(ctx context.Context) (*ImageStorageSet
 	if s.settingRepo == nil {
 		return nil, nil //nolint:nilnil // no repository means no stored settings
 	}
-	raw, err := s.settingRepo.GetValue(ctx, settingKeyImageStorageConfig)
+	raw, err := s.settingRepo.GetValue(ctx, SettingKeyImageStorageConfig)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return nil, nil //nolint:nilnil // never configured is a valid state
 	}

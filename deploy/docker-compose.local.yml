@@ -107,12 +107,14 @@ services:
       # =======================================================================
       # TOTP (2FA) Configuration
       # =======================================================================
-      # IMPORTANT: Set a fixed encryption key for TOTP secrets. If left empty,
-      # a random key will be generated on each startup, causing all existing
-      # TOTP configurations to become invalid (users won't be able to login
-      # with 2FA).
+      # REQUIRED in release mode (the default): this key encrypts TOTP secrets,
+      # channel monitor API keys, backup/image storage S3 secrets and more. Every
+      # instance must use the same value; the server refuses to start without it.
       # Generate a secure key: openssl rand -hex 32
       - TOTP_ENCRYPTION_KEY=${TOTP_ENCRYPTION_KEY:-}
+      # Previous key(s) while rotating, comma-separated. See deploy/README.md
+      # "Rotating the encryption key".
+      - TOTP_ENCRYPTION_KEY_PREVIOUS=${TOTP_ENCRYPTION_KEY_PREVIOUS:-}
 
       # =======================================================================
       # Timezone Configuration

@@ -289,38 +289,45 @@ func (s *PaymentService) paymentResume() *PaymentResumeService {
 	return psNewPaymentResumeService(s.configService)
 }
 
-func NewLegacyAwarePaymentResumeService(legacyKey []byte) *PaymentResumeService {
-	return newLegacyAwarePaymentResumeService(legacyKey)
+// NewLegacyAwarePaymentResumeService 构造续签 token 服务；previousKeys 是轮换后仍需
+// 校验旧签名的历史密钥（TOTP_ENCRYPTION_KEY_PREVIOUS），让轮换期间已签发的 token 继续有效。
+func NewLegacyAwarePaymentResumeService(legacyKey []byte, previousKeys ...[]byte) *PaymentResumeService {
+	return newLegacyAwarePaymentResumeService(legacyKey, previousKeys...)
 }
 
 func psNewPaymentResumeService(configService *PaymentConfigService) *PaymentResumeService {
-	return newLegacyAwarePaymentResumeService(psResumeLegacyVerificationKey(configService))
+	legacyKey, previousKeys := psResumeLegacyVerificationKeys(configService)
+	return newLegacyAwarePaymentResumeService(legacyKey, previousKeys...)
 }
 
-func newLegacyAwarePaymentResumeService(legacyKey []byte) *PaymentResumeService {
-	signingKey, verifyFallbacks := resolvePaymentResumeSigningKeys(legacyKey)
+func newLegacyAwarePaymentResumeService(legacyKey []byte, previousKeys ...[]byte) *PaymentResumeService {
+	signingKey, verifyFallbacks := resolvePaymentResumeSigningKeys(legacyKey, previousKeys)
 	return NewPaymentResumeService(signingKey, verifyFallbacks...)
 }
 
-func psResumeLegacyVerificationKey(configService *PaymentConfigService) []byte {
+func psResumeLegacyVerificationKeys(configService *PaymentConfigService) ([]byte, [][]byte) {
 	if configService == nil {
-		return nil
+		return nil, nil
 	}
-	return configService.encryptionKey
+	return configService.encryptionKey, configService.previousEncryptionKeys
 }
 
-func resolvePaymentResumeSigningKeys(legacyKey []byte) ([]byte, [][]byte) {
+// resolvePaymentResumeSigningKeys 决定签名密钥与校验回退列表：
+// 显式的 PAYMENT_RESUME_SIGNING_KEY 优先签名，落库密文主密钥其次；
+// 校验时额外接受历史密钥签发的 token（24 小时 TTL 内跨越一次轮换）。
+func resolvePaymentResumeSigningKeys(legacyKey []byte, previousKeys [][]byte) ([]byte, [][]byte) {
 	signingKey := parsePaymentResumeSigningKey(os.Getenv(paymentResumeSigningKeyEnv))
 	if len(signingKey) == 0 {
 		if len(legacyKey) == 0 {
 			return nil, nil
 		}
-		return legacyKey, nil
+		return legacyKey, previousKeys
 	}
-	if len(legacyKey) == 0 || bytes.Equal(legacyKey, signingKey) {
-		return signingKey, nil
+	var fallbacks [][]byte
+	if len(legacyKey) > 0 && !bytes.Equal(legacyKey, signingKey) {
+		fallbacks = append(fallbacks, legacyKey)
 	}
-	return signingKey, [][]byte{legacyKey}
+	return signingKey, append(fallbacks, previousKeys...)
 }
 
 func parsePaymentResumeSigningKey(raw string) []byte {

@@ -271,7 +271,8 @@ func (s *TotpService) CompleteSetup(ctx context.Context, userID int64, totpCode,
 	// Verify encryption by decrypting
 	decrypted, decErr := s.encryptor.Decrypt(encryptedSecret)
 	if decErr != nil {
-		slog.Debug("totp_complete_setup_verify_failed",
+		// 刚加密的密文用同一个密钥环解不开：不是密钥配置问题，是代码缺陷，必须可见。
+		slog.Error("totp_complete_setup_verify_failed: freshly encrypted secret cannot be decrypted with the same key ring",
 			"user_id", userID,
 			"error", decErr)
 	} else {
@@ -364,7 +365,11 @@ func (s *TotpService) VerifyCode(ctx context.Context, userID int64, code string)
 	// Decrypt the secret
 	secret, err := s.encryptor.Decrypt(*user.TotpSecretEncrypted)
 	if err != nil {
-		slog.Debug("totp_verify_decrypt_failed",
+		// 落库密文解不开只有一种原因：本实例的密钥环里没有加密它的那把钥匙
+		// （TOTP_ENCRYPTION_KEY 与其他实例不一致，或轮换后旧密钥没放进
+		// TOTP_ENCRYPTION_KEY_PREVIOUS）。错误里带 key-id，和时钟漂移导致的
+		// 验证码错误完全区分开；记 error 级别，不能只在 debug 日志里可见。
+		slog.Error("totp_verify_decrypt_failed: stored TOTP secret cannot be decrypted with this instance's encryption key ring (key mismatch, not clock skew)",
 			"user_id", userID,
 			"error", err)
 		return infraerrors.InternalServer("TOTP_VERIFY_ERROR", "failed to verify totp code")
