@@ -82,11 +82,38 @@ func TestAuthIdentityFoundationSchemas(t *testing.T) {
 	require.Equal(t, "email", signupSource.DefaultValue)
 	require.Equal(t, 1, signupSource.Validators)
 
+	// signup_source 与 auth_identities.provider_type 共用同一份 provider 声明：
+	// 声明里的每个 provider 都必须通过，未声明的必须被拒。
 	validator := requireStringFieldValidator(t, User{}.Fields(), "signup_source")
-	for _, value := range []string{"email", "linuxdo", "wechat", "oidc", "github", "google", "dingtalk"} {
+	providerTypeValidator := requireStringFieldValidator(t, AuthIdentity{}.Fields(), "provider_type")
+	require.NotEmpty(t, AuthProviderTypes())
+	for _, value := range AuthProviderTypes() {
 		require.NoError(t, validator(value))
+		require.NoError(t, providerTypeValidator(value))
 	}
 	require.Error(t, validator("unknown"))
+	require.Error(t, providerTypeValidator("unknown"))
+	require.Error(t, validator("Feishu"), "provider names are exact, no case folding")
+}
+
+// TestAuthProviderDeclaration 固化声明本身的形状：名字非空且唯一、email 不可绑定、
+// 第三方绑定 provider 都在 AuthProviderTypes 里。
+func TestAuthProviderDeclaration(t *testing.T) {
+	seen := map[string]bool{}
+	for _, spec := range AuthProviders() {
+		require.NotEmpty(t, spec.Name)
+		require.False(t, seen[spec.Name], "duplicate provider %q", spec.Name)
+		seen[spec.Name] = true
+		require.Equal(t, spec.BindsIdentity, IsIdentityBindingProvider(spec.Name))
+		require.True(t, IsAuthProviderType(spec.Name))
+	}
+	require.True(t, seen["email"])
+	require.False(t, IsIdentityBindingProvider("email"), "email is the local account itself, never a bindable third party")
+	require.False(t, IsIdentityBindingProvider("unknown"))
+	for _, name := range IdentityBindingProviders() {
+		require.True(t, IsAuthProviderType(name))
+		require.NotEqual(t, "email", name)
+	}
 }
 
 func requireSchema(t *testing.T, schemas map[string]*load.Schema, name string) *load.Schema {

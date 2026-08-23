@@ -1,8 +1,6 @@
 package schema
 
 import (
-	"fmt"
-
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 
@@ -77,15 +75,9 @@ func (User) Fields() []ent.Field {
 		field.Time("totp_enabled_at").
 			Optional().
 			Nillable(),
+		// 取值清单来自 auth_identity.go 的 AuthProviderSpec 声明，与 provider_type 列共用同一校验器。
 		field.String("signup_source").
-			Validate(func(value string) error {
-				switch value {
-				case "email", "linuxdo", "wechat", "oidc", "github", "google", "dingtalk":
-					return nil
-				default:
-					return fmt.Errorf("must be one of email, linuxdo, wechat, oidc, github, google, dingtalk")
-				}
-			}).
+			Validate(validateAuthProviderType).
 			Default("email"),
 		field.Time("last_login_at").
 			Optional().

@@ -357,6 +357,7 @@ type PublicSettings struct {
 
 	LinuxDoOAuthEnabled      bool
 	DingTalkOAuthEnabled     bool
+	FeishuOAuthEnabled       bool
 	WeChatOAuthEnabled       bool
 	WeChatOAuthOpenEnabled   bool
 	WeChatOAuthMPEnabled     bool

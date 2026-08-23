@@ -80,6 +80,7 @@ type Config struct {
 	WeChat                  WeChatConnectConfig           `mapstructure:"wechat_connect"`
 	OIDC                    OIDCConnectConfig             `mapstructure:"oidc_connect"`
 	DingTalk                DingTalkConnectConfig         `mapstructure:"dingtalk_connect"`
+	Feishu                  FeishuConnectConfig           `mapstructure:"feishu_connect"`
 	GitHubOAuth             EmailOAuthProviderConfig      `mapstructure:"github_oauth"`
 	GoogleOAuth             EmailOAuthProviderConfig      `mapstructure:"google_oauth"`
 	Default                 DefaultConfig                 `mapstructure:"default"`
@@ -384,6 +385,28 @@ type DingTalkConnectConfig struct {
 	EnableAttributeSync          bool     `mapstructure:"enable_attribute_sync"`
 	AttributeSyncFields          []string `mapstructure:"attribute_sync_fields"`
 	AttributeSyncOverwritePolicy string   `mapstructure:"attribute_sync_overwrite_policy"`
+}
+
+// FeishuConnectConfig 是飞书（Lark）OAuth 登录配置。
+//
+// Enabled 是总闸（环境变量 FEISHU_CONNECT_ENABLED）：关着时不注册 /auth/oauth/feishu/* 路由、
+// 公开设置不暴露该 provider、后台设置里的开关也无效；开着时后台（settings 表）可以覆盖凭证、
+// 回调地址、租户限制，并能不重启地临时关闭登录。三个端点 URL 可配置是为了 Lark 国际版
+// （accounts.larksuite.com / open.larksuite.com）。
+type FeishuConnectConfig struct {
+	Enabled             bool   `mapstructure:"enabled"`
+	AppID               string `mapstructure:"app_id"`
+	AppSecret           string `mapstructure:"app_secret"`
+	AuthorizeURL        string `mapstructure:"authorize_url"`
+	TokenURL            string `mapstructure:"token_url"`
+	UserInfoURL         string `mapstructure:"userinfo_url"`
+	Scopes              string `mapstructure:"scopes"`                // 空 = 只取基础资料；不要申请 offline_access（不需要 refresh_token）
+	RedirectURL         string `mapstructure:"redirect_url"`          // 后端回调地址，须与飞书开发者后台登记一致；空 = 按站点地址推导
+	FrontendRedirectURL string `mapstructure:"frontend_redirect_url"` // 前端接收结果的路由（默认 /auth/feishu/callback）
+	AllowedTenantKeys   string `mapstructure:"allowed_tenant_keys"`   // 逗号分隔的 tenant_key 白名单；空 = 不限租户
+	BypassRegistration  bool   `mapstructure:"bypass_registration"`   // 关闭开放注册时仍允许飞书用户注册；要求 allowed_tenant_keys 非空
+	RequireEmail        bool   `mapstructure:"require_email"`         // true：拿不到邮箱则让用户补邮箱；false：用合成邮箱直接登录
+	UsePKCE             bool   `mapstructure:"use_pkce"`              // 默认 true（S256）；关闭后 code_challenge / code_verifier 都不发
 }
 
 type EmailOAuthProviderConfig struct {
@@ -2181,6 +2204,21 @@ func setDefaults() {
 	viper.SetDefault("dingtalk_connect.require_email", true)
 	viper.SetDefault("dingtalk_connect.username_overwrite_policy", "if_empty")
 
+	// Feishu（飞书 / Lark）OAuth 登录。URL 默认值只在这里声明一次；Lark 国际版改域名即可。
+	viper.SetDefault("feishu_connect.enabled", false)
+	viper.SetDefault("feishu_connect.app_id", "")
+	viper.SetDefault("feishu_connect.app_secret", "")
+	viper.SetDefault("feishu_connect.authorize_url", "https://accounts.feishu.cn/open-apis/authen/v1/authorize")
+	viper.SetDefault("feishu_connect.token_url", "https://accounts.feishu.cn/oauth/v3/token")
+	viper.SetDefault("feishu_connect.userinfo_url", "https://open.feishu.cn/open-apis/authen/v1/user_info")
+	viper.SetDefault("feishu_connect.scopes", "")
+	viper.SetDefault("feishu_connect.redirect_url", "")
+	viper.SetDefault("feishu_connect.frontend_redirect_url", "/auth/feishu/callback")
+	viper.SetDefault("feishu_connect.allowed_tenant_keys", "")
+	viper.SetDefault("feishu_connect.bypass_registration", false)
+	viper.SetDefault("feishu_connect.require_email", true)
+	viper.SetDefault("feishu_connect.use_pkce", true)
+
 	// Database
 	// database.url 非空时覆盖下面的离散连接字段（规则见 connection.go）
 	viper.SetDefault("database.url", "")
@@ -3730,6 +3768,9 @@ func (c *Config) Validate() error {
 	}
 	if err := ValidateDingTalkConfig(c.DingTalk); err != nil {
 		return fmt.Errorf("dingtalk_connect: %w", err)
+	}
+	if err := ValidateFeishuConfig(c.Feishu); err != nil {
+		return fmt.Errorf("feishu_connect: %w", err)
 	}
 	return nil
 }

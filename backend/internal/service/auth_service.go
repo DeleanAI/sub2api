@@ -966,6 +966,8 @@ func authSourceSignupSettings(defaults *AuthSourceDefaultSettings, signupSource 
 		return defaults.Google, true
 	case "dingtalk":
 		return defaults.DingTalk, true
+	case "feishu":
+		return defaults.Feishu, true
 	default:
 		return ProviderDefaultGrantSettings{}, false
 	}
@@ -1181,6 +1183,8 @@ func inferLegacySignupSource(email string) string {
 	switch {
 	case strings.HasSuffix(normalized, DingTalkConnectSyntheticEmailDomain):
 		return "dingtalk"
+	case strings.HasSuffix(normalized, FeishuConnectSyntheticEmailDomain):
+		return "feishu"
 	case strings.HasSuffix(normalized, LinuxDoConnectSyntheticEmailDomain):
 		return "linuxdo"
 	case strings.HasSuffix(normalized, OIDCConnectSyntheticEmailDomain):

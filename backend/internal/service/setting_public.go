@@ -337,6 +337,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		CustomEndpoints:                     settings[SettingKeyCustomEndpoints],
 		LinuxDoOAuthEnabled:                 linuxDoEnabled,
 		DingTalkOAuthEnabled:                dingTalkEnabled,
+		FeishuOAuthEnabled:                  s.cfg != nil && s.cfg.Feishu.Enabled,
 		WeChatOAuthEnabled:                  weChatEnabled,
 		WeChatOAuthOpenEnabled:              weChatOpenEnabled,
 		WeChatOAuthMPEnabled:                weChatMPEnabled,
@@ -586,17 +587,20 @@ type PublicSettingsInjectionPayload struct {
 	CustomEndpoints                     json.RawMessage          `json:"custom_endpoints"`
 	LinuxDoOAuthEnabled                 bool                     `json:"linuxdo_oauth_enabled"`
 	DingTalkOAuthEnabled                bool                     `json:"dingtalk_oauth_enabled"`
-	WeChatOAuthEnabled                  bool                     `json:"wechat_oauth_enabled"`
-	WeChatOAuthOpenEnabled              bool                     `json:"wechat_oauth_open_enabled"`
-	WeChatOAuthMPEnabled                bool                     `json:"wechat_oauth_mp_enabled"`
-	WeChatOAuthMobileEnabled            bool                     `json:"wechat_oauth_mobile_enabled"`
-	OIDCOAuthEnabled                    bool                     `json:"oidc_oauth_enabled"`
-	OIDCOAuthProviderName               string                   `json:"oidc_oauth_provider_name"`
-	GitHubOAuthEnabled                  bool                     `json:"github_oauth_enabled"`
-	GoogleOAuthEnabled                  bool                     `json:"google_oauth_enabled"`
-	BackendModeEnabled                  bool                     `json:"backend_mode_enabled"`
-	PaymentEnabled                      bool                     `json:"payment_enabled"`
-	Version                             string                   `json:"version"`
+	// FeishuOAuthEnabled 直接来自 feishu_connect.enabled：飞书没有后台开关，
+	// 配置里关着就当它不存在（路由不注册、按钮不显示）。
+	FeishuOAuthEnabled       bool   `json:"feishu_oauth_enabled"`
+	WeChatOAuthEnabled       bool   `json:"wechat_oauth_enabled"`
+	WeChatOAuthOpenEnabled   bool   `json:"wechat_oauth_open_enabled"`
+	WeChatOAuthMPEnabled     bool   `json:"wechat_oauth_mp_enabled"`
+	WeChatOAuthMobileEnabled bool   `json:"wechat_oauth_mobile_enabled"`
+	OIDCOAuthEnabled         bool   `json:"oidc_oauth_enabled"`
+	OIDCOAuthProviderName    string `json:"oidc_oauth_provider_name"`
+	GitHubOAuthEnabled       bool   `json:"github_oauth_enabled"`
+	GoogleOAuthEnabled       bool   `json:"google_oauth_enabled"`
+	BackendModeEnabled       bool   `json:"backend_mode_enabled"`
+	PaymentEnabled           bool   `json:"payment_enabled"`
+	Version                  string `json:"version"`
 	// 服务器全局时区（IANA 名称与当前 UTC 偏移），高峰时段等服务端本地时间窗口的展示标注用
 	ServerTimezone              string  `json:"server_timezone"`
 	ServerUTCOffset             string  `json:"server_utc_offset"`
@@ -674,6 +678,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		CustomEndpoints:                     safeRawJSONArray(settings.CustomEndpoints),
 		LinuxDoOAuthEnabled:                 settings.LinuxDoOAuthEnabled,
 		DingTalkOAuthEnabled:                settings.DingTalkOAuthEnabled,
+		FeishuOAuthEnabled:                  settings.FeishuOAuthEnabled,
 		WeChatOAuthEnabled:                  settings.WeChatOAuthEnabled,
 		WeChatOAuthOpenEnabled:              settings.WeChatOAuthOpenEnabled,
 		WeChatOAuthMPEnabled:                settings.WeChatOAuthMPEnabled,
