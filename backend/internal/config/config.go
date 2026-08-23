@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/frontendvariant"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/secretcipher"
 	"github.com/spf13/viper"
 	"golang.org/x/net/http/httpguts"
@@ -665,6 +666,7 @@ type ServerConfig struct {
 	Mode                     string    `mapstructure:"mode"`                      // debug/release
 	EnableServerTiming       bool      `mapstructure:"enable_server_timing"`      // Admin UI Server-Timing response header
 	FrontendURL              string    `mapstructure:"frontend_url"`              // 前端基础 URL，用于生成邮件中的外部链接
+	FrontendVariant          string    `mapstructure:"frontend_variant"`          // 选用镜像里的哪一套前端（dist/<name>），默认 default
 	ReadHeaderTimeout        int       `mapstructure:"read_header_timeout"`       // 读取请求头超时（秒）
 	MaxHeaderBytes           int       `mapstructure:"max_header_bytes"`          // 请求头最大字节数（HTTP/2 映射为 header-list 上限）
 	IdleTimeout              int       `mapstructure:"idle_timeout"`              // 空闲连接超时（秒）
@@ -2022,6 +2024,7 @@ func setDefaults() {
 	viper.SetDefault("server.mode", "release")
 	viper.SetDefault("server.enable_server_timing", false)
 	viper.SetDefault("server.frontend_url", "")
+	viper.SetDefault("server.frontend_variant", frontendvariant.Default)
 	viper.SetDefault("server.read_header_timeout", 10) // 10秒读取请求头
 	viper.SetDefault("server.max_header_bytes", 64*1024)
 	viper.SetDefault("server.idle_timeout", 120) // 120秒空闲超时
@@ -2686,6 +2689,11 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("security.proxy_probe.urls: %w", err)
 	}
 	c.Security.ProxyProbe.URLs = proxyProbeURLs
+	// 只校验名字形状；"这个变体在不在二进制里"由 web.VariantFS 判定（config 不能引 web，会成环）。
+	if err := frontendvariant.ValidateName(strings.TrimSpace(c.Server.FrontendVariant)); err != nil {
+		return fmt.Errorf("server.frontend_variant: %w", err)
+	}
+	c.Server.FrontendVariant = strings.TrimSpace(c.Server.FrontendVariant)
 	if c.Server.ReadHeaderTimeout < 1 || c.Server.ReadHeaderTimeout > 60 {
 		return fmt.Errorf("server.read_header_timeout must be between 1 and 60 seconds")
 	}
@@ -3835,6 +3843,24 @@ func GetServerAddress() string {
 	host := v.GetString("server.host")
 	port := v.GetInt("server.port")
 	return fmt.Sprintf("%s:%d", host, port)
+}
+
+// GetFrontendVariant returns server.frontend_variant before full config validation
+// （安装向导阶段还没有完整配置），优先级同 GetServerAddress：环境变量 > 配置文件 > 默认值。
+// 默认值取自 frontendvariant.Default，与 setDefaults 同源，不会两处各写一个字面量。
+func GetFrontendVariant() string {
+	v := viper.New()
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	configureConfigSource(v.SetConfigFile, v.AddConfigPath)
+
+	v.AutomaticEnv()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.SetDefault("server.frontend_variant", frontendvariant.Default)
+
+	_ = v.ReadInConfig()
+
+	return strings.TrimSpace(v.GetString("server.frontend_variant"))
 }
 
 // ValidateAbsoluteHTTPURL 验证是否为有效的绝对 HTTP(S) URL

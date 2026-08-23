@@ -7,16 +7,22 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	htmlpkg "html"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/frontendvariant"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/probe"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
@@ -29,6 +35,65 @@ const (
 
 //go:embed all:dist
 var frontendFS embed.FS
+
+// AvailableVariants 返回这个二进制里真正可服务的变体名（dist/<name>/index.html 存在），已排序。
+//
+// 判据来自嵌入目录本身而不是任何手写名单：构建脚本多输出一套 dist/<name>，这里当天就列出来。
+// 目录名非法或缺 index.html 的一律跳过并留痕——一个"看得见却选不中"的变体比没有更难排查。
+func AvailableVariants() []string {
+	entries, err := fs.ReadDir(frontendFS, distDirName)
+	if err != nil {
+		slog.Warn("embedded frontend dist directory unreadable", "dir", distDirName, "error", err)
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if err := frontendvariant.ValidateName(name); err != nil {
+			slog.Warn("embedded frontend directory ignored: invalid variant name",
+				"dir", name, "error", err)
+			continue
+		}
+		if _, err := fs.Stat(frontendFS, path.Join(distDirName, name, indexHTMLName)); err != nil {
+			slog.Warn("embedded frontend directory ignored: no index.html",
+				"dir", name, "error", err)
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		if _, err := fs.Stat(frontendFS, path.Join(distDirName, indexHTMLName)); err == nil {
+			// 旧布局（产物直接落在 dist/ 根）：二进制里有前端但一个变体也选不中，
+			// 这时候只报"没有前端"会让人去查嵌入是否生效，所以点名说清是产物布局过期了。
+			slog.Warn("embedded frontend uses the pre-variant layout (dist/index.html) and exposes no variant; " +
+				"rebuild the frontend with `pnpm run build:all` so it lands in dist/<variant>/")
+		}
+	}
+	return names
+}
+
+// VariantFS 是运行时选择前端变体的唯一裁决点：NewFrontendServer 与 ServeEmbeddedFrontend 都走它。
+// 选不中就返回 ErrVariantNotFound（错误里带可用变体列表），由调用方让启动失败。
+func VariantFS(name string) (fs.FS, error) {
+	available := AvailableVariants()
+	if err := frontendvariant.ValidateName(name); err != nil {
+		return nil, unknownVariantError(name, available, err)
+	}
+	if !slices.Contains(available, name) {
+		return nil, unknownVariantError(name, available, nil)
+	}
+	distFS, err := fs.Sub(frontendFS, path.Join(distDirName, name))
+	if err != nil {
+		return nil, fmt.Errorf("open embedded frontend variant %q: %w", name, err)
+	}
+	// 选中结果只在这里打一次：解析和留痕在同一个函数里，不会出现"日志说 A、实际服务 B"。
+	slog.Info("frontend variant selected", "frontend.variant", name, "available", available)
+	return distFS, nil
+}
 
 // PublicSettingsProvider is an interface to fetch public settings
 type PublicSettingsProvider interface {
@@ -48,14 +113,16 @@ type FrontendServer struct {
 // NewFrontendServer creates a new frontend server with settings injection.
 // overrideDir 由调用方从统一的数据目录解析（config.StaticOverrideDir），这里不再自己拼
 // CWD 相对路径，否则同一份配置在不同工作目录下会指向不同的覆盖目录。传空表示关闭覆盖。
-func NewFrontendServer(settingsProvider PublicSettingsProvider, overrideDir string) (*FrontendServer, error) {
-	distFS, err := fs.Sub(frontendFS, "dist")
+// variant 选择嵌入的哪一套前端（server.frontend_variant），与 overrideDir 正交：
+// 覆盖目录仍然逐文件盖在选中的那套产物之上。
+func NewFrontendServer(settingsProvider PublicSettingsProvider, overrideDir, variant string) (*FrontendServer, error) {
+	distFS, err := VariantFS(variant)
 	if err != nil {
 		return nil, err
 	}
 
 	// Read base HTML once
-	file, err := distFS.Open("index.html")
+	file, err := distFS.Open(indexHTMLName)
 	if err != nil {
 		return nil, err
 	}
@@ -302,12 +369,14 @@ func replaceNoncePlaceholder(html []byte, nonce string) []byte {
 }
 
 // ServeEmbeddedFrontend returns a middleware for serving embedded frontend
-// This is the legacy function for backward compatibility when no settings provider is available.
+// This is the legacy function for backward compatibility when no settings provider is available
+// (安装向导阶段还没有 SettingService)。
 // overrideDir 同 NewFrontendServer：由调用方从数据目录解析，传空关闭覆盖。
-func ServeEmbeddedFrontend(overrideDir string) gin.HandlerFunc {
-	distFS, err := fs.Sub(frontendFS, "dist")
+// variant 与 NewFrontendServer 共用 VariantFS 这一个裁决点，两条服务路径不可能选出不同的前端。
+func ServeEmbeddedFrontend(overrideDir, variant string) (gin.HandlerFunc, error) {
+	distFS, err := VariantFS(variant)
 	if err != nil {
-		panic("failed to get dist subdirectory: " + err.Error())
+		return nil, err
 	}
 	fileServer := http.FileServer(http.FS(distFS))
 
@@ -337,7 +406,7 @@ func ServeEmbeddedFrontend(overrideDir string) gin.HandlerFunc {
 		}
 
 		serveIndexHTML(c, distFS)
-	}
+	}, nil
 }
 
 // tryServeOverrideFile is a standalone version of tryServeOverride for legacy usage.
@@ -374,7 +443,7 @@ func shouldBypassEmbeddedFrontend(path string) bool {
 }
 
 func serveIndexHTML(c *gin.Context, fsys fs.FS) {
-	file, err := fsys.Open("index.html")
+	file, err := fsys.Open(indexHTMLName)
 	if err != nil {
 		c.String(http.StatusNotFound, "Frontend not found")
 		c.Abort()
@@ -393,7 +462,8 @@ func serveIndexHTML(c *gin.Context, fsys fs.FS) {
 	c.Abort()
 }
 
+// HasEmbeddedFrontend 表示这个二进制里至少有一套可服务的前端。
+// 判据与 VariantFS 同源（AvailableVariants），所以不会出现"说有前端但每个变体都选不中"。
 func HasEmbeddedFrontend() bool {
-	_, err := frontendFS.ReadFile("dist/index.html")
-	return err == nil
+	return len(AvailableVariants()) > 0
 }

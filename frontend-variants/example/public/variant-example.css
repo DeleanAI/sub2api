@@ -1,0 +1,18 @@
+/*
+ * 覆盖层"新增文件"的示例：基础版没有这个文件，构建时它被追加进产物。
+ * 同路径的文件（本变体的 index.html）则是替换基础版的那一份。
+ */
+.variant-example-badge {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 9999;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  background: #1f2937;
+  color: #f9fafb;
+  font: 12px/1.6 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+  pointer-events: none;
+}

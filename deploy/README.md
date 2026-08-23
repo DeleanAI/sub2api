@@ -225,6 +225,28 @@ path is logged at startup (`Frontend static override directory: …`). It is **p
 multi-replica deployment mount identical content on every replica (or use custom page assets,
 which live in the database).
 
+### Frontend variants (`SERVER_FRONTEND_VARIANT`)
+
+One image can carry several frontends. `frontend/` is the base and is built into `dist/default`;
+every `frontend-variants/<name>/` is an **overlay** on top of the base (same-path files replace,
+new files are added) and is built into `dist/<name>`. All of them are embedded in the same binary,
+and `SERVER_FRONTEND_VARIANT` (viper `server.frontend_variant`, default `default`) selects the one
+this process serves — same image, different UI per deployment.
+
+- The selection is logged once at startup:
+  `frontend variant selected frontend.variant=example available=[default example]`.
+- Selecting a variant the image does not carry **fails startup**, and the error lists the available
+  names. There is no fallback to `default`: falling back would make "the variable is wrong" look
+  like "my change did not take effect".
+- `GET /api/v1/settings/public` returns `frontend_variant`, so you can tell which UI a given replica
+  is serving without shelling into it.
+- The `<DATA_DIR>/public` override directory is orthogonal: the variant selects the whole tree, the
+  override directory then replaces individual files on top of it.
+- To keep the image small, build a subset: `docker build --build-arg FRONTEND_VARIANTS=default,acme .`
+  (`default` is always built, because it is the default value of the setting).
+
+Authoring a variant (directory layout, `variant.json`, naming rule): `frontend-variants/README.md`.
+
 ### datamanagementd（数据管理）联动
 
 如需启用管理后台“数据管理”功能，请额外部署宿主机 `datamanagementd`：
@@ -291,6 +313,7 @@ docker compose down -v
 | `TOTP_ENCRYPTION_KEY` | **Yes** (release mode) | - | Encryption key for all data at rest (TOTP secrets, monitor API keys, S3 secrets, ...). Must be identical on every instance; the server refuses to start without it in release mode. |
 | `TOTP_ENCRYPTION_KEY_PREVIOUS` | No | *(empty)* | Previous key(s) during rotation, comma-separated. See [Rotating the encryption key](#rotating-the-encryption-key). |
 | `SERVER_PORT` | No | `8080` | Server port |
+| `SERVER_FRONTEND_VARIANT` | No | `default` | Which embedded frontend to serve (`dist/<name>`). Unknown name = startup failure listing the available variants. See [Frontend variants](#frontend-variants-server_frontend_variant). |
 | `ADMIN_EMAIL` | No | `admin@sub2api.local` | Admin email |
 | `ADMIN_PASSWORD` | No | *(auto-generated)* | Admin password |
 | `TZ` | No | `Asia/Shanghai` | Timezone |

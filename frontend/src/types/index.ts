@@ -255,6 +255,8 @@ export interface PublicSettings {
   google_oauth_enabled: boolean
   backend_mode_enabled: boolean
   version: string
+  /** 当前进程服务的前端变体名（server.frontend_variant）；旧缓存的注入配置可能缺失 */
+  frontend_variant?: string
   // 服务器全局时区（IANA 名称与当前 UTC 偏移），高峰时段等服务端本地时间窗口的展示标注用；
   // 可选：注入的 __APP_CONFIG__ 旧缓存可能缺失
   server_timezone?: string

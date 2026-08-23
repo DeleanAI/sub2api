@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/frontendvariant"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/Wei-Shaw/sub2api/internal/web"
@@ -44,7 +45,8 @@ func (r *keyBillingRouteRateRepo) GetRPMOverrideByUserAndGroup(context.Context, 
 	return nil, nil
 }
 
-func newKeyBillingRouteTestRouter(runMode string) (*gin.Engine, *keyBillingRouteRateRepo, string) {
+func newKeyBillingRouteTestRouter(t *testing.T, runMode string) (*gin.Engine, *keyBillingRouteRateRepo, string) {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	group := &service.Group{
 		ID:               42,
@@ -90,7 +92,10 @@ func newKeyBillingRouteTestRouter(runMode string) (*gin.Engine, *keyBillingRoute
 
 	router := gin.New()
 	if web.HasEmbeddedFrontend() {
-		router.Use(web.ServeEmbeddedFrontend(""))
+		// 这里只是复现"前端兜底中间件在场"的路由现场，用默认变体即可。
+		frontend, err := web.ServeEmbeddedFrontend("", frontendvariant.Default)
+		require.NoError(t, err)
+		router.Use(frontend)
 	}
 	RegisterGatewayRoutes(
 		router,
@@ -120,7 +125,7 @@ func TestGatewayRoutesKeyBillingInfoPathIsRegistered(t *testing.T) {
 
 func TestGatewayRoutesKeyBillingInfoEndToEnd(t *testing.T) {
 	t.Run("missing credentials", func(t *testing.T) {
-		router, rateRepo, _ := newKeyBillingRouteTestRouter(config.RunModeStandard)
+		router, rateRepo, _ := newKeyBillingRouteTestRouter(t, config.RunModeStandard)
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/sub2api/billing", nil))
@@ -132,7 +137,7 @@ func TestGatewayRoutesKeyBillingInfoEndToEnd(t *testing.T) {
 	})
 
 	t.Run("standard mode", func(t *testing.T) {
-		router, rateRepo, key := newKeyBillingRouteTestRouter(config.RunModeStandard)
+		router, rateRepo, key := newKeyBillingRouteTestRouter(t, config.RunModeStandard)
 		req := httptest.NewRequest(http.MethodGet, "/v1/sub2api/billing", nil)
 		req.Header.Set("Authorization", "Bearer "+key)
 		w := httptest.NewRecorder()
@@ -151,7 +156,7 @@ func TestGatewayRoutesKeyBillingInfoEndToEnd(t *testing.T) {
 	})
 
 	t.Run("simple mode", func(t *testing.T) {
-		router, rateRepo, key := newKeyBillingRouteTestRouter(config.RunModeSimple)
+		router, rateRepo, key := newKeyBillingRouteTestRouter(t, config.RunModeSimple)
 		req := httptest.NewRequest(http.MethodGet, "/v1/sub2api/billing", nil)
 		req.Header.Set("x-api-key", key)
 		w := httptest.NewRecorder()

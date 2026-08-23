@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/frontendvariant"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/probe"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
@@ -206,6 +208,27 @@ func TestNonceHTMLPlaceholder(t *testing.T) {
 }
 
 // mockSettingsProvider implements PublicSettingsProvider for testing
+// firstRootStaticAsset 从嵌入产物根目录挑一个非 HTML 静态文件（public/ 里的品牌资源就落在这里），
+// 返回文件名和它应有的 Content-Type。
+//
+// 为什么不写死文件名：这里原本写的是 /logo.png，而 frontend/public 里的资源早就叫 logo.svg，
+// 于是这条断言变成了永远失败、因而永远没人跑的影子护栏。按产物本身取样才不会随品牌资源改名而烂掉。
+func firstRootStaticAsset(t *testing.T, fsys fs.FS) (string, string) {
+	t.Helper()
+	entries, err := fs.ReadDir(fsys, ".")
+	require.NoError(t, err)
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".html") {
+			continue
+		}
+		if contentType := mime.TypeByExtension(filepath.Ext(entry.Name())); contentType != "" {
+			return entry.Name(), contentType
+		}
+	}
+	t.Fatal("嵌入产物根目录下没有可用于校验静态文件服务的资源")
+	return "", ""
+}
+
 type mockSettingsProvider struct {
 	settings any
 	err      error
@@ -223,7 +246,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 			settings: map[string]string{"key": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		settingsJSON := []byte(`{"test":"data"}`)
@@ -240,7 +263,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 			settings: map[string]string{"key": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		settingsJSON := []byte(`{}`)
@@ -262,7 +285,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 			},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		settingsJSON := []byte(`{"nested":{"array":[1,2,3]},"special":"<>&"}`)
@@ -278,7 +301,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		// Create a gin context with nonce
@@ -306,7 +329,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		// First request
@@ -337,7 +360,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		w := httptest.NewRecorder()
@@ -358,7 +381,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		// Use a real router for proper 304 handling
@@ -391,7 +414,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		w := httptest.NewRecorder()
@@ -409,7 +432,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			err: context.DeadlineExceeded,
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		// Invalidate cache to force settings fetch
@@ -434,7 +457,7 @@ func TestFrontendServer_InvalidateCache(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		// First request to populate cache
@@ -516,7 +539,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		apiPaths := append(probe.Paths(),
@@ -556,7 +579,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -582,7 +605,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -608,7 +631,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -642,19 +665,20 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		router := gin.New()
 		router.Use(server.Middleware())
 
 		// Request for existing static file
+		assetName, assetContentType := firstRootStaticAsset(t, server.distFS)
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/logo.png", nil)
+		req := httptest.NewRequest(http.MethodGet, "/"+assetName, nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Header().Get("Content-Type"), "image/png")
+		assert.Contains(t, w.Header().Get("Content-Type"), assetContentType)
 		assert.Empty(t, w.Header().Get("Cache-Control"))
 
 		entries, err := fs.ReadDir(server.distFS, "assets")
@@ -702,7 +726,7 @@ func TestNewFrontendServer(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 
 		require.NoError(t, err)
 		assert.NotNil(t, server)
@@ -718,7 +742,7 @@ func TestNewFrontendServer(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider, "")
+		server, err := NewFrontendServer(provider, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		assert.NotEmpty(t, server.baseHTML)
@@ -736,21 +760,27 @@ func TestHasEmbeddedFrontend(t *testing.T) {
 // Tests for legacy ServeEmbeddedFrontend function
 func TestServeEmbeddedFrontend(t *testing.T) {
 	t.Run("serves_static_files", func(t *testing.T) {
-		middleware := ServeEmbeddedFrontend("")
+		middleware, err := ServeEmbeddedFrontend("", frontendvariant.Default)
+		require.NoError(t, err)
+
+		distFS, err := VariantFS(frontendvariant.Default)
+		require.NoError(t, err)
+		assetName, assetContentType := firstRootStaticAsset(t, distFS)
 
 		router := gin.New()
 		router.Use(middleware)
 
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/logo.png", nil)
+		req := httptest.NewRequest(http.MethodGet, "/"+assetName, nil)
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Header().Get("Content-Type"), "image/png")
+		assert.Contains(t, w.Header().Get("Content-Type"), assetContentType)
 	})
 
 	t.Run("serves_index_html_for_root", func(t *testing.T) {
-		middleware := ServeEmbeddedFrontend("")
+		middleware, err := ServeEmbeddedFrontend("", frontendvariant.Default)
+		require.NoError(t, err)
 
 		router := gin.New()
 		router.Use(middleware)
@@ -765,7 +795,8 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 	})
 
 	t.Run("serves_index_html_for_spa_routes", func(t *testing.T) {
-		middleware := ServeEmbeddedFrontend("")
+		middleware, err := ServeEmbeddedFrontend("", frontendvariant.Default)
+		require.NoError(t, err)
 
 		router := gin.New()
 		router.Use(middleware)
@@ -785,7 +816,8 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 	})
 
 	t.Run("skips_api_routes", func(t *testing.T) {
-		middleware := ServeEmbeddedFrontend("")
+		middleware, err := ServeEmbeddedFrontend("", frontendvariant.Default)
+		require.NoError(t, err)
 
 		apiPaths := append(probe.Paths(),
 			"/api/users",
@@ -903,7 +935,7 @@ func BenchmarkFrontendServerServeIndexHTML(b *testing.B) {
 		settings: map[string]string{"test": "value"},
 	}
 
-	server, _ := NewFrontendServer(provider, "")
+	server, _ := NewFrontendServer(provider, "", frontendvariant.Default)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

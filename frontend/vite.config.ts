@@ -77,6 +77,16 @@ function injectPublicSettings(backendUrl: string): Plugin {
   }
 }
 
+/**
+ * 构建产物按变体分目录：backend/internal/web/dist/<variant>，后端用 server.frontend_variant 选其一。
+ * 默认写 dist/default（基础版）；变体构建由 scripts/build-variant.mjs 传入绝对路径——
+ * 它在临时目录里合成源码树，相对路径会指到临时目录旁边去。
+ */
+function resolveOutDir(): string {
+  const fromEnv = process.env.SUB2API_FRONTEND_OUT_DIR?.trim()
+  return fromEnv || resolve(__dirname, '../backend/internal/web/dist/default')
+}
+
 export default defineConfig(({ mode }) => {
   // 加载环境变量
   const env = loadEnv(mode, process.cwd(), '')
@@ -104,7 +114,7 @@ export default defineConfig(({ mode }) => {
     __INTLIFY_JIT_COMPILATION__: true
   },
   build: {
-    outDir: '../backend/internal/web/dist',
+    outDir: resolveOutDir(),
     emptyOutDir: true,
     rollupOptions: {
       output: {

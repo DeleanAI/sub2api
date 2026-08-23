@@ -22,6 +22,10 @@ ARG NPM_CONFIG_REGISTRY=
 # it on the native host arch instead of under QEMU emulation for the target.
 FROM --platform=${BUILDPLATFORM} ${NODE_IMAGE} AS frontend-builder
 ARG NPM_CONFIG_REGISTRY
+# 要打进镜像的前端变体：all（默认）= 基础版 + frontend-variants/ 下的全部变体。
+# 逗号分隔可以只带部分变体来瘦身；基础版 default 永远会被构建，因为它是
+# server.frontend_variant 的默认值，缺了它等于所有没设该变量的部署都起不来。
+ARG FRONTEND_VARIANTS=all
 
 WORKDIR /app/frontend
 
@@ -40,8 +44,10 @@ RUN --mount=type=cache,id=sub2api-pnpm-store,target=/root/.local/share/pnpm/stor
 # in the image (WORKDIR /app/frontend -> resolves to /app/docs/legal/*.md).
 # Copy only that subtree to keep the build dependency minimal.
 COPY frontend/ ./
+COPY frontend-variants/ /app/frontend-variants/
 COPY docs/legal/ /app/docs/legal/
-RUN pnpm run build
+# 构建器把基础版与每个变体合成后分别输出到 /app/backend/internal/web/dist/<variant>/
+RUN node scripts/build-variant.mjs "${FRONTEND_VARIANTS}"
 
 # -----------------------------------------------------------------------------
 # Stage 2: Backend Builder

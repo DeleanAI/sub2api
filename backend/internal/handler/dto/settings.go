@@ -398,6 +398,7 @@ type PublicSettings struct {
 	OIDCOAuthProviderName               string                   `json:"oidc_oauth_provider_name"`
 	GitHubOAuthEnabled                  bool                     `json:"github_oauth_enabled"`
 	GoogleOAuthEnabled                  bool                     `json:"google_oauth_enabled"`
+	FrontendVariant                     string                   `json:"frontend_variant"` // 当前进程服务的前端变体，排查"这个副本用的是哪一套前端"
 	BackendModeEnabled                  bool                     `json:"backend_mode_enabled"`
 	PaymentEnabled                      bool                     `json:"payment_enabled"`
 	Version                             string                   `json:"version"`

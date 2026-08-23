@@ -13,7 +13,8 @@ FRONTEND_CRITICAL_VITEST := \
 	src/views/admin/__tests__/SettingsView.spec.ts \
 	src/features/channel-monitor-v2/__tests__/designSystem.structure.spec.ts \
 	src/features/channel-monitor-v2/__tests__/monitorFormat.spec.ts \
-	src/features/channel-monitor-v2/__tests__/monitorZoom.spec.ts
+	src/features/channel-monitor-v2/__tests__/monitorZoom.spec.ts \
+	src/__tests__/frontendVariants.spec.ts
 
 # 一键编译前后端
 build: build-backend build-frontend
@@ -22,9 +23,10 @@ build: build-backend build-frontend
 build-backend:
 	@$(MAKE) -C backend build
 
-# 编译前端（需要已安装依赖）
+# 编译前端（需要已安装依赖）：基础版 + 全部变体，产物落在 backend/internal/web/dist/<variant>/
+# 只构建一部分变体：FRONTEND_VARIANTS=default,acme make build-frontend
 build-frontend:
-	@pnpm --dir frontend run build
+	@pnpm --dir frontend run build:all
 
 # 运行测试（后端 + 前端）
 test: test-backend test-frontend

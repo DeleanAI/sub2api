@@ -44,7 +44,7 @@ func ProvideRouter(
 	compositeResolver *service.CompositeRouteResolver,
 	redisClient *redis.Client,
 	db *sql.DB,
-) *gin.Engine {
+) (*gin.Engine, error) {
 	if cfg.Server.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
