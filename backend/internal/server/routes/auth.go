@@ -3,6 +3,7 @@ package routes
 import (
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/middleware"
 	servermiddleware "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -21,6 +22,7 @@ func RegisterAuthRoutes(
 	redisClient *redis.Client,
 	settingService *service.SettingService,
 	panelRateLimiter *servermiddleware.PanelRateLimiter,
+	cfg *config.Config,
 ) {
 	// 创建速率限制器
 	rateLimiter := middleware.NewRateLimiter(redisClient)
@@ -236,6 +238,35 @@ func RegisterAuthRoutes(
 			}),
 			h.Auth.CreateDingTalkOAuthAccount,
 		)
+
+		// 飞书（Lark）OAuth：只有 feishu_connect.enabled=true 才注册。
+		// 关着时这些路径直接 404 —— 一个"存在但永远报未启用"的端点，既是攻击面
+		// 也是排障噪声。开关是部署期配置，不需要热切换。
+		if cfg != nil && cfg.Feishu.Enabled {
+			auth.GET("/oauth/feishu/start", h.Auth.FeishuOAuthStart)
+			auth.POST("/oauth/feishu/start", rateLimiter.LimitWithOptions("oauth-feishu-start", 20, time.Minute, middleware.RateLimitOptions{
+				FailureMode: middleware.RateLimitFailClose,
+			}), h.Auth.FeishuOAuthStart)
+			auth.GET("/oauth/feishu/bind/start", func(c *gin.Context) {
+				query := c.Request.URL.Query()
+				query.Set("intent", "bind_current_user")
+				c.Request.URL.RawQuery = query.Encode()
+				h.Auth.FeishuOAuthStart(c)
+			})
+			auth.GET("/oauth/feishu/callback", h.Auth.FeishuOAuthCallback)
+			auth.POST("/oauth/feishu/bind-login",
+				rateLimiter.LimitWithOptions("oauth-feishu-bind-login", 20, time.Minute, middleware.RateLimitOptions{
+					FailureMode: middleware.RateLimitFailClose,
+				}),
+				h.Auth.BindFeishuOAuthLogin,
+			)
+			auth.POST("/oauth/feishu/create-account",
+				rateLimiter.LimitWithOptions("oauth-feishu-create-account", 10, time.Minute, middleware.RateLimitOptions{
+					FailureMode: middleware.RateLimitFailClose,
+				}),
+				h.Auth.CreateFeishuOAuthAccount,
+			)
+		}
 	}
 
 	// 公开设置（无需认证）：每次请求都会查询 DB，按客户端 IP 兜底限流，

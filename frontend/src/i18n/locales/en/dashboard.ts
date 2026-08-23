@@ -884,6 +884,7 @@ export default {
         email: 'Email',
         linuxdo: 'LinuxDo',
         dingtalk: 'DingTalk',
+        feishu: 'Feishu',
         oidc: '{providerName}',
         wechat: 'WeChat',
       },

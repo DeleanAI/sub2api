@@ -295,6 +295,19 @@ docker compose down -v
 | `ADMIN_PASSWORD` | No | *(auto-generated)* | Admin password |
 | `TZ` | No | `Asia/Shanghai` | Timezone |
 | `UPDATE_GITHUB_TOKEN` | No | *(empty)* | Token for `api.github.com` release checks only; asset downloads remain anonymous. |
+| `FEISHU_CONNECT_ENABLED` | No | `false` | Enable Feishu (Lark) OAuth login. When false the routes are not registered at all. |
+| `FEISHU_CONNECT_APP_ID` | If enabled | - | Feishu custom app App ID. |
+| `FEISHU_CONNECT_APP_SECRET` | If enabled | - | Feishu custom app App Secret. |
+| `FEISHU_CONNECT_ALLOWED_TENANT_KEYS` | No | *(empty = any tenant)* | Comma-separated `tenant_key` allowlist; accounts from other tenants are rejected after authorization. |
+| `FEISHU_CONNECT_REDIRECT_URL` | No | *(empty)* | Backend callback URL; must match the one registered in the Feishu console. Empty means the parameter is omitted in both the authorize and token calls. |
+| `FEISHU_CONNECT_FRONTEND_REDIRECT_URL` | No | `/auth/feishu/callback` | Frontend route that receives the result. |
+| `FEISHU_CONNECT_AUTHORIZE_URL` | No | `https://accounts.feishu.cn/open-apis/authen/v1/authorize` | Change to the `accounts.larksuite.com` equivalent for Lark. |
+| `FEISHU_CONNECT_TOKEN_URL` | No | `https://accounts.feishu.cn/oauth/v3/token` | Token endpoint. |
+| `FEISHU_CONNECT_USERINFO_URL` | No | `https://open.feishu.cn/open-apis/authen/v1/user_info` | User info endpoint. |
+| `FEISHU_CONNECT_SCOPES` | No | *(empty)* | Extra scopes. `offline_access` is deliberately not requested — no refresh token is stored. |
+| `FEISHU_CONNECT_REQUIRE_EMAIL` | No | `true` | Require an email address for new accounts; false uses a synthetic `@feishu-connect.invalid` address. |
+| `FEISHU_CONNECT_BYPASS_REGISTRATION` | No | `false` | Allow Feishu users to register while public registration is closed; requires `FEISHU_CONNECT_ALLOWED_TENANT_KEYS`. |
+| `FEISHU_CONNECT_USE_PKCE` | No | `true` | Send `code_challenge`/`code_verifier` (S256). |
 | `GEMINI_OAUTH_CLIENT_ID` | No | *(builtin)* | Google OAuth client ID (Gemini OAuth). Leave empty to use the built-in Gemini CLI client. |
 | `GEMINI_OAUTH_CLIENT_SECRET` | No | *(builtin)* | Google OAuth client secret (Gemini OAuth). Leave empty to use the built-in Gemini CLI client. |
 | `GEMINI_OAUTH_SCOPES` | No | *(default)* | OAuth scopes (Gemini OAuth) |
@@ -388,6 +401,40 @@ docker compose -f docker-compose.local.yml up -d
 Your entire deployment (configuration + data) is migrated!
 
 ---
+
+## Feishu (Lark) OAuth Login
+
+Set `FEISHU_CONNECT_ENABLED=true` plus the app credentials and the login page grows a
+"Feishu" button. With it false, `/api/v1/auth/oauth/feishu/*` is not registered, the
+public settings response has no `feishu_oauth_enabled`, and no button appears — the
+provider is configured at deployment time, not from the admin panel, so the credentials
+have exactly one source of truth.
+
+```bash
+FEISHU_CONNECT_ENABLED=true
+FEISHU_CONNECT_APP_ID=cli_xxxxxxxxxxxxxxx
+FEISHU_CONNECT_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Restrict to your own company (recommended). Find tenant_key in the callback logs
+# of a first successful login, or in the Feishu admin console.
+FEISHU_CONNECT_ALLOWED_TENANT_KEYS=abcdef1234567890
+FEISHU_CONNECT_REDIRECT_URL=https://your.site/api/v1/auth/oauth/feishu/callback
+```
+
+In the Feishu developer console: create a custom app, add the redirect URL under
+Security Settings, and grant the permission that exposes `union_id`
+(`contact:user.id:readonly`). `contact:user.email:readonly` is optional — without it the
+user is asked for an email during registration (or gets a synthetic one when
+`FEISHU_CONNECT_REQUIRE_EMAIL=false`). Feishu's own documentation notes that the email it
+returns is imported by the tenant administrator and not verified by the user, which is
+why it is treated as a suggestion rather than proof of ownership: an existing account
+with the same address is never adopted automatically.
+
+Identities are keyed by `union_id`, so a user keeps the same account across logins and
+can bind or unbind Feishu from the profile page like any other provider.
+
+For Lark (international), point the three URL variables at `accounts.larksuite.com` /
+`open.larksuite.com`.
+
 
 ## Gemini OAuth Configuration
 

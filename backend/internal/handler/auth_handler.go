@@ -30,6 +30,10 @@ type AuthHandler struct {
 
 	dingTalkClientInstance *DingTalkClient
 	dingTalkClientMu       sync.Mutex
+
+	// 飞书客户端同理：配置没变就复用，避免每次回调新建连接池。
+	feishuClientInstance *FeishuClient
+	feishuClientMu       sync.Mutex
 }
 
 // NewAuthHandler creates a new AuthHandler

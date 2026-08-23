@@ -189,6 +189,10 @@ const WeChatConnectSyntheticEmailDomain = "@wechat-connect.invalid"
 // DingTalkConnectSyntheticEmailDomain 是 DingTalk Connect 用户的合成邮箱后缀（RFC 保留域名）。
 const DingTalkConnectSyntheticEmailDomain = "@dingtalk-connect.invalid"
 
+// FeishuConnectSyntheticEmailDomain 是飞书登录在拿不到（或不要求）邮箱时的合成邮箱域名。
+// .invalid 是 RFC 2606 保留后缀，永远无法投递——合成邮箱只用来占位，不是联系方式。
+const FeishuConnectSyntheticEmailDomain = "@feishu-connect.invalid"
+
 // Setting keys
 const (
 	// 注册设置

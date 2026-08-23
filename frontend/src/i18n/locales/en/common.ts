@@ -337,6 +337,35 @@ export default {
         retry: 'Retry Login'
       }
     },
+    feishu: {
+      signIn: 'Continue with Feishu',
+      callbackTitle: 'Signing you in with Feishu',
+      callbackProcessing: 'Completing Feishu login, please wait...',
+      callbackHint: 'If you are not redirected automatically, go back to the login page and try again.',
+      callbackMissingToken: 'Missing login token, please try again.',
+      backToLogin: 'Back to Login',
+      invitationRequired: 'This Feishu account is not yet registered. The site requires an invitation code — please enter one to complete registration.',
+      invalidPendingToken: 'The registration token has expired. Please sign in with Feishu again.',
+      completeRegistration: 'Complete Registration',
+      completing: 'Completing registration…',
+      completeRegistrationFailed: 'Registration failed. Please check your invitation code and try again.',
+      createAccountTitle: 'Create Feishu Account',
+      registrationDisabledRedirectToBind: 'New account registration is currently disabled. Please bind to your existing account with its email and password.',
+      error: {
+        title: 'Feishu Sign-in Failed',
+        csrf: 'Login session expired, please scan again',
+        tenant_rejected: 'Your Feishu account is not part of this organization. Please contact administrator',
+        feishu_not_enabled: 'Feishu login is not enabled',
+        feishu_upstream_error: 'Feishu returned an error, please try again later',
+        upstream_error: 'Feishu service is temporarily unavailable. Please try again later',
+        missing_browser_session: 'Browser session lost. Please login again',
+        missing_params: 'Request parameters are incomplete',
+        invalid_state: 'Invalid login state',
+        provider_error: 'Feishu authorization failed',
+        session_error: 'Failed to create session. Please retry',
+        retry: 'Retry Login'
+      }
+    },
     emailOAuth: {
       signIn: 'Continue with {providerName}'
     },
@@ -386,7 +415,9 @@ export default {
     },
     linuxdoCallbackPageTitle: 'LinuxDo Sign-In Callback',
     dingtalkCallbackPageTitle: 'DingTalk Sign-In Callback',
+    feishuCallbackPageTitle: 'Feishu Sign-In Callback',
     dingtalkProviderName: 'DingTalk',
+    feishuProviderName: 'Feishu',
     oidcCallbackPageTitle: 'OIDC Sign-In Callback',
     oauthCallbackPageTitle: 'OAuth Callback',
     wechatProviderName: 'WeChat',

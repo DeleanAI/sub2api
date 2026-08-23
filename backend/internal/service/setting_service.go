@@ -178,6 +178,7 @@ type AuthSourceDefaultSettings struct {
 	GitHub                       ProviderDefaultGrantSettings
 	Google                       ProviderDefaultGrantSettings
 	DingTalk                     ProviderDefaultGrantSettings
+	Feishu                       ProviderDefaultGrantSettings
 	ForceEmailOnThirdPartySignup bool
 }
 
