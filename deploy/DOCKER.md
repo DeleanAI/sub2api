@@ -128,6 +128,7 @@ Defaults are those applied by `AUTO_SETUP`; they are written to `config.yaml` on
 | `SERVER_HOST` | Listen address inside the container | No | `0.0.0.0` |
 | `SERVER_PORT` | Listen port inside the container | No | `8080` |
 | `SERVER_MODE` | `release` or `debug` | No | `release` |
+| `SERVER_FRONTEND_VARIANT` | Which embedded frontend to serve (`dist/<name>`); an unknown name fails startup and lists the available variants | No | `default` |
 | `ADMIN_EMAIL` | Admin account created on the first start | No | `admin@sub2api.local` |
 | `ADMIN_PASSWORD` | Admin password; generated and printed to the logs once when empty | No | *(generated)* |
 | `JWT_SECRET` | 32+ bytes. Generated on every start when empty, which logs all users out on restart | Recommended | *(generated)* |

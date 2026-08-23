@@ -127,7 +127,13 @@ func runSetupServer() {
 	if web.HasEmbeddedFrontend() {
 		overrideDir := config.StaticOverrideDir(config.DefaultRuntimeDataDir())
 		log.Printf("Frontend static override directory: %s", overrideDir)
-		r.Use(web.ServeEmbeddedFrontend(overrideDir))
+		// 变体与主服务用同一个裁决点（web.VariantFS）和同一个配置键，安装向导阶段也不许静默回落：
+		// 向导页面本身就是运维确认"这套前端对不对"的第一现场。
+		frontend, err := web.ServeEmbeddedFrontend(overrideDir, config.GetFrontendVariant()) //nolint:staticcheck // SA4023: the !embed stub always errors; embed builds can return nil
+		if err != nil {
+			log.Fatalf("Failed to serve embedded frontend: %v", err)
+		}
+		r.Use(frontend)
 	}
 
 	// Get server address from config.yaml or environment variables (SERVER_HOST, SERVER_PORT)

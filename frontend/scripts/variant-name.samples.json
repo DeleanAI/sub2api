@@ -1,0 +1,29 @@
+{
+  "_why": "变体名的规则在 Go 和 JS 各写了一遍（backend/internal/pkg/frontendvariant/name.go 的 NamePattern、frontend/scripts/build-variant.mjs 的 VARIANT_NAME_PATTERN）。这张样本表是两份实现之间唯一的对账单：两侧的测试都读它，谁改了自己那一份而没改另一份，就会在这里当场露出来。新增一类名字（比如将来允许点号）先往这里加样本，再改两侧的正则。",
+  "valid": [
+    "default",
+    "example",
+    "a",
+    "0",
+    "z9",
+    "acme-dark",
+    "a-b-c",
+    "v2-beta-2",
+    "trailing-"
+  ],
+  "invalid": [
+    "",
+    "-leading",
+    "Example",
+    "UPPER",
+    "with_underscore",
+    "with.dot",
+    "with space",
+    "a/b",
+    ".",
+    "..",
+    "café",
+    "newline\n",
+    "\nnewline"
+  ]
+}

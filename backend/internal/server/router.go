@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"sync/atomic"
 	"time"
@@ -39,7 +40,7 @@ func SetupRouter(
 	cfg *config.Config,
 	redisClient *redis.Client,
 	db *sql.DB,
-) *gin.Engine {
+) (*gin.Engine, error) {
 	middleware2.SetIngressRejectRecorder(opsService)
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
 	var cachedFrameOrigins atomic.Pointer[[]string]
@@ -76,21 +77,21 @@ func SetupRouter(
 	// Serve embedded frontend with settings injection if available
 	if web.HasEmbeddedFrontend() {
 		// 静态覆盖目录挂在统一的数据目录下（绝对路径），启动时打印一次，便于多副本部署核对挂载。
+		// 它与变体正交：先选出 dist/<variant> 这一整套产物，再让覆盖目录逐文件盖在上面。
 		overrideDir := config.StaticOverrideDir(cfg.Pricing.DataDir)
 		log.Printf("Frontend static override directory: %s (per-instance; mount identically on every replica)", overrideDir)
-		frontendServer, err := web.NewFrontendServer(settingService, overrideDir) //nolint:staticcheck // SA4023: the !embed stub always errors; embed builds can return nil
-		if err != nil {                                                           //nolint:staticcheck // SA4023: see above
-			log.Printf("Warning: Failed to create frontend server with settings injection: %v, using legacy mode", err)
-			r.Use(web.ServeEmbeddedFrontend(overrideDir))
-			settingService.SetOnUpdateCallback(refreshFrameOrigins)
-		} else {
-			// Register combined callback: invalidate HTML cache + refresh frame origins
-			settingService.SetOnUpdateCallback(func() {
-				frontendServer.InvalidateCache()
-				refreshFrameOrigins()
-			})
-			r.Use(frontendServer.Middleware())
+		// 变体选不中一律让启动失败：既不回落到 default，也不回落到不带设置注入的 legacy 中间件。
+		// 回落会把"变量配错了"伪装成"改的东西没生效"，而日志里什么都看不出来。
+		frontendServer, err := web.NewFrontendServer(settingService, overrideDir, cfg.Server.FrontendVariant) //nolint:staticcheck // SA4023: the !embed stub always errors; embed builds can return nil
+		if err != nil {                                                                                       //nolint:staticcheck // SA4023: see above
+			return nil, fmt.Errorf("server.frontend_variant=%q: %w", cfg.Server.FrontendVariant, err)
 		}
+		// Register combined callback: invalidate HTML cache + refresh frame origins
+		settingService.SetOnUpdateCallback(func() {
+			frontendServer.InvalidateCache()
+			refreshFrameOrigins()
+		})
+		r.Use(frontendServer.Middleware())
 	} else {
 		settingService.SetOnUpdateCallback(refreshFrameOrigins)
 	}
@@ -98,7 +99,7 @@ func SetupRouter(
 	// 注册路由
 	registerRoutes(r, handlers, jwtAuth, optionalJWTAuth, adminAuth, apiKeyAuth, auditLog, stepUpAuth, apiKeyService, subscriptionService, opsService, settingService, compositeResolver, cfg, redisClient, db)
 
-	return r
+	return r, nil
 }
 
 // registerRoutes 注册所有 HTTP 路由

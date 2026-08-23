@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/frontendvariant"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
@@ -290,6 +291,13 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		loginAgreementUpdatedAt = defaultLoginAgreementDate
 	}
 
+	// 前端变体只有配置一个来源；cfg 为空（部分单测）时退回默认名，而不是空字符串——
+	// 空字符串在排查页面上是"这个字段坏了"，默认名才是真实语义。
+	frontendVariant := frontendvariant.Default
+	if s.cfg != nil && strings.TrimSpace(s.cfg.Server.FrontendVariant) != "" {
+		frontendVariant = strings.TrimSpace(s.cfg.Server.FrontendVariant)
+	}
+
 	var balanceLowNotifyThreshold float64
 	if v, err := strconv.ParseFloat(settings[SettingKeyBalanceLowNotifyThreshold], 64); err == nil && v >= 0 {
 		balanceLowNotifyThreshold = v
@@ -348,6 +356,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		OIDCOAuthProviderName:               oidcProviderName,
 		GitHubOAuthEnabled:                  gitHubEnabled,
 		GoogleOAuthEnabled:                  googleEnabled,
+		FrontendVariant:                     frontendVariant,
 		BalanceLowNotifyEnabled:             settings[SettingKeyBalanceLowNotifyEnabled] == "true",
 		AccountQuotaNotifyEnabled:           settings[SettingKeyAccountQuotaNotifyEnabled] == "true",
 		BalanceLowNotifyThreshold:           balanceLowNotifyThreshold,
@@ -598,6 +607,7 @@ type PublicSettingsInjectionPayload struct {
 	OIDCOAuthProviderName    string `json:"oidc_oauth_provider_name"`
 	GitHubOAuthEnabled       bool   `json:"github_oauth_enabled"`
 	GoogleOAuthEnabled       bool   `json:"google_oauth_enabled"`
+	FrontendVariant          string `json:"frontend_variant"`
 	BackendModeEnabled       bool   `json:"backend_mode_enabled"`
 	PaymentEnabled           bool   `json:"payment_enabled"`
 	Version                  string `json:"version"`
@@ -687,6 +697,7 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		OIDCOAuthProviderName:               settings.OIDCOAuthProviderName,
 		GitHubOAuthEnabled:                  settings.GitHubOAuthEnabled,
 		GoogleOAuthEnabled:                  settings.GoogleOAuthEnabled,
+		FrontendVariant:                     settings.FrontendVariant,
 		BackendModeEnabled:                  settings.BackendModeEnabled,
 		PaymentEnabled:                      settings.PaymentEnabled,
 		Version:                             s.version,

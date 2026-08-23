@@ -27,6 +27,11 @@ server:
   # 用于生成邮件中的外部链接（例如：重置密码链接）的前端基础地址
   # Example: "https://example.com"
   frontend_url: ""
+  # Which embedded frontend to serve: the name of a backend/internal/web/dist/<name>
+  # directory ("default" is frontend/, other names come from frontend-variants/<name>/).
+  # An unknown name fails startup and lists the available variants — it never falls back.
+  # 选择镜像里的哪一套前端；填了镜像里没有的名字会直接启动失败并列出可用变体，不会静默回落。
+  frontend_variant: "default"
   # Maximum time to receive complete request headers. Does not limit response streams.
   # 完整读取请求头的最大时间；不限制响应流持续时间。
   read_header_timeout: 10

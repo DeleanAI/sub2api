@@ -370,6 +370,11 @@ type PublicSettings struct {
 	GoogleOAuthEnabled       bool
 	Version                  string
 
+	// FrontendVariant 是这个进程正在服务的前端变体（server.frontend_variant）。
+	// 它来自配置而不是数据库：多副本部署时同一个数据库可能对应不同镜像/不同变体，
+	// 排查"我看到的界面是哪一套"必须问进程自己。
+	FrontendVariant string
+
 	BalanceLowNotifyEnabled     bool
 	AccountQuotaNotifyEnabled   bool
 	BalanceLowNotifyThreshold   float64

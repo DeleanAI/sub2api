@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 覆盖层新增的文件：public/variant-example.css 会随 public/ 一起进产物根目录 -->
+    <link rel="stylesheet" href="/variant-example.css" />
+    <title>Sub2API Example - AI API Gateway</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!--
+      变体角标：一个不改任何组件也能一眼看出"这个副本跑的是 example"的可见改动。
+      放在 #app 之外，Vue 挂载不会把它替换掉。
+    -->
+    <div class="variant-example-badge">example variant</div>
+    <!--
+      入口脚本必须保留：vite 构建时按 index.html 里的这个 <script> 找到应用入口，
+      并用打包后的产物替换它。覆盖层删掉这一行会得到一个能打开但什么都不渲染的页面。
+    -->
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
