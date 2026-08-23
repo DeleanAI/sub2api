@@ -160,9 +160,23 @@ func requireStringFieldValidator(t *testing.T, fields []ent.Field, name string) 
 			continue
 		}
 		require.NotEmpty(t, descriptor.Validators, "field %s should include a validator", name)
-		validator, ok := descriptor.Validators[0].(func(string) error)
-		require.True(t, ok, "field %s validator should be func(string) error", name)
-		return validator
+		// 一个字段可以挂多个校验器（MaxLen / NotEmpty / 取值校验），顺序由 schema 决定。
+		// 只取第 0 个会在字段前面多挂一个长度校验时静默失效：测试仍然通过，
+		// 而真正想验的取值规则根本没被调用过。这里把全部 func(string) error 串起来。
+		validators := make([]func(string) error, 0, len(descriptor.Validators))
+		for _, raw := range descriptor.Validators {
+			validator, ok := raw.(func(string) error)
+			require.True(t, ok, "field %s validator should be func(string) error", name)
+			validators = append(validators, validator)
+		}
+		return func(value string) error {
+			for _, validate := range validators {
+				if err := validate(value); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 	}
 
 	require.Failf(t, "missing field validator", "schema should include field %s", name)
