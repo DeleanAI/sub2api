@@ -57,15 +57,16 @@ const messages: Record<string, string> = {
   'admin.usage.billingModeToken': 'Token',
   'admin.usage.billingModePerRequest': 'Per request',
   'admin.usage.billingModeImage': 'Image',
-	'admin.usage.requestIdCopied': 'Request ID copied',
-	'keys.copied': 'Copied',
-	'keys.copyToClipboard': 'Copy to clipboard',
-	'common.copyFailed': 'Copy failed',
-	'usage.requestedModel': 'Requested',
-	'usage.sentUpstreamModel': 'Sent upstream',
-	'usage.upstreamResponseModel': 'Upstream response',
-	'usage.modelVariant': 'Possible version variant',
-	'usage.modelMismatch': 'Different model',
+  'admin.usage.requestIdCopied': 'Request ID copied',
+  'keys.copied': 'Copied',
+  'keys.copyToClipboard': 'Copy to clipboard',
+  'common.copyFailed': 'Copy failed',
+  'usage.viewRequestPayload': 'View request details',
+  'usage.requestedModel': 'Requested',
+  'usage.sentUpstreamModel': 'Sent upstream',
+  'usage.upstreamResponseModel': 'Upstream response',
+  'usage.modelVariant': 'Possible version variant',
+  'usage.modelMismatch': 'Different model',
 }
 
 vi.mock('vue-i18n', async () => {
@@ -422,6 +423,17 @@ describe('admin UsageTable tooltip', () => {
 })
 
 describe('admin UsageTable request ID column', () => {
+  const DataTableStubWithActions = {
+    props: ['data'],
+    template: `
+      <div>
+        <div v-for="row in data" :key="row.request_id">
+          <slot name="cell-actions" :row="row" />
+        </div>
+      </div>
+    `,
+  }
+
   beforeEach(() => {
     appStoreMocks.showSuccess.mockReset()
     appStoreMocks.showError.mockReset()
@@ -452,6 +464,29 @@ describe('admin UsageTable request ID column', () => {
 
     expect(writeText).toHaveBeenCalledWith('req-admin-visible-id')
     expect(appStoreMocks.showSuccess).toHaveBeenCalledWith('Request ID copied')
+  })
+
+  it('emits the usage row when request details are opened', async () => {
+    const row = { ...baseImageRow, request_id: 'req-admin-payload' }
+    const wrapper = mount(UsageTable, {
+      props: {
+        data: [row],
+        loading: false,
+        columns: [{ key: 'actions', label: 'Actions' }],
+      },
+      global: {
+        stubs: {
+          DataTable: DataTableStubWithActions,
+          EmptyState: true,
+          Icon: true,
+          Teleport: true,
+        },
+      },
+    })
+
+    await wrapper.get('button[title="View request details"]').trigger('click')
+
+    expect(wrapper.emitted('payloadClick')).toEqual([[row]])
   })
 })
 

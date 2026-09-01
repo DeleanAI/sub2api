@@ -232,6 +232,20 @@ gateway:
   # Pure-text endpoint body limit (embeddings and alpha/search), default 32 MiB.
   # 纯文本端点请求体上限（embeddings、alpha/search），默认 32 MiB。
   text_max_body_size: 33554432
+  # Retain redacted gateway request/response payloads for Usage detail views.
+  # Payload content is deleted after seven days, and oldest entries are also
+  # removed if this 10 GiB logical content budget is reached.
+  request_payload_audit:
+    enabled: true
+    max_storage_mb: 10240
+    retention_days: 7
+    # 1 MiB per request: 75% for user input and 25% for model output.
+    max_entry_mb: 1
+    # Bounded asynchronous persistence. A full queue drops audit data only.
+    queue_size: 256
+    batch_size: 64
+    flush_interval_milliseconds: 500
+    write_timeout_seconds: 3
   # Max bytes to read for non-stream upstream responses (default: 8MB)
   # 非流式上游响应体读取上限（默认 8MB）
   upstream_response_read_max_bytes: 8388608

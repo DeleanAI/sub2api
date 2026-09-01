@@ -571,6 +571,7 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 	usageCtx, cancel := detachedBillingContext(ctx)
 	defer cancel()
 
+	created := false
 	if writer, ok := repo.(usageLogBestEffortWriter); ok {
 		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
 			logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
@@ -586,13 +587,26 @@ func writeUsageLogBestEffort(ctx context.Context, repo UsageLogRepository, usage
 			}
 			if _, syncErr := repo.Create(fallbackCtx, usageLog); syncErr != nil {
 				logger.LegacyPrintf(logKey, "Create usage log sync fallback failed: %v", syncErr)
+			} else {
+				created = true
 			}
+		} else {
+			created = true
 		}
-		return
+	} else if _, err := repo.Create(usageCtx, usageLog); err != nil {
+		logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
+	} else {
+		created = true
 	}
 
-	if _, err := repo.Create(usageCtx, usageLog); err != nil {
-		logger.LegacyPrintf(logKey, "Create usage log failed: %v", err)
+	if !created {
+		return
+	}
+	clientRequestID, _ := usageCtx.Value(ctxkey.ClientRequestID).(string)
+	if audit := RequestPayloadAuditFromContext(usageCtx); audit != nil {
+		if err := audit.BindUsage(usageCtx, clientRequestID, usageLog.APIKeyID, usageLog.RequestID); err != nil {
+			logger.LegacyPrintf(logKey, "Bind request payload audit failed: %v", err)
+		}
 	}
 }
 

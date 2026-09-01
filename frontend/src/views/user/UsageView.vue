@@ -181,6 +181,7 @@
           default-sort-key="created_at"
           default-sort-order="desc"
           @sort="handleSort"
+          @payloadClick="openPayload"
           @ipGeoBatchFailed="handleIpGeoBatchFailed"
         />
 
@@ -209,6 +210,14 @@
       />
     </div>
   </AppLayout>
+  <UsagePayloadDetailModal
+    :show="payloadModalVisible"
+    :payload="payloadDetail"
+    :loading="payloadLoading"
+    :unavailable="payloadUnavailable"
+    :error-message="payloadErrorMessage"
+    @close="payloadModalVisible = false"
+  />
 
 </template>
 
@@ -223,6 +232,7 @@ import Select, { type SelectOption } from '@/components/common/Select.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'
+import UsagePayloadDetailModal from '@/components/admin/usage/UsagePayloadDetailModal.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
 import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
@@ -244,6 +254,7 @@ import type {
   UsageQueryParams,
   UsageStatsResponse,
   UserErrorRequest,
+  RequestPayloadDetail,
 } from '@/types'
 import type { Column } from '@/components/common/types'
 import { COMMON_ERROR_STATUS_CODES } from '@/utils/errorBadges'
@@ -256,6 +267,11 @@ type EndpointSource = 'inbound' | 'upstream' | 'path'
 
 const usageStats = ref<UsageStatsResponse | null>(null)
 const usageLogs = ref<UsageLog[]>([])
+const payloadModalVisible = ref(false)
+const payloadDetail = ref<RequestPayloadDetail | null>(null)
+const payloadLoading = ref(false)
+const payloadUnavailable = ref(false)
+const payloadErrorMessage = ref('')
 const trendData = ref<TrendDataPoint[]>([])
 const requestedModelStats = ref<ModelStat[]>([])
 const groupStats = ref<GroupStat[]>([])
@@ -349,6 +365,25 @@ const groupDistributionMetric = ref<DistributionMetric>('tokens')
 const endpointDistributionMetric = ref<DistributionMetric>('tokens')
 const endpointDistributionSource = ref<EndpointSource>('inbound')
 const activeTab = ref<'usage' | 'errors'>('usage')
+
+const openPayload = async (row: UsageLog) => {
+  payloadModalVisible.value = true
+  payloadDetail.value = null
+  payloadUnavailable.value = false
+  payloadErrorMessage.value = ''
+  payloadLoading.value = true
+  try {
+    payloadDetail.value = await usageAPI.getPayload(row.id)
+  } catch (error: any) {
+    if (error?.status === 404) {
+      payloadUnavailable.value = true
+    } else {
+      payloadErrorMessage.value = t('usage.loadPayloadFailed')
+    }
+  } finally {
+    payloadLoading.value = false
+  }
+}
 const errorViewEnabled = computed(() => appStore.cachedPublicSettings?.allow_user_view_error_requests ?? false)
 
 const filters = ref<UsageQueryParams>({

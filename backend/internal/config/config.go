@@ -1063,6 +1063,8 @@ type GatewayConfig struct {
 
 	// UsageRecord: 使用量记录异步队列配置（有界队列 + 固定 worker）
 	UsageRecord GatewayUsageRecordConfig `mapstructure:"usage_record"`
+	// RequestPayloadAudit: 网关请求/响应审计留存配置（固定空间滚动清理）。
+	RequestPayloadAudit GatewayRequestPayloadAuditConfig `mapstructure:"request_payload_audit"`
 
 	// UserGroupRateCacheTTLSeconds: 用户分组倍率热路径缓存 TTL（秒）
 	UserGroupRateCacheTTLSeconds int `mapstructure:"user_group_rate_cache_ttl_seconds"`
@@ -1384,6 +1386,20 @@ type GatewayUsageRecordConfig struct {
 	AutoScaleCheckIntervalSeconds int `mapstructure:"auto_scale_check_interval_seconds"`
 	// AutoScaleCooldownSeconds: 自动扩缩容冷却时间（秒）
 	AutoScaleCooldownSeconds int `mapstructure:"auto_scale_cooldown_seconds"`
+}
+
+// GatewayRequestPayloadAuditConfig controls retained, redacted gateway payloads.
+// MaxEntryMB is the combined per-request budget. Input receives most of that
+// budget so user prompts remain useful when a response is large.
+type GatewayRequestPayloadAuditConfig struct {
+	Enabled                   bool `mapstructure:"enabled"`
+	MaxStorageMB              int  `mapstructure:"max_storage_mb"`
+	RetentionDays             int  `mapstructure:"retention_days"`
+	MaxEntryMB                int  `mapstructure:"max_entry_mb"`
+	QueueSize                 int  `mapstructure:"queue_size"`
+	BatchSize                 int  `mapstructure:"batch_size"`
+	FlushIntervalMilliseconds int  `mapstructure:"flush_interval_milliseconds"`
+	WriteTimeoutSeconds       int  `mapstructure:"write_timeout_seconds"`
 }
 
 // TLSFingerprintConfig TLS指纹伪装配置
@@ -2490,6 +2506,14 @@ func setDefaults() {
 	viper.SetDefault("gateway.usage_record.auto_scale_down_step", 16)
 	viper.SetDefault("gateway.usage_record.auto_scale_check_interval_seconds", 3)
 	viper.SetDefault("gateway.usage_record.auto_scale_cooldown_seconds", 10)
+	viper.SetDefault("gateway.request_payload_audit.enabled", true)
+	viper.SetDefault("gateway.request_payload_audit.max_storage_mb", 10240)
+	viper.SetDefault("gateway.request_payload_audit.retention_days", 7)
+	viper.SetDefault("gateway.request_payload_audit.max_entry_mb", 1)
+	viper.SetDefault("gateway.request_payload_audit.queue_size", 256)
+	viper.SetDefault("gateway.request_payload_audit.batch_size", 64)
+	viper.SetDefault("gateway.request_payload_audit.flush_interval_milliseconds", 500)
+	viper.SetDefault("gateway.request_payload_audit.write_timeout_seconds", 3)
 	viper.SetDefault("gateway.user_group_rate_cache_ttl_seconds", 30)
 	viper.SetDefault("gateway.models_list_cache_ttl_seconds", 15)
 	// TLS指纹伪装配置（默认关闭，需要账号级别单独启用）
@@ -3564,6 +3588,32 @@ func (c *Config) Validate() error {
 		}
 		if c.Gateway.UsageRecord.AutoScaleCooldownSeconds < 0 {
 			return fmt.Errorf("gateway.usage_record.auto_scale_cooldown_seconds must be non-negative")
+		}
+	}
+	if c.Gateway.RequestPayloadAudit.Enabled {
+		if c.Gateway.RequestPayloadAudit.MaxStorageMB <= 0 {
+			return fmt.Errorf("gateway.request_payload_audit.max_storage_mb must be positive when enabled")
+		}
+		if c.Gateway.RequestPayloadAudit.RetentionDays <= 0 {
+			return fmt.Errorf("gateway.request_payload_audit.retention_days must be positive when enabled")
+		}
+		if c.Gateway.RequestPayloadAudit.MaxEntryMB <= 0 {
+			return fmt.Errorf("gateway.request_payload_audit.max_entry_mb must be positive when enabled")
+		}
+		if c.Gateway.RequestPayloadAudit.MaxEntryMB > c.Gateway.RequestPayloadAudit.MaxStorageMB {
+			return fmt.Errorf("gateway.request_payload_audit.max_entry_mb must not exceed max_storage_mb")
+		}
+		if c.Gateway.RequestPayloadAudit.QueueSize <= 0 {
+			return fmt.Errorf("gateway.request_payload_audit.queue_size must be positive when enabled")
+		}
+		if c.Gateway.RequestPayloadAudit.BatchSize <= 0 || c.Gateway.RequestPayloadAudit.BatchSize > c.Gateway.RequestPayloadAudit.QueueSize {
+			return fmt.Errorf("gateway.request_payload_audit.batch_size must be positive and not exceed queue_size")
+		}
+		if c.Gateway.RequestPayloadAudit.FlushIntervalMilliseconds <= 0 {
+			return fmt.Errorf("gateway.request_payload_audit.flush_interval_milliseconds must be positive when enabled")
+		}
+		if c.Gateway.RequestPayloadAudit.WriteTimeoutSeconds <= 0 {
+			return fmt.Errorf("gateway.request_payload_audit.write_timeout_seconds must be positive when enabled")
 		}
 	}
 	if c.Gateway.UserGroupRateCacheTTLSeconds <= 0 {

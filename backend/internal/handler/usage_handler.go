@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -50,6 +51,11 @@ type UsageHandler struct {
 	apiKeyService  *service.APIKeyService
 	opsService     *service.OpsService
 	settingService *service.SettingService
+	payloadAudit   *service.RequestPayloadAuditService
+}
+
+func (h *UsageHandler) SetRequestPayloadAuditService(audit *service.RequestPayloadAuditService) {
+	h.payloadAudit = audit
 }
 
 // NewUsageHandler creates a new UsageHandler
@@ -390,6 +396,47 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 	}
 
 	response.Success(c, dto.UsageLogFromService(record))
+}
+
+// GetPayload returns the retained request and response content for one usage
+// record. The owning usage record is checked before the payload lookup.
+// GET /api/v1/usage/:id/payload
+func (h *UsageHandler) GetPayload(c *gin.Context) {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
+		response.Unauthorized(c, "User not authenticated")
+		return
+	}
+
+	usageID, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || usageID <= 0 {
+		response.BadRequest(c, "Invalid usage ID")
+		return
+	}
+	record, err := h.usageService.GetByID(c.Request.Context(), usageID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if record.UserID != subject.UserID {
+		response.Forbidden(c, "Not authorized to access this record")
+		return
+	}
+	if h.payloadAudit == nil {
+		response.NotFound(c, "Request content is not available")
+		return
+	}
+
+	detail, err := h.payloadAudit.GetByUsageRequest(c.Request.Context(), record.RequestID, record.APIKeyID)
+	if errors.Is(err, service.ErrRequestPayloadAuditNotFound) {
+		response.NotFound(c, "Request content is not available")
+		return
+	}
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, detail)
 }
 
 // Stats handles getting usage statistics

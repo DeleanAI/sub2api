@@ -174,6 +174,9 @@ func usageRecordContext(parent context.Context, base context.Context) context.Co
 	if requestID, _ := parent.Value(ctxkey.RequestID).(string); strings.TrimSpace(requestID) != "" {
 		base = context.WithValue(base, ctxkey.RequestID, strings.TrimSpace(requestID))
 	}
+	if audit := service.RequestPayloadAuditFromContext(parent); audit != nil {
+		base = service.ContextWithRequestPayloadAudit(base, audit)
+	}
 	return base
 }
 
