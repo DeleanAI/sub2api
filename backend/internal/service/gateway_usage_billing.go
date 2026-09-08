@@ -877,7 +877,27 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 }
 
 // calculateRecordUsageCost 根据请求类型计算费用。
+// calculateRecordUsageCost 返回真正落进 usage_logs 的成本。分支逻辑全在
+// recordUsageCostBranch 里，这里只做统一收口：把逐模型因子补给那些没走
+// CalculateCostUnified 的按次类分支（见 finalizeRecordedCost）。
+// 包装而不是在每个 return 前面各写一遍——新增分支绕不过去。
 func (s *GatewayService) calculateRecordUsageCost(
+	ctx context.Context,
+	result *ForwardResult,
+	apiKey *APIKey,
+	billingModel string,
+	multiplier float64,
+	imageMultiplier float64,
+	pricingAt time.Time,
+) *CostBreakdown {
+	cost := finalizeRecordedCost(
+		s.recordUsageCostBranch(ctx, result, apiKey, billingModel, multiplier, imageMultiplier, pricingAt),
+		apiKey.Group, billingModel)
+	observeProfitControlGateModelDivergence(ctx, apiKey.Group, billingModel, cost)
+	return cost
+}
+
+func (s *GatewayService) recordUsageCostBranch(
 	ctx context.Context,
 	result *ForwardResult,
 	apiKey *APIKey,
@@ -920,13 +940,9 @@ func (s *GatewayService) calculateRecordUsageCost(
 			logger.LegacyPrintf("service.gateway", "[Billing] search_price_per_1k explicit 0; search free group_model=%s count=%d", billingModel, result.SearchCount)
 		}
 		searchCost := s.billingService.CalculateSearchCost(result.SearchCount, price, multiplier)
-		if searchCost != nil && (searchCost.TotalCost > 0 || searchCost.ActualCost > 0) {
-			if tokenCost == nil {
-				return searchCost
-			}
-			tokenCost.TotalCost += searchCost.TotalCost
-			tokenCost.ActualCost += searchCost.ActualCost
-		}
+		// 经 mergeRequestSurcharge 并入，surcharge 才会与 token 部分吃同一个逐模型因子；
+		// 直接相加会让本行记下的 model_rate_multiplier 不再描述本行金额。
+		return mergeRequestSurcharge(tokenCost, searchCost, apiKey.Group, billingModel)
 	}
 	return tokenCost
 }

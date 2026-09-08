@@ -1402,19 +1402,49 @@ func (s *BillingService) calculateBaseCostUnified(input CostInput) (*CostBreakdo
 }
 
 // applyGroupModelRateMultiplier 是分组逐模型倍率在计费侧的唯一施加点：
-// 只对 token 计费生效（按次/图片/视频走各自独立倍率，因子记 1），
 // ActualCost 乘入因子，并把实际施加的两个倍率写回 breakdown 供落账快照与不变式校验。
+//
+// 对所有计费模式一视同仁（token / 按次 / 图片 / 视频），不为任何模式开口子。
+// 原因是 usage_logs 一行只有一个 model_rate_multiplier 列，而落账不变式
+// ActualCost = TotalCost × RateMultiplier × ModelRateMultiplier 是对整行声明的：
+// 只要有一个组成部分不吃这个因子，这一行记下的倍率就不再描述本行的金额，
+// 按该关系做对账、分成或退款的下游会直接算错。运营者配 "claude-opus-* → 2×"
+// 的语义也就是"这个分组对这些模型按 2 倍计费"，没有按计费模式再分一层的说法。
 func applyGroupModelRateMultiplier(breakdown *CostBreakdown, input CostInput) {
 	breakdown.RateMultiplier = input.RateMultiplier
-	breakdown.ModelRateMultiplier = 1
-	if breakdown.BillingMode != string(BillingModeToken) {
-		return
-	}
 	factor := resolveGroupModelRateMultiplier(input.Group, input.Model)
 	breakdown.ModelRateMultiplier = factor
 	if factor != 1 {
 		breakdown.ActualCost *= factor
 	}
+}
+
+// mergeRequestSurcharge 把附加计费（web search 这类叠加项）并入本次请求的费用。
+//
+// surcharge 由 CalculateSearchCost 这类函数单独算出，走不到 CalculateCostUnified，
+// 因此天然不带逐模型因子。直接相加会得到一行 ActualCost 里"token 吃了因子、
+// surcharge 没吃"的混合金额，而 usage_logs 既没有 search_count 也没有分项成本，
+// 事后无法把这种行和纯 token 行区分开——不变式一旦对某些行不成立，它对所有行都
+// 失去意义。所以在这里补乘同一个因子：base 非空时直接沿用它已解析出的
+// ModelRateMultiplier（同一次解析，不可能分叉），纯 surcharge 行才回到唯一解析点。
+func mergeRequestSurcharge(base *CostBreakdown, surcharge *CostBreakdown, group *Group, model string) *CostBreakdown {
+	if surcharge == nil || (surcharge.TotalCost == 0 && surcharge.ActualCost == 0) {
+		return base
+	}
+	factor := resolveGroupModelRateMultiplier(group, model)
+	if base != nil {
+		factor = base.ModelRateMultiplier
+	}
+	if factor != 1 {
+		surcharge.ActualCost *= factor
+	}
+	if base == nil {
+		surcharge.ModelRateMultiplier = factor
+		return surcharge
+	}
+	base.TotalCost += surcharge.TotalCost
+	base.ActualCost += surcharge.ActualCost
+	return base
 }
 
 // calculateTokenCost 按 token 区间计费
@@ -1946,15 +1976,50 @@ func (s *BillingService) CalculateWebSearchCost(callCount int, groupPrice *float
 	}
 	totalCost := unitPrice * float64(callCount)
 
-	// 应用倍率（保存时强制 > 0；负数按 0 处理避免按 1x 误扣）
+	return newPerUnitCost(totalCost, rateMultiplier, BillingModePerRequest)
+}
+
+// newPerUnitCost 构造"按次/按量"计费结果（搜索、音频、图片、视频……）：单价×数量得到
+// TotalCost，再乘入基础倍率。
+//
+// 关键是把 RateMultiplier 记下来，而不是只留下相乘后的金额：落账不变式
+// ActualCost = TotalCost × RateMultiplier × ModelRateMultiplier 是对 usage_logs 的
+// 每一行声明的，施加了倍率却不记账，这一行事后就无法自证，对账只能靠猜。
+// 这些函数都走不到 CalculateCostUnified，逐模型因子由调用链末端的
+// finalizeRecordedCost 统一补上（ModelRateMultiplier 留 0 表示"尚未施加"）。
+func newPerUnitCost(totalCost, rateMultiplier float64, mode BillingMode) *CostBreakdown {
+	// 保存时强制 > 0；若仍有负数泄漏（缓存/迁移残留），按 0 处理避免按 1x 误扣。
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
 	return &CostBreakdown{
-		TotalCost:   totalCost,
-		ActualCost:  totalCost * rateMultiplier,
-		BillingMode: string(BillingModePerRequest),
+		TotalCost:      totalCost,
+		ActualCost:     totalCost * rateMultiplier,
+		RateMultiplier: rateMultiplier,
+		BillingMode:    string(mode),
 	}
+}
+
+// finalizeRecordedCost 是"要落进 usage_logs 的那个 CostBreakdown"的唯一收口。
+//
+// 两条网关的 calculateRecordUsageCost 有十来条互斥分支（token / 按次 / 图片 / 视频 /
+// 音频 / 搜索 / 各种降级兜底），只有走 CalculateCostUnified 的那几条会施加并记录
+// 逐模型因子。收口放在包装函数里而不是每个 return 前面：新增一条分支不可能绕过它。
+// ModelRateMultiplier == 0 就是"这条分支没经过统一入口"的标记——校验保证真实因子
+// 恒在 (0,100]，取不到 0。
+func finalizeRecordedCost(cost *CostBreakdown, group *Group, model string) *CostBreakdown {
+	if cost == nil {
+		return nil
+	}
+	if cost.ModelRateMultiplier != 0 {
+		return cost
+	}
+	factor := resolveGroupModelRateMultiplier(group, model)
+	cost.ModelRateMultiplier = factor
+	if factor != 1 {
+		cost.ActualCost *= factor
+	}
+	return cost
 }
 
 // CalculateSearchCost bills search/tool invocations (e.g. web_search) per 1k calls.
@@ -1973,16 +2038,8 @@ func (s *BillingService) CalculateSearchCost(numCalls int, groupPricePer1k *floa
 	if pricePer1k == 0 {
 		return &CostBreakdown{}
 	}
-	if rateMultiplier < 0 {
-		rateMultiplier = 0
-	}
 	unit := pricePer1k / 1000.0
-	total := unit * float64(numCalls)
-	return &CostBreakdown{
-		TotalCost:   total,
-		ActualCost:  total * rateMultiplier,
-		BillingMode: string(BillingModePerRequest),
-	}
+	return newPerUnitCost(unit*float64(numCalls), rateMultiplier, BillingModePerRequest)
 }
 
 type audioPriceConfig struct {
@@ -2020,15 +2077,7 @@ func (s *BillingService) CalculateAudioCost(mode string, durationOrUnits float64
 	if unitPrice <= 0 {
 		return &CostBreakdown{}
 	}
-	if rateMultiplier < 0 {
-		rateMultiplier = 0
-	}
-	total := unitPrice * durationOrUnits
-	return &CostBreakdown{
-		TotalCost:   total,
-		ActualCost:  total * rateMultiplier,
-		BillingMode: string(BillingModePerRequest),
-	}
+	return newPerUnitCost(unitPrice*durationOrUnits, rateMultiplier, BillingModePerRequest)
 }
 
 // CalculateImageCost 计算图片生成费用
@@ -2049,17 +2098,7 @@ func (s *BillingService) CalculateImageCost(model string, imageSize string, imag
 	// 计算总费用
 	totalCost := unitPrice * float64(imageCount)
 
-	// 应用倍率（保存时强制 > 0；负数按 0 处理避免按 1x 误扣）
-	if rateMultiplier < 0 {
-		rateMultiplier = 0
-	}
-	actualCost := totalCost * rateMultiplier
-
-	return &CostBreakdown{
-		TotalCost:   totalCost,
-		ActualCost:  actualCost,
-		BillingMode: string(BillingModeImage),
-	}
+	return newPerUnitCost(totalCost, rateMultiplier, BillingModeImage)
 }
 
 // CalculateVideoCost 计算视频生成费用（按秒计费，与 xAI 口径一致）。
@@ -2079,16 +2118,7 @@ func (s *BillingService) CalculateVideoCost(model string, resolution string, vid
 	perSecondPrice := s.getVideoUnitPrice(model, resolution, groupConfig)
 	totalCost := perSecondPrice * float64(durationSeconds) * float64(videoCount)
 
-	if rateMultiplier < 0 {
-		rateMultiplier = 0
-	}
-	actualCost := totalCost * rateMultiplier
-
-	return &CostBreakdown{
-		TotalCost:   totalCost,
-		ActualCost:  actualCost,
-		BillingMode: string(BillingModeVideo),
-	}
+	return newPerUnitCost(totalCost, rateMultiplier, BillingModeVideo)
 }
 
 // getImageUnitPrice 获取图片单价

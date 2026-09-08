@@ -14,6 +14,12 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
+// NormalizeOAuthSignupSource 是 signup_source 归一化的唯一实现（repository 层建号时
+// 也走它，见 userSignupSourceOrDefault）。认不出的值一律回落成 "email"。
+func NormalizeOAuthSignupSource(signupSource string) string {
+	return normalizeOAuthSignupSource(signupSource)
+}
+
 func normalizeOAuthSignupSource(signupSource string) string {
 	signupSource = strings.TrimSpace(strings.ToLower(signupSource))
 	switch signupSource {

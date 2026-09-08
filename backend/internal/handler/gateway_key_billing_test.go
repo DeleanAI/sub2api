@@ -85,7 +85,7 @@ func TestGatewayHandlerKeyBillingInfoUsesGroupRate(t *testing.T) {
 	var got keyBillingInfoResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
 	require.Equal(t, "sub2api.key_billing", got.Object)
-	require.Equal(t, 2, got.SchemaVersion)
+	require.Equal(t, service.KeyBillingSchemaVersion, got.SchemaVersion)
 	require.Equal(t, "token", got.BillingScope)
 	require.Equal(t, 0.75, got.GroupRateMultiplier)
 	require.Nil(t, got.UserRateMultiplier)
@@ -332,7 +332,7 @@ func TestKeyBillingInfoModelQueryFoldsModelRateMultiplier(t *testing.T) {
 
 	t.Run("without model the table is exposed but not folded in", func(t *testing.T) {
 		got := buildKeyBillingInfo(apiKey, 0.8, now, "")
-		require.Equal(t, 2, got.SchemaVersion)
+		require.Equal(t, service.KeyBillingSchemaVersion, got.SchemaVersion)
 		require.Equal(t, apiKey.Group.ModelRateMultipliers, got.ModelRateMultipliers)
 		require.Nil(t, got.Model)
 		require.Nil(t, got.ModelRateMultiplier)

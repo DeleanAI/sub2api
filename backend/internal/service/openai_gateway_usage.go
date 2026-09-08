@@ -547,7 +547,34 @@ func openAILongContextBillingGate(account *Account) *bool {
 	return &enabled
 }
 
+// calculateOpenAIRecordUsageCost 返回真正落进 usage_logs 的成本；分支在
+// openAIRecordUsageCostBranch 里，这里统一收口补逐模型因子（见 finalizeRecordedCost）。
 func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
+	ctx context.Context,
+	result *OpenAIForwardResult,
+	apiKey *APIKey,
+	billingModels []string,
+	multiplier float64,
+	imageMultiplier float64,
+	videoMultiplier float64,
+	webSearchMultiplier float64,
+	tokens UsageTokens,
+	serviceTier string,
+	longContextBillingGate *bool,
+	pricingAt time.Time,
+) (*CostBreakdown, error) {
+	cost, err := s.openAIRecordUsageCostBranch(ctx, result, apiKey, billingModels, multiplier,
+		imageMultiplier, videoMultiplier, webSearchMultiplier, tokens, serviceTier, longContextBillingGate, pricingAt)
+	if err != nil {
+		return cost, err
+	}
+	billingModel := firstUsageBillingModel(billingModels)
+	cost = finalizeRecordedCost(cost, apiKey.Group, billingModel)
+	observeProfitControlGateModelDivergence(ctx, apiKey.Group, billingModel, cost)
+	return cost, nil
+}
+
+func (s *OpenAIGatewayService) openAIRecordUsageCostBranch(
 	ctx context.Context,
 	result *OpenAIForwardResult,
 	apiKey *APIKey,
@@ -648,7 +675,7 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		}
 		// Search-only (no model / pure tool path): allow search billing alone.
 		if searchCost != nil {
-			return searchCost, nil
+			return mergeRequestSurcharge(nil, searchCost, apiKey.Group, billingModel), nil
 		}
 		// 空候选按「无价可循」处理并携带 ErrModelPricingUnavailable：上层据此走
 		// 零成本+告警落账，而不是丢弃整条 usage 记录。CN 账号的 claude-* 候选被
@@ -658,13 +685,9 @@ func (s *OpenAIGatewayService) calculateOpenAIRecordUsageCost(
 		}
 		return nil, fmt.Errorf("calculate OpenAI usage cost failed for billing models %s: %w", strings.Join(billingModels, ","), lastErr)
 	}
-	if searchCost == nil || (searchCost.TotalCost == 0 && searchCost.ActualCost == 0) {
-		return tokenCost, nil
-	}
-	// Additive: tokens + search surcharge.
-	tokenCost.TotalCost += searchCost.TotalCost
-	tokenCost.ActualCost += searchCost.ActualCost
-	return tokenCost, nil
+	// Additive: tokens + search surcharge, surcharge 补乘本行的逐模型因子
+	// （见 mergeRequestSurcharge：混合行的 model_rate_multiplier 必须描述整行）。
+	return mergeRequestSurcharge(tokenCost, searchCost, apiKey.Group, billingModel), nil
 }
 
 func isGrokVideoBillingModel(model string) bool {

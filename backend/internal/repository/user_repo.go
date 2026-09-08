@@ -443,10 +443,8 @@ func normalizeEmailAuthIdentitySubject(email string) string {
 	if normalized == "" {
 		return ""
 	}
-	if strings.HasSuffix(normalized, service.LinuxDoConnectSyntheticEmailDomain) ||
-		strings.HasSuffix(normalized, service.OIDCConnectSyntheticEmailDomain) ||
-		strings.HasSuffix(normalized, service.WeChatConnectSyntheticEmailDomain) ||
-		strings.HasSuffix(normalized, service.DingTalkConnectSyntheticEmailDomain) {
+	// 合成占位邮箱不是可用于邮箱登录的身份，不给它建 provider_type='email' 的身份行。
+	if service.IsSyntheticOAuthEmail(normalized) {
 		return ""
 	}
 	return normalized
@@ -1539,15 +1537,13 @@ func applyUserEntityToService(dst *service.User, src *dbent.User) {
 	dst.UpdatedAt = src.UpdatedAt
 }
 
+// userSignupSourceOrDefault 直接委派给 signup_source 的唯一归一化实现。
+//
+// 这里曾经是第二份手写列表，而且比第一份少了 github 与 google：唯一的建号路径
+// （userRepository.Create）走它，于是 GitHub/Google 注册被落成 signup_source='email'，
+// 尽管迁移 231 的 CHECK 明确允许这两个值。两份列表只要存在就会分叉。
 func userSignupSourceOrDefault(signupSource string) string {
-	switch strings.TrimSpace(strings.ToLower(signupSource)) {
-	case "", "email":
-		return "email"
-	case "linuxdo", "wechat", "oidc", "dingtalk", "feishu":
-		return strings.TrimSpace(strings.ToLower(signupSource))
-	default:
-		return "email"
-	}
+	return service.NormalizeOAuthSignupSource(signupSource)
 }
 
 // marshalExtraEmails serializes notify email entries to JSON for storage.

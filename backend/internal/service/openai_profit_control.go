@@ -135,6 +135,24 @@ func (g *openAIProfitControlGate) matches(groupID int64, model string) bool {
 	return g != nil && g.groupID == groupID && g.model == model
 }
 
+// profitControlGateModel 决定利润门按哪个模型名解析逐模型倍率，是这个选择的唯一实现，
+// 两条装门路径（gateway / openai）都经由它。
+//
+// composite 分组真正转发与计费的是路由决策里的上游模型，客户端请求的是公开别名；
+// 按别名解析出的因子与扣费时的因子可以不同，门就会按一个根本没人用的 D 放行或拦截。
+// 这里读 ctx 里已解析的上游模型，与 compositeBillableModel 的取向一致。
+//
+// 仍有一段不可消除的时间差：真正的计费模型可能被渠道映射、上游自报模型或
+// composite 的显式渠道定价再次改写，而那些要到响应之后才知道。落账时若因子与门
+// 用的不一致，calculateRecordUsageCost 会打点（profit_control_gate_model_diverged），
+// 不做静默兜底。
+func profitControlGateModel(ctx context.Context, requestedModel string) string {
+	if model, ok := ResolvedUpstreamModelFromContext(ctx); ok {
+		return model
+	}
+	return requestedModel
+}
+
 // newProfitControlGate 是利润门阈值的唯一构造点，gateway（Anthropic/Gemini/Antigravity）
 // 与 openai/grok 两条装门路径都必须经由本函数：
 //
@@ -222,6 +240,7 @@ func OpenAIPricingAtFromContext(ctx context.Context) time.Time {
 // （门不存在，全部否决点自动放行，既有行为零变化）。ctx 已有同分组门时直接
 // 复用：同一请求的全部 failover 重入共享同一阈值。
 func (s *OpenAIGatewayService) withOpenAIProfitControlGate(ctx context.Context, groupID *int64, requestedModel string) context.Context {
+	requestedModel = profitControlGateModel(ctx, requestedModel)
 	if _, suppressed := ctx.Value(openAIProfitControlSuppressCtxKey{}).(struct{}); suppressed {
 		return ctx
 	}

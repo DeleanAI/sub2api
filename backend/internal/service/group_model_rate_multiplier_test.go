@@ -188,7 +188,7 @@ func TestModelRateMultiplierInvariantAcrossGatewayPaths(t *testing.T) {
 		requireBreakdownInvariant(t, cost, rate, 3)
 	})
 
-	t.Run("per-request billing mode ignores the model factor", func(t *testing.T) {
+	t.Run("per-request billing mode also takes the model factor", func(t *testing.T) {
 		price := 0.01
 		perRequestGroup := &Group{
 			ID: 8, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, RateMultiplier: 1,
@@ -202,7 +202,110 @@ func TestModelRateMultiplierInvariantAcrossGatewayPaths(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Equal(t, string(BillingModePerRequest), cost.BillingMode)
-		requireBreakdownInvariant(t, cost, rate, 1)
+		requireBreakdownInvariant(t, cost, rate, 5)
+	})
+}
+
+// TestModelRateMultiplierInvariantHoldsOnRecordedCost 钉死"真正落进 usage_logs 的那个
+// CostBreakdown"，而不是中间的 token 小计。
+//
+// 差别是实打实的：web search surcharge 由 CalculateSearchCost 单独算出、走不到
+// CalculateCostUnified，一旦直接相加，混合行的 ActualCost 里 token 吃了逐模型因子而
+// surcharge 没吃，落账记下的 model_rate_multiplier 就不再描述本行金额；usage_logs 里
+// 既没有 search_count 也没有分项成本，这种行事后与纯 token 行完全无法区分。
+// 只钉 calculateTokenCost 的测试对此是瞎的——它看不到 surcharge 那一步。
+func TestModelRateMultiplierInvariantHoldsOnRecordedCost(t *testing.T) {
+	billing := newTestBillingService()
+	resolver := NewModelPricingResolver(nil, billing)
+	searchPrice := 12.0
+	group := &Group{
+		ID: 21, Platform: PlatformAnthropic, Status: StatusActive, Hydrated: true, RateMultiplier: 1,
+		LongContextPricingEnabled: true,
+		SearchPricePer1k:          &searchPrice,
+		ModelRateMultipliers: []GroupModelRateMultiplier{
+			{ModelPattern: "claude-opus-*", Multiplier: 2},
+			{ModelPattern: "gpt-5.4", Multiplier: 3},
+		},
+	}
+	apiKey := modelRateTestAPIKey(group)
+	now := timezone.Now()
+	const rate = 0.8
+	ctx := context.Background()
+
+	t.Run("anthropic tokens plus search surcharge", func(t *testing.T) {
+		svc := &GatewayService{billingService: billing, resolver: resolver}
+		result := &ForwardResult{Usage: ClaudeUsage{InputTokens: 1000, OutputTokens: 500}, SearchCount: 10}
+		cost := svc.calculateRecordUsageCost(ctx, result, apiKey, "claude-opus-4-1", rate, rate, now)
+		requireBreakdownInvariant(t, cost, rate, 2)
+
+		// surcharge 确实计进来了：否则这条断言与纯 token 行无法区分。
+		noSearch := svc.calculateRecordUsageCost(ctx, &ForwardResult{Usage: result.Usage}, apiKey, "claude-opus-4-1", rate, rate, now)
+		require.Greater(t, cost.TotalCost, noSearch.TotalCost, "search surcharge 必须叠加在 token 之上")
+	})
+
+	t.Run("anthropic search only", func(t *testing.T) {
+		svc := &GatewayService{billingService: billing, resolver: resolver}
+		result := &ForwardResult{SearchCount: 10}
+		cost := svc.calculateRecordUsageCost(ctx, result, apiKey, "claude-opus-4-1", rate, rate, now)
+		requireBreakdownInvariant(t, cost, rate, 2)
+	})
+
+	t.Run("openai tokens plus search surcharge", func(t *testing.T) {
+		svc := &OpenAIGatewayService{billingService: billing, resolver: resolver}
+		result := &OpenAIForwardResult{SearchCount: 10}
+		cost, err := svc.calculateOpenAIRecordUsageCost(ctx, result, apiKey, []string{"gpt-5.4"},
+			rate, rate, rate, rate, UsageTokens{InputTokens: 1000, OutputTokens: 500}, "", nil, now)
+		require.NoError(t, err)
+		requireBreakdownInvariant(t, cost, rate, 3)
+	})
+
+	// 按次类分支（web search 按次、图片、视频、音频）没有一条经过 CalculateCostUnified，
+	// 因子与 RateMultiplier 都靠 newPerUnitCost + finalizeRecordedCost 补齐。
+	// 遍历 AllBillingModes 并断言"每种计费模式都被产出过"：新增一种模式而忘了接线，
+	// 这里当天变红，而不是等到某一行金额对不上。
+	t.Run("every billing mode records a self-consistent row", func(t *testing.T) {
+		imgPrice, vidPrice, perCall := 0.02, 0.03, 0.04
+		modeGroup := &Group{
+			ID: 22, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, RateMultiplier: 1,
+			ImagePrice1K:              &imgPrice,
+			VideoPrice720P:            &vidPrice,
+			WebSearchPricePerCall:     &perCall,
+			ModelRateMultipliers:      []GroupModelRateMultiplier{{ModelPattern: "*", Multiplier: 4}},
+			LongContextPricingEnabled: true,
+		}
+		modeKey := modelRateTestAPIKey(modeGroup)
+		svc := &OpenAIGatewayService{billingService: billing, resolver: NewModelPricingResolver(nil, billing)}
+
+		cases := []struct {
+			name   string
+			result *OpenAIForwardResult
+			tokens UsageTokens
+		}{
+			{"token", &OpenAIForwardResult{}, UsageTokens{InputTokens: 1000, OutputTokens: 500}},
+			{"web search per call", &OpenAIForwardResult{WebSearchCalls: 3}, UsageTokens{}},
+			{"image", &OpenAIForwardResult{ImageCount: 2}, UsageTokens{}},
+			{"video", &OpenAIForwardResult{VideoCount: 1}, UsageTokens{}},
+		}
+		seen := map[string]bool{}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				models := []string{"gpt-5.4"}
+				if tc.name == "video" {
+					models = []string{"grok-imagine-video-01"}
+				}
+				cost, err := svc.calculateOpenAIRecordUsageCost(ctx, tc.result, modeKey, models,
+					rate, rate, rate, rate, tc.tokens, "", nil, now)
+				require.NoError(t, err)
+				require.NotNil(t, cost)
+				require.InDelta(t, 4, cost.ModelRateMultiplier, 1e-12, "逐模型因子必须记在行上")
+				require.InDelta(t, cost.TotalCost*cost.RateMultiplier*cost.ModelRateMultiplier, cost.ActualCost, 1e-12)
+				require.Positive(t, cost.TotalCost)
+				seen[cost.BillingMode] = true
+			})
+		}
+		for _, mode := range AllBillingModes {
+			require.True(t, seen[string(mode)], "计费模式 %s 没有被落账不变式覆盖：新增模式必须在这里加一条用例", mode)
+		}
 	})
 }
 
@@ -288,4 +391,53 @@ func TestProfitControlGateIsModelAwareOnBothPaths(t *testing.T) {
 	account := gatewayProfitTestAccount(1, PlatformAnthropic, 0.6, gatewayGroup.ID)
 	require.True(t, gatewaySvc.isGatewayAccountProfitEligible(context.WithValue(gatewayCtx, openAIProfitControlGateCtxKey{}, gatewayGate), &account))
 	require.False(t, gatewaySvc.isGatewayAccountProfitEligible(reusedCtx, &account))
+}
+
+// TestProfitControlGateResolvesCompositeModelOnBothPaths 钉死 composite 分组下两条装门
+// 路径解析出同一个模型。
+//
+// 这条护栏是必要的，因为"两条路径给同一输入同一阈值"的测试对本缺陷是瞎的：两条调度
+// 入口曾经一个在 composite 解析之后装门（拿到上游模型）、另一个在解析之前装门
+// （拿到客户端别名），同一分组同一请求走哪条入口，阈值就不一样。把别名和上游模型
+// 都喂进去、断言门取的是上游模型，才能看见这个差异。
+func TestProfitControlGateResolvesCompositeModelOnBothPaths(t *testing.T) {
+	newGroup := func(platform string) *Group {
+		return &Group{
+			ID: 32, Platform: platform, Status: StatusActive, Hydrated: true,
+			RateMultiplier: 0.5, SubscriptionType: SubscriptionTypeStandard,
+			ProfitControlEnabled: true, ProfitMinMargin: 0.2, ProfitSafetyBuffer: 0.05,
+			ModelRateMultipliers: []GroupModelRateMultiplier{{ModelPattern: "premium-*", Multiplier: 2}},
+		}
+	}
+	const publicAlias = "plain-alias"   // 客户端请求的公开别名，未命中逐模型倍率
+	const upstreamModel = "premium-max" // composite 真正转发/计费的上游模型，倍率 2×
+
+	gatewayGroup := newGroup(PlatformAnthropic)
+	baseCtx := gatewayProfitTestContext(gatewayGroup)
+	pricingAt, _ := gatewayTokenRequestPricingAtFromContext(baseCtx)
+	compositeCtx := WithCompositeRouteDecision(baseCtx, CompositeRouteDecision{
+		Matched: true, TargetPlatform: PlatformAnthropic, UpstreamModel: upstreamModel, PublicModel: publicAlias,
+	})
+
+	gatewayGate, _ := (&GatewayService{}).withGatewayProfitControlGate(compositeCtx, &gatewayGroup.ID, publicAlias).
+		Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
+	require.NotNil(t, gatewayGate)
+
+	openAIGroup := newGroup(PlatformOpenAI)
+	openAICompositeCtx := WithCompositeRouteDecision(
+		context.WithValue(profitControlTestCtx(openAIGroup), openAIPricingAtCtxKey{}, pricingAt),
+		CompositeRouteDecision{Matched: true, TargetPlatform: PlatformOpenAI, UpstreamModel: upstreamModel, PublicModel: publicAlias},
+	)
+	openAIGateCtx := (&OpenAIGatewayService{}).withOpenAIProfitControlGate(openAICompositeCtx, &openAIGroup.ID, publicAlias)
+	openAIGate, _ := openAIGateCtx.Value(openAIProfitControlGateCtxKey{}).(*openAIProfitControlGate)
+	require.NotNil(t, openAIGate)
+
+	require.Equal(t, upstreamModel, gatewayGate.model, "门必须按 composite 真正转发的上游模型解析倍率")
+	require.Equal(t, upstreamModel, openAIGate.model)
+	want := 0.5 * 2 * (1 - 0.2 - 0.05)
+	require.InDelta(t, want, gatewayGate.threshold, 1e-12)
+	require.InDelta(t, want, openAIGate.threshold, 1e-12, "两条装门路径对同一 composite 请求必须给出同一阈值")
+
+	// 按别名解析会得到 0.375，正是本缺陷放行 0.6× 上游的那个阈值。
+	require.Greater(t, gatewayGate.threshold, 0.5*0.75+1e-9)
 }

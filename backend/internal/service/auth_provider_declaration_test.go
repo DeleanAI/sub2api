@@ -3,7 +3,9 @@
 package service
 
 import (
+	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -87,5 +89,41 @@ func TestSyntheticEmailDomainsRoundTripToTheirProvider(t *testing.T) {
 	for _, provider := range schema.IdentityBindingProviders() {
 		_, ok := domains[provider]
 		require.Truef(t, ok, "provider %q 没有合成邮箱域名（internal/service/domain_constants.go）", provider)
+	}
+}
+
+// TestEverySyntheticEmailDomainIsRegistered 遍历源码里声明的每个合成邮箱后缀常量，
+// 要求它出现在 syntheticEmailDomainByProvider 里。
+//
+// 这条护栏针对的是真实发生过的形状：飞书的 FeishuConnectSyntheticEmailDomain 常量
+// 建好了、也被用来生成邮箱，却没进任何一条"这是保留邮箱"的判定链——于是
+// feishu-<受害者 union_id>@feishu-connect.invalid 可以走普通邮箱注册。常量存在但
+// 没人消费不会编译失败，只能靠遍历声明来发现。
+func TestEverySyntheticEmailDomainIsRegistered(t *testing.T) {
+	source, err := os.ReadFile("domain_constants.go")
+	require.NoError(t, err)
+
+	declared := regexp.MustCompile(`(?m)^const (\w+SyntheticEmailDomain) = "([^"]+)"`).FindAllStringSubmatch(string(source), -1)
+	require.NotEmpty(t, declared, "没扫到任何合成邮箱后缀常量，正则和源码脱节了")
+
+	registered := map[string]string{}
+	for provider, domain := range syntheticEmailDomainByProvider {
+		registered[domain] = provider
+	}
+	for _, match := range declared {
+		constName, domain := match[1], match[2]
+		provider, ok := registered[domain]
+		require.Truef(t, ok,
+			"%s = %q 没有登记进 syntheticEmailDomainByProvider：这个后缀不会被任何"+
+				"保留邮箱判定认出来，别人可以拿它注册/找回，顶掉对应 OAuth 用户", constName, domain)
+
+		// 登记了就必须真的被三处消费方认出来。
+		email := "someone" + domain
+		require.Truef(t, isReservedEmail(email), "%s 登记了却没被 isReservedEmail 拒绝", constName)
+		require.Truef(t, IsSyntheticOAuthEmail(email), "%s 登记了却没被 IsSyntheticOAuthEmail 认出", constName)
+		require.Equalf(t, provider, inferLegacySignupSource(email),
+			"%s 反查 signup_source 应为 %q", constName, provider)
+		require.Equalf(t, provider, NormalizeOAuthSignupSource(provider),
+			"provider %q 不是合法的 signup_source：合成邮箱域名登记了，但归一化列表漏了它", provider)
 	}
 }

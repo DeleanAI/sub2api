@@ -12,10 +12,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// keyBillingInfoSchemaVersion v2：新增 model_rate_multipliers（分组逐模型倍率表）、
-// 可选 ?model= 查询参数及其 model / model_rate_multiplier / matched_model_pattern 字段；
-// 带 model 时 effective_rate_multiplier 折入逐模型因子。
-const keyBillingInfoSchemaVersion = 2
+// keyBillingInfoSchemaVersion 直接取自 service.KeyBillingSchemaVersion：版本号的
+// 含义与"什么时候该 +1"的规则写在那一处，这里只是引用。
+//
+// fork 新增的 model_rate_multipliers、以及可选 ?model= 带出的 model /
+// model_rate_multiplier / matched_model_pattern 都是纯增量可选字段，按规则不升版本。
+const keyBillingInfoSchemaVersion = service.KeyBillingSchemaVersion
 
 type keyBillingInfoResponse struct {
 	Object                  string                             `json:"object"`

@@ -17,11 +17,24 @@ const (
 	BillingModeVideo      BillingMode = "video"       // 视频生成计费（按视频生成次数）
 )
 
-// IsValid 检查 BillingMode 是否为合法值
+// AllBillingModes 是全部计费模式的唯一声明。IsValid 与落账不变式守护测试都遍历它，
+// 新增一种计费模式当天就同时被校验和护栏覆盖，不需要在各处再抄一遍 switch。
+var AllBillingModes = []BillingMode{
+	BillingModeToken,
+	BillingModePerRequest,
+	BillingModeImage,
+	BillingModeVideo,
+}
+
+// IsValid 检查 BillingMode 是否为合法值（空串表示"未指定"，按合法处理）。
 func (m BillingMode) IsValid() bool {
-	switch m {
-	case BillingModeToken, BillingModePerRequest, BillingModeImage, BillingModeVideo, "":
+	if m == "" {
 		return true
+	}
+	for _, mode := range AllBillingModes {
+		if m == mode {
+			return true
+		}
 	}
 	return false
 }

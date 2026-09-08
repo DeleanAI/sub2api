@@ -188,10 +188,7 @@ func (h *AuthHandler) findDingTalkCompatEmailUser(ctx context.Context, email str
 
 	email = strings.TrimSpace(strings.ToLower(email))
 	if email == "" ||
-		strings.HasSuffix(email, service.DingTalkConnectSyntheticEmailDomain) ||
-		strings.HasSuffix(email, service.LinuxDoConnectSyntheticEmailDomain) ||
-		strings.HasSuffix(email, service.OIDCConnectSyntheticEmailDomain) ||
-		strings.HasSuffix(email, service.WeChatConnectSyntheticEmailDomain) {
+		service.IsSyntheticOAuthEmail(email) {
 		return nil, nil
 	}
 

@@ -1305,10 +1305,19 @@ func TestUpstreamBillingProbeLeaderLockCoversStaggeredInstancesInCadenceWindow(t
 
 // schema v2（分组逐模型倍率）只增字段：不带 ?model= 的探测响应里倍率字段语义与 v1 一致，
 // 探测必须同时接受 v1/v2，并把逐模型倍率表透传进快照而不是当作未知 schema 拒绝。
-func TestParseUpstreamBillingProbeResponse_AcceptsSchemaV2WithModelRateMultipliers(t *testing.T) {
+// TestParseUpstreamBillingProbeResponse_AdditiveFieldsDoNotBumpSchemaVersion 钉死
+// schema_version 的规则：纯增量的可选字段（fork 新增的 model_rate_multipliers）
+// 在 v1 响应里照常透传，版本号不动；探测只接受 KeyBillingSchemaVersion 这一个值。
+//
+// 这条规则不是洁癖：上游（含 v0.2.3）的探测是 SchemaVersion != 1 硬拒，本 fork 一旦
+// 把版本号升到 2，任何 stock sub2api 把它当上游探测都会判为 invalid_response、
+// 记 probe 失败并永久退避，accounts.rate_multiplier 再也同步不过来。
+func TestParseUpstreamBillingProbeResponse_AdditiveFieldsDoNotBumpSchemaVersion(t *testing.T) {
+	require.Equal(t, 1, KeyBillingSchemaVersion, "升版本会切断所有 stock 下游的账单探测")
+
 	data, err := parseUpstreamBillingProbeResponse([]byte(`{
 		"object":"sub2api.key_billing",
-		"schema_version":2,
+		"schema_version":1,
 		"billing_scope":"token",
 		"group_rate_multiplier":0.8,
 		"resolved_rate_multiplier":0.8,
@@ -1318,22 +1327,24 @@ func TestParseUpstreamBillingProbeResponse_AcceptsSchemaV2WithModelRateMultiplie
 		"observed_at":"2026-07-13T01:00:00Z"
 	}`))
 	require.NoError(t, err)
-	require.Equal(t, 2, data["schema_version"])
+	require.Equal(t, KeyBillingSchemaVersion, data["schema_version"])
 	require.Equal(t, []GroupModelRateMultiplier{{ModelPattern: "claude-opus-*", Multiplier: 2}}, data["model_rate_multipliers"])
 
 	rate, ok := upstreamBillingRateAt(data, time.Date(2026, time.July, 13, 1, 0, 0, 0, time.UTC))
 	require.True(t, ok)
 	require.InDelta(t, 0.8, rate, 1e-12, "账号倍率仍取不含逐模型因子的基础倍率")
 
-	_, err = parseUpstreamBillingProbeResponse([]byte(`{
-		"object":"sub2api.key_billing",
-		"schema_version":3,
-		"billing_scope":"token",
-		"group_rate_multiplier":0.8,
-		"resolved_rate_multiplier":0.8,
-		"peak_rate_enabled":false,
-		"effective_rate_multiplier":0.8,
-		"observed_at":"2026-07-13T01:00:00Z"
-	}`))
-	require.Error(t, err, "未知 schema 版本仍须拒绝")
+	for _, version := range []int{0, 2, 3} {
+		_, err = parseUpstreamBillingProbeResponse([]byte(fmt.Sprintf(`{
+			"object":"sub2api.key_billing",
+			"schema_version":%d,
+			"billing_scope":"token",
+			"group_rate_multiplier":0.8,
+			"resolved_rate_multiplier":0.8,
+			"peak_rate_enabled":false,
+			"effective_rate_multiplier":0.8,
+			"observed_at":"2026-07-13T01:00:00Z"
+		}`, version)))
+		require.Errorf(t, err, "schema_version=%d 必须被拒绝：探测只认 KeyBillingSchemaVersion", version)
+	}
 }

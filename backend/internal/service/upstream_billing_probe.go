@@ -178,10 +178,18 @@ type upstreamBillingProbeResponse struct {
 	ModelRateMultipliers []GroupModelRateMultiplier `json:"model_rate_multipliers"`
 }
 
-// upstreamBillingProbeSchemaVersions 列出探测接受的 /v1/sub2api/billing schema 版本：
-// v2 在 v1 基础上只增字段（model_rate_multipliers 与可选的 ?model= 相关字段），
-// 不带 ?model= 时两版本的倍率字段语义完全一致。
-var upstreamBillingProbeSchemaVersions = map[int]bool{1: true, 2: true}
+// KeyBillingSchemaVersion 是 /v1/sub2api/billing 响应里 schema_version 的取值，
+// 也是探测端唯一接受的版本——发出方与接收方共用这一个常量，不存在两侧各写一个数字
+// 然后悄悄分叉的可能。
+//
+// 规则：schema_version 是给下游的兼容闸门，只在"按旧版本解析会读错"时才 +1。
+// 纯新增的可选字段不触发：旧下游忽略未知字段即可正确解析。本 fork 新增的
+// model_rate_multipliers 与 ?model= 相关字段全部属于这一类，所以版本停在 1。
+//
+// 不要改成 2：上游（含 v0.2.3）的探测是 `SchemaVersion != 1` 硬拒，任何 stock
+// sub2api 把本 fork 当上游探测时都会得到 unexpected billing response schema，
+// 记为 invalid_response 并永久退避，rate_multiplier 再也同步不过来。
+const KeyBillingSchemaVersion = 1
 
 // GetUpstreamBillingProbeSettings returns defaults when the setting is absent.
 func (s *SettingService) GetUpstreamBillingProbeSettings(ctx context.Context) (*UpstreamBillingProbeSettings, error) {
@@ -815,7 +823,7 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, err
 	}
-	if response.Object != "sub2api.key_billing" || !upstreamBillingProbeSchemaVersions[response.SchemaVersion] || response.BillingScope != "token" {
+	if response.Object != "sub2api.key_billing" || response.SchemaVersion != KeyBillingSchemaVersion || response.BillingScope != "token" {
 		return nil, fmt.Errorf("unexpected billing response schema")
 	}
 	if response.GroupRateMultiplier == nil || response.ResolvedRateMultiplier == nil ||

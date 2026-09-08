@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
@@ -192,6 +193,41 @@ const DingTalkConnectSyntheticEmailDomain = "@dingtalk-connect.invalid"
 // FeishuConnectSyntheticEmailDomain 是飞书登录在拿不到（或不要求）邮箱时的合成邮箱域名。
 // .invalid 是 RFC 2606 保留后缀，永远无法投递——合成邮箱只用来占位，不是联系方式。
 const FeishuConnectSyntheticEmailDomain = "@feishu-connect.invalid"
+
+// syntheticEmailDomainByProvider 是"合成占位邮箱后缀"的唯一声明：provider → 后缀。
+//
+// 这些后缀不是联系方式，而是保留标识：任何人都不能拿它们注册、找回或换绑，否则
+// 就能把自己塞进某个 OAuth 用户的位置。判定散在 6 个文件里各写一条 HasSuffix 链
+// 时，新加的 provider 必然漏登记（飞书就漏在其中 5 处），而漏了不会编译失败，
+// 症状是可以用 feishu-<受害者 union_id>@feishu-connect.invalid 走邮箱注册。
+// 所有消费方一律走 IsSyntheticOAuthEmail / SyntheticOAuthEmailProvider。
+var syntheticEmailDomainByProvider = map[string]string{
+	"linuxdo":  LinuxDoConnectSyntheticEmailDomain,
+	"oidc":     OIDCConnectSyntheticEmailDomain,
+	"wechat":   WeChatConnectSyntheticEmailDomain,
+	"dingtalk": DingTalkConnectSyntheticEmailDomain,
+	"feishu":   FeishuConnectSyntheticEmailDomain,
+}
+
+// IsSyntheticOAuthEmail 报告邮箱是否落在任一 OAuth 提供方的合成占位域名下。
+func IsSyntheticOAuthEmail(email string) bool {
+	_, ok := SyntheticOAuthEmailProvider(email)
+	return ok
+}
+
+// SyntheticOAuthEmailProvider 返回合成邮箱对应的 provider（如 "feishu"）。
+func SyntheticOAuthEmailProvider(email string) (string, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	if normalized == "" {
+		return "", false
+	}
+	for provider, domain := range syntheticEmailDomainByProvider {
+		if strings.HasSuffix(normalized, domain) {
+			return provider, true
+		}
+	}
+	return "", false
+}
 
 // Setting keys
 const (
