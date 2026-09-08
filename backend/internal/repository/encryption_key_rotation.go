@@ -36,7 +36,9 @@ import (
 type EncryptedStore struct {
 	// Name 是报告里的显示名：table.column[.json_path]。
 	Name string
-	// SourceFiles 是把密文写到这里的源文件，相对 backend/。
+	// SourceFiles 是把密文写到这里的源文件，相对 backend/。带行号时形如
+	// "path/file.go:123"，用于同一个文件里既有落库密文、又有不落库密文的情况
+	// （如插件管理器：配置要轮换，UI 会话令牌不落库）。
 	SourceFiles []string
 
 	table    string
@@ -59,6 +61,17 @@ const (
 	idInt idKind = iota
 	idString
 )
+
+// Table/IDColumn/Column/IDIsString 暴露声明里的物理位置。
+//
+// 大多数 store 的表由 ent schema 建出来，但 plugins 这类只存在于 SQL 迁移里的表
+// 没有 ent schema。基于 ent schema 搭起来的测试库因此缺表，而缺表只会在轮换真的
+// 跑到那一条 store 时炸开。测试用这些访问器遍历声明补齐缺的表——新增一处裸表
+// store 当天就被覆盖，不需要再往测试里手写一次表名。
+func (s EncryptedStore) Table() string    { return s.table }
+func (s EncryptedStore) IDColumn() string { return s.idColumn }
+func (s EncryptedStore) Column() string   { return s.column }
+func (s EncryptedStore) IDIsString() bool { return s.idKind == idString }
 
 // EncryptedStores 是全部落库密文位置的唯一声明。
 var EncryptedStores = []EncryptedStore{
@@ -92,6 +105,15 @@ var EncryptedStores = []EncryptedStore{
 		jsonPath: []string{service.OllamaCloudUsageSessionExtraKey},
 	},
 	{
+		// 上游 0.2.x 的插件配置：明文 JSON 用同一把密钥加密后写进 plugins.config_encrypted
+		// （internal/repository/plugin_repo.go:211）。plugins 表没有 ent schema，这里直接用表名。
+		// 漏登记的后果与 issue #4 完全一致：轮换后插件配置解不开，而插件加载时才会发现。
+		Name:        "plugins.config_encrypted",
+		SourceFiles: []string{"internal/service/plugin_manager.go:743"},
+		table:       "plugins", idColumn: "id", column: "config_encrypted", idKind: idInt,
+		where: func() *entsql.Predicate { return entsql.NEQ("config_encrypted", "") },
+	},
+	{
 		// 支付渠道配置已改为明文 JSON 落库，应用里没有写入密文的调用点；这一项
 		// 只负责把升级前遗留的 iv:tag:ct 密文（用当时的密钥加密）解出来改成明文，
 		// 让旧密钥退役后它们仍然可读。
@@ -107,6 +129,7 @@ var EncryptedStores = []EncryptedStore{
 // 要么在这里给出理由——没有第三种"默默不管"的状态。
 var NonRotatableEncryptSites = map[string]string{
 	"internal/securityaudit/prompt_service.go":    "删除确认 token：5 分钟有效，只在请求之间往返，从不落库",
+	"internal/service/plugin_manager.go:836":      "插件 UI 会话令牌：带用途前缀、TTL 内有效、只在请求之间往返，不落库",
 	"internal/service/openai_live_attestation.go": "Live attestation 用 JWT secret 派生的独立密钥加密，不在落库密文密钥环上",
 }
 

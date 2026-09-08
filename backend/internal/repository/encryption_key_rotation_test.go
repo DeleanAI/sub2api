@@ -43,6 +43,13 @@ func newRotationSQLiteClient(t *testing.T) *dbent.Client {
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
+	// plugins 由 SQL 迁移建表、没有 ent schema，enttest 不会创建它。轮换注册表里
+	// 有 plugins.config_encrypted 这一项，缺表会让整轮轮换在"列出候选行"时失败。
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS plugins (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		config_encrypted TEXT NOT NULL DEFAULT ''
+	)`)
+	require.NoError(t, err)
 	return client
 }
 

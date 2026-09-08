@@ -66,7 +66,36 @@ func (m *cliMemDB) open(t *testing.T) *sql.DB {
 // client 返回一个新的 ent client；调用方（或被测命令）负责 Close。
 func (m *cliMemDB) client(t *testing.T) *ent.Client {
 	t.Helper()
-	return enttest.NewClient(t, enttest.WithOptions(ent.Driver(entsql.OpenDB(dialect.SQLite, m.open(t)))))
+	c := enttest.NewClient(t, enttest.WithOptions(ent.Driver(entsql.OpenDB(dialect.SQLite, m.open(t)))))
+	ensureNonEntEncryptedStoreTables(t, m)
+	return c
+}
+
+// ensureNonEntEncryptedStoreTables 遍历 repository.EncryptedStores，为其中没有 ent
+// schema 的表（如只由 SQL 迁移创建的 plugins）建出轮换需要的最小结构。
+//
+// 遍历声明而不是写死表名：新增一处裸表密文存储时，这里当天就跟上，而不是等到
+// 轮换命令在那条 store 上炸出 "no such table"。
+func ensureNonEntEncryptedStoreTables(t *testing.T, m *cliMemDB) {
+	t.Helper()
+	db := m.open(t)
+	defer func() { _ = db.Close() }()
+	for _, store := range repository.EncryptedStores {
+		var exists int
+		err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, store.Table()).Scan(&exists)
+		require.NoError(t, err)
+		if exists > 0 {
+			continue
+		}
+		idType := "INTEGER"
+		if store.IDIsString() {
+			idType = "TEXT"
+		}
+		_, err = db.Exec(fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS %q (%q %s PRIMARY KEY, %q TEXT NOT NULL DEFAULT '')`,
+			store.Table(), store.IDColumn(), idType, store.Column()))
+		require.NoError(t, err, "create non-ent table for encrypted store %s", store.Name)
+	}
 }
 
 func cliDeps(t *testing.T, m *cliMemDB) encryptionKeyDeps {

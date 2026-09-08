@@ -56,23 +56,38 @@ func TestEveryEncryptCallSiteIsRegistered(t *testing.T) {
 	}
 	require.NotEmpty(t, found, "the scanner must see the known call sites; an empty result means it is looking in the wrong place")
 
+	// 归属键可以是整个文件（该文件所有 Encrypt 调用都写往同一处），也可以是
+	// "path/file.go:123" 这样的单个调用点——一个文件里同时存在"落库要轮换"和
+	// "不落库"两类密文时（如插件管理器），只能按调用点归属。
 	registered := map[string]string{}
+	claim := func(key, owner string) {
+		require.NotContains(t, registered, key, "an Encrypt call site must map to exactly one owner: %s", key)
+		registered[key] = owner
+	}
 	for _, store := range EncryptedStores {
-		for _, file := range store.SourceFiles {
-			require.NotContains(t, registered, file, "a source file must map to exactly one store")
-			registered[file] = store.Name
+		for _, site := range store.SourceFiles {
+			claim(site, store.Name)
 		}
 	}
-	for file, reason := range NonRotatableEncryptSites {
-		require.NotContains(t, registered, file, "a file cannot be both rotatable and non-rotatable")
+	for site, reason := range NonRotatableEncryptSites {
 		require.NotEmpty(t, reason, "non-rotatable sites must state why")
-		registered[file] = "non-rotatable: " + reason
+		claim(site, "non-rotatable: "+reason)
 	}
 
 	var unmapped []string
+	used := map[string]bool{}
 	for file, lines := range found {
-		if _, ok := registered[file]; !ok {
-			unmapped = append(unmapped, file+" ("+strings.Join(lines, ", ")+")")
+		if _, ok := registered[file]; ok {
+			used[file] = true
+			continue
+		}
+		for _, line := range lines {
+			site := file + ":" + line
+			if _, ok := registered[site]; ok {
+				used[site] = true
+				continue
+			}
+			unmapped = append(unmapped, site)
 		}
 	}
 	sort.Strings(unmapped)
@@ -80,13 +95,13 @@ func TestEveryEncryptCallSiteIsRegistered(t *testing.T) {
 		strings.Join(unmapped, "\n  "))
 
 	var stale []string
-	for file := range registered {
-		if _, ok := found[file]; !ok {
-			stale = append(stale, file)
+	for site := range registered {
+		if !used[site] {
+			stale = append(stale, site)
 		}
 	}
 	sort.Strings(stale)
-	require.Empty(t, stale, "registered source files with no Encrypt() call left: remove them from the registry")
+	require.Empty(t, stale, "registered call sites with no Encrypt() call left (a moved line number counts as stale): update or remove them in the registry")
 }
 
 // encryptCallLines 返回文件里每个 `<expr>.Encrypt(` 调用的行号。走 AST 而不是
@@ -106,7 +121,7 @@ func encryptCallLines(t *testing.T, path string) []string {
 		if !ok || sel.Sel.Name != "Encrypt" {
 			return true
 		}
-		lines = append(lines, "line "+strconv.Itoa(fset.Position(call.Pos()).Line))
+		lines = append(lines, strconv.Itoa(fset.Position(call.Pos()).Line))
 		return true
 	})
 	return lines

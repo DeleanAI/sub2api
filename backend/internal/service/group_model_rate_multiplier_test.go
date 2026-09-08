@@ -159,36 +159,23 @@ func TestModelRateMultiplierInvariantAcrossGatewayPaths(t *testing.T) {
 	t.Run("anthropic resolver path", func(t *testing.T) {
 		svc := &GatewayService{billingService: billing, resolver: resolver}
 		result := &ForwardResult{Usage: ClaudeUsage{InputTokens: 1000, OutputTokens: 500}}
-		requireBreakdownInvariant(t, svc.calculateTokenCost(context.Background(), result, apiKey, "claude-opus-4-1", rate, now, &recordUsageOpts{}), rate, 2)
-		requireBreakdownInvariant(t, svc.calculateTokenCost(context.Background(), result, apiKey, "claude-sonnet-4", rate, now, &recordUsageOpts{}), rate, 1)
-	})
-
-	t.Run("anthropic long-context threshold path", func(t *testing.T) {
-		svc := &GatewayService{billingService: billing, resolver: resolver}
-		result := &ForwardResult{Usage: ClaudeUsage{InputTokens: 250000, OutputTokens: 500}}
-		cost := svc.calculateTokenCost(context.Background(), result, apiKey, "claude-opus-4-1", rate, now, &recordUsageOpts{LongContextThreshold: 200000, LongContextMultiplier: 2})
-		require.NotNil(t, cost)
-		require.True(t, cost.LongContextBillingApplied)
-		require.InDelta(t, 2, cost.ModelRateMultiplier, 1e-12)
-		// 阈值拆分的超额部分另乘 2（既有语义），逐模型因子再整体乘入：
-		// ActualCost = 2 × (范围内 × rate + 范围外 × rate × 2)。
-		baseline := svc.calculateTokenCost(context.Background(), result, modelRateTestAPIKey(&Group{ID: 7, Platform: PlatformAnthropic, LongContextPricingEnabled: true}), "claude-opus-4-1", rate, now, &recordUsageOpts{LongContextThreshold: 200000, LongContextMultiplier: 2})
-		require.InDelta(t, baseline.ActualCost*2, cost.ActualCost, 1e-12)
+		requireBreakdownInvariant(t, svc.calculateTokenCost(context.Background(), result, apiKey, "claude-opus-4-1", rate, now), rate, 2)
+		requireBreakdownInvariant(t, svc.calculateTokenCost(context.Background(), result, apiKey, "claude-sonnet-4", rate, now), rate, 1)
 	})
 
 	t.Run("anthropic built-in fallback path without resolver", func(t *testing.T) {
 		svc := &GatewayService{billingService: billing}
 		result := &ForwardResult{Usage: ClaudeUsage{InputTokens: 1000, OutputTokens: 500}}
-		requireBreakdownInvariant(t, svc.calculateTokenCost(context.Background(), result, apiKey, "claude-opus-4-1", rate, now, &recordUsageOpts{}), rate, 2)
+		requireBreakdownInvariant(t, svc.calculateTokenCost(context.Background(), result, apiKey, "claude-opus-4-1", rate, now), rate, 2)
 	})
 
 	t.Run("openai resolver path", func(t *testing.T) {
 		svc := &OpenAIGatewayService{billingService: billing, resolver: resolver}
 		tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500}
-		cost, err := svc.calculateOpenAIRecordUsageTokenCost(context.Background(), apiKey, "gpt-5.4", rate, now, tokens, "", nil)
+		cost, err := svc.calculateOpenAIRecordUsageTokenCost(context.Background(), apiKey, "gpt-5.4", rate, now, tokens, "", "", nil)
 		require.NoError(t, err)
 		requireBreakdownInvariant(t, cost, rate, 3)
-		cost, err = svc.calculateOpenAIRecordUsageTokenCost(context.Background(), apiKey, "gpt-5.4-mini", rate, now, tokens, "", nil)
+		cost, err = svc.calculateOpenAIRecordUsageTokenCost(context.Background(), apiKey, "gpt-5.4-mini", rate, now, tokens, "", "", nil)
 		require.NoError(t, err)
 		requireBreakdownInvariant(t, cost, rate, 1)
 	})
@@ -196,7 +183,7 @@ func TestModelRateMultiplierInvariantAcrossGatewayPaths(t *testing.T) {
 	t.Run("openai built-in fallback path without resolver", func(t *testing.T) {
 		svc := &OpenAIGatewayService{billingService: billing}
 		tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500}
-		cost, err := svc.calculateOpenAIRecordUsageTokenCost(context.Background(), apiKey, "gpt-5.4", rate, now, tokens, "", nil)
+		cost, err := svc.calculateOpenAIRecordUsageTokenCost(context.Background(), apiKey, "gpt-5.4", rate, now, tokens, "", "", nil)
 		require.NoError(t, err)
 		requireBreakdownInvariant(t, cost, rate, 3)
 	})
@@ -239,12 +226,12 @@ func TestEffectiveDownstreamMultiplierAgreesWithBilling(t *testing.T) {
 
 	anthropic := &GatewayService{billingService: billing, resolver: resolver}
 	result := &ForwardResult{Usage: ClaudeUsage{InputTokens: 1000, OutputTokens: 500}}
-	cost := anthropic.calculateTokenCost(context.Background(), result, apiKey, "claude-opus-4-1", textMultiplier, at, &recordUsageOpts{})
+	cost := anthropic.calculateTokenCost(context.Background(), result, apiKey, "claude-opus-4-1", textMultiplier, at)
 	require.InDelta(t, effectiveDownstreamMultiplier(group, resolvedRate, at, "claude-opus-4-1"), cost.ActualCost/cost.TotalCost, 1e-9)
 	require.InDelta(t, 0.9*1.5*2, cost.ActualCost/cost.TotalCost, 1e-9)
 
 	openai := &OpenAIGatewayService{billingService: billing, resolver: resolver}
-	openaiCost, err := openai.calculateOpenAIRecordUsageTokenCost(context.Background(), apiKey, "gpt-5.4", textMultiplier, at, UsageTokens{InputTokens: 1000, OutputTokens: 500}, "", nil)
+	openaiCost, err := openai.calculateOpenAIRecordUsageTokenCost(context.Background(), apiKey, "gpt-5.4", textMultiplier, at, UsageTokens{InputTokens: 1000, OutputTokens: 500}, "", "", nil)
 	require.NoError(t, err)
 	require.InDelta(t, effectiveDownstreamMultiplier(group, resolvedRate, at, "gpt-5.4"), openaiCost.ActualCost/openaiCost.TotalCost, 1e-9)
 	require.InDelta(t, 0.9*1.5*0.5, openaiCost.ActualCost/openaiCost.TotalCost, 1e-9)

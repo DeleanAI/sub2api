@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 
@@ -290,6 +290,18 @@ function buildOpenAISetupTokenAccount() {
   } as any
 }
 
+function buildOpenAIOAuthParentAccount() {
+  return {
+    ...buildAccount(),
+    id: 7,
+    name: 'OpenAI OAuth Parent',
+    type: 'oauth',
+    parent_account_id: null,
+    credentials: { access_token: 'oauth-token' },
+    extra: {}
+  } as any
+}
+
 function mountModal(account = buildAccount()) {
   return mount(EditAccountModal, {
     props: {
@@ -316,6 +328,50 @@ describe('EditAccountModal', () => {
     authIsSimpleMode.value = true
   })
 
+  afterEach(() => vi.useRealTimers())
+
+  it('sets expiry presets from now instead of extending the saved expiry', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2028-02-29T12:34:00'))
+    const account = buildAccount()
+    account.expires_at = new Date('2030-06-15T09:00:00').getTime() / 1000
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const input = wrapper.get<HTMLInputElement>('input[type="datetime-local"]')
+
+    for (const [label, expected] of [
+      ['payment.oneMonth', '2028-03-29T12:34'],
+      ['payment.oneYear', '2029-02-28T12:34'],
+    ]) {
+      const button = wrapper.findAll('button').find((candidate) => candidate.text() === label)!
+      expect(button.attributes('type')).toBe('button')
+      await button.trigger('click')
+      expect(input.element.value).toBe(expected)
+      expect(updateAccountMock).not.toHaveBeenCalled()
+    }
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.expires_at).toBe(new Date('2029-02-28T12:34:00').getTime() / 1000)
+    wrapper.unmount()
+  })
+
+  it('can clear a selected expiry preset before saving the account', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+    const wrapper = mountModal(account)
+    const button = wrapper.findAll('button').find((candidate) => candidate.text() === 'payment.oneYear')!
+    await button.trigger('click')
+    const input = wrapper.get<HTMLInputElement>('input[type="datetime-local"]')
+    expect(input.element.value).not.toBe('')
+    await input.setValue('')
+
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock.mock.calls[0]?.[1]?.expires_at).toBe(0)
+    wrapper.unmount()
+  })
+
   it('reopening the same account rehydrates the OpenAI whitelist from props', async () => {
     const account = buildAccount()
     updateAccountMock.mockReset()
@@ -340,6 +396,39 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock).toHaveBeenCalledTimes(1)
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials?.model_mapping).toEqual({
       'gpt-5.2': 'gpt-5.2'
+    })
+  })
+
+  it('preserves adaptive Kimi Responses endpoint on submit', async () => {
+    const account = buildAccount()
+    account.platform = 'kimi'
+    account.credentials = {
+      api_key: 'sk-kimi',
+      account_mode: 'payg',
+      api_protocol: 'adaptive',
+      base_url: 'https://api.moonshot.cn/v1',
+      api_base_urls: {
+        chat_completions: 'https://api.moonshot.cn/v1',
+        anthropic: 'https://api.moonshot.cn/anthropic',
+        responses: 'https://api.moonshot.cn/v1'
+      }
+    }
+    updateAccountMock.mockReset().mockResolvedValue(account)
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+
+    const wrapper = mountModal(account)
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).toMatchObject({
+      account_mode: 'payg',
+      api_protocol: 'adaptive',
+      base_url: 'https://api.moonshot.cn/v1',
+      api_base_urls: {
+        chat_completions: 'https://api.moonshot.cn/v1',
+        anthropic: 'https://api.moonshot.cn/anthropic',
+        responses: 'https://api.moonshot.cn/v1'
+      }
     })
   })
 
@@ -628,6 +717,85 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.openai_responses_flatten_namespaces).toBe(
       true
     )
+  })
+
+  it('writes the upstream request id header into extra only when it changes', async () => {
+    const account = buildAccount()
+    account.extra = { openai_compact_mode: 'force_on' }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const untouched = mountModal(account)
+    await untouched.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.upstream_request_id_header).toBeUndefined()
+
+    updateAccountMock.mockClear()
+    const wrapper = mountModal(account)
+    await wrapper.get('[data-testid="upstream-request-id-header"]').setValue(' X-Oneapi-Request-Id ')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toMatchObject({
+      openai_compact_mode: 'force_on',
+      upstream_request_id_header: 'X-Oneapi-Request-Id'
+    })
+  })
+
+  it('removes the upstream request id header from extra when cleared', async () => {
+    const account = buildAccount()
+    account.extra = { upstream_request_id_header: 'X-Request-ID' }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    expect((wrapper.get('[data-testid="upstream-request-id-header"]').element as HTMLInputElement).value).toBe('X-Request-ID')
+    await wrapper.get('[data-testid="upstream-request-id-header"]').setValue('')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toBeDefined()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('upstream_request_id_header')
+  })
+
+  it('writes images_url_to_b64_json into extra when toggled on', async () => {
+    const account = buildAccount()
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="openai-images-url-to-b64-json-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra?.images_url_to_b64_json).toBe(true)
+  })
+
+  it('removes images_url_to_b64_json from extra when toggled off', async () => {
+    const account = buildAccount()
+    account.extra = { images_url_to_b64_json: true }
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset()
+    checkMixedChannelRiskMock.mockResolvedValue({ has_risk: false })
+    updateAccountMock.mockResolvedValue(account)
+
+    const wrapper = mountModal(account)
+    const toggle = wrapper.get('[data-testid="openai-images-url-to-b64-json-toggle"]')
+    expect(toggle.attributes('aria-checked')).toBe('true')
+    await toggle.trigger('click')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).toBeDefined()
+    expect(updateAccountMock.mock.calls[0]?.[1]?.extra).not.toHaveProperty('images_url_to_b64_json')
   })
 
   it('hides the Codex namespace flatten toggle for non-OAuth OpenAI accounts', async () => {
@@ -1349,5 +1517,65 @@ describe('EditAccountModal', () => {
     expect(updateAccountMock.mock.calls[0]?.[1]?.credentials).not.toHaveProperty(
       'antigravity_project_id'
     )
+  })
+})
+
+describe('EditAccountModal OpenAI 自动使用重置卡', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    updateAccountMock.mockReset()
+    checkMixedChannelRiskMock.mockReset().mockResolvedValue({ has_risk: false })
+  })
+
+  it('仅对 OpenAI OAuth 母账号显示，默认关闭且阈值为 100/100', () => {
+    const parent = mountModal(buildOpenAIOAuthParentAccount())
+    expect(parent.find('[data-testid="auto-reset-credit-settings"]').exists()).toBe(true)
+    expect((parent.get('[data-testid="auto-reset-credit-5h-threshold"]').element as HTMLInputElement).value).toBe('100')
+    expect((parent.get('[data-testid="auto-reset-credit-7d-threshold"]').element as HTMLInputElement).value).toBe('100')
+    expect(parent.get('[data-testid="auto-reset-credit-5h-threshold"]').attributes('disabled')).toBeDefined()
+    parent.unmount()
+
+    for (const account of [buildAccount(), buildOpenAISetupTokenAccount(), buildOpenAISparkShadowAccount()]) {
+      const wrapper = mountModal(account)
+      expect(wrapper.find('[data-testid="auto-reset-credit-settings"]').exists()).toBe(false)
+      wrapper.unmount()
+    }
+  })
+
+  it('独立保存两个阈值，并禁止把运行态回写到管理请求', async () => {
+    const account = buildOpenAIOAuthParentAccount()
+    account.extra = {
+      codex_auto_reset_credit_state: {
+        status: 'success',
+        trigger_window: '5h',
+        available_count: 1
+      }
+    }
+    updateAccountMock.mockResolvedValue(account)
+    const wrapper = mountModal(account)
+
+    await wrapper.get('[data-testid="auto-reset-credit-enabled"]').trigger('click')
+    await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue('75.5')
+    await wrapper.get('[data-testid="auto-reset-credit-7d-threshold"]').setValue('92')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+
+    expect(updateAccountMock).toHaveBeenCalledTimes(1)
+    const extra = updateAccountMock.mock.calls[0]?.[1]?.extra
+    expect(extra).toMatchObject({
+      auto_reset_credit_enabled: true,
+      auto_reset_credit_5h_threshold: 0.755,
+      auto_reset_credit_7d_threshold: 0.92
+    })
+    expect(extra).not.toHaveProperty('codex_auto_reset_credit_state')
+    wrapper.unmount()
+  })
+
+  it('开启后拒绝超出 0.1–100 范围的任一阈值', async () => {
+    const wrapper = mountModal(buildOpenAIOAuthParentAccount())
+    await wrapper.get('[data-testid="auto-reset-credit-enabled"]').trigger('click')
+    await wrapper.get('[data-testid="auto-reset-credit-5h-threshold"]').setValue('0')
+    await wrapper.get('form#edit-account-form').trigger('submit.prevent')
+    expect(updateAccountMock).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 })
