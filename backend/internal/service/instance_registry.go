@@ -31,11 +31,18 @@ type InstanceInfo struct {
 }
 
 // InstanceHeartbeatStore 是实例注册表的持久化端口；Redis 实现在 repository 层。
+// InstanceHeartbeatStore 的时间基准由存储侧统一提供，接口刻意不接收调用方的时刻。
+//
+// 之前打分用写入方的时钟、算截止用读取方的时钟，两边各走各的表：慢 60s 的 B 写下
+// 偏小的分数，A 按自己的时钟算截止就看不见 B，于是"只有我一个实例"成立，原地更新
+// 被放行——而这段代码存在的全部意义就是在有别的副本时拒绝原地更新。快 60s 的 A 更糟，
+// 它的 ZREMRANGEBYSCORE 会把所有健康成员直接删掉。45s 的窗口只能容忍 <45s 的偏移，
+// 对一段以"失败要往安全侧倒"为设计目标的代码来说，这是反的。
 type InstanceHeartbeatStore interface {
-	// Heartbeat 记录 inst 在 now 时刻存活，并淘汰 now-window 之前的记录。
-	Heartbeat(ctx context.Context, inst InstanceInfo, now time.Time, window time.Duration) error
-	// ListActive 返回 since 之后有过心跳的实例。
-	ListActive(ctx context.Context, since time.Time) ([]InstanceInfo, error)
+	// Heartbeat 记录 inst 存活，并淘汰 window 之前的记录。时刻取自存储侧。
+	Heartbeat(ctx context.Context, inst InstanceInfo, window time.Duration) error
+	// ListActive 返回 window 之内有过心跳的实例。截止时刻同样取自存储侧。
+	ListActive(ctx context.Context, window time.Duration) ([]InstanceInfo, error)
 	// Remove 立即注销 inst，优雅停机时调用，避免滚动重启期间把已退出的进程多算一个窗口。
 	Remove(ctx context.Context, inst InstanceInfo) error
 }
@@ -131,7 +138,7 @@ func (r *InstanceRegistry) heartbeat() {
 	ctx, cancel := context.WithTimeout(context.Background(), instanceRegistryOpTimeout)
 	defer cancel()
 
-	err := r.store.Heartbeat(ctx, r.self, r.now(), r.window)
+	err := r.store.Heartbeat(ctx, r.self, r.window)
 	switch {
 	case err != nil && !r.heartbeatFailing.Swap(true):
 		slog.Warn("instance_registry: heartbeat failed; peers stop counting this instance after the liveness window, and in-app updates are refused while the instance count is unknown",
@@ -167,7 +174,7 @@ func (r *InstanceRegistry) Stop() {
 // ActiveInstances 实现 LiveInstanceCounter。
 func (r *InstanceRegistry) ActiveInstances(ctx context.Context) ([]InstanceInfo, error) {
 	now := r.now()
-	instances, err := r.store.ListActive(ctx, now.Add(-r.window))
+	instances, err := r.store.ListActive(ctx, r.window)
 	if err != nil {
 		return nil, fmt.Errorf("instance registry: list active instances: %w", err)
 	}

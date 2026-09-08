@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -241,7 +242,34 @@ func TestCheckerRunsChecksConcurrently(t *testing.T) {
 	require.True(t, report.Ready, "checks=%v", report.Checks)
 }
 
-func TestDescribeFailureHidesCredentials(t *testing.T) {
+// TestDescribeFailureExposesABoundedVocabulary 钉死 /readyz 对外只说有限的几种状态。
+//
+// /readyz 是匿名可读的，而驱动错误里带着内网地址与端口
+// （dial tcp 10.0.0.5:5432: connect: connection refused）。探针需要知道的只是
+// "这个依赖此刻不健康"；具体原因给运维看日志。之前这些原文是直接透出去的，
+// 而且当时的测试还专门断言它原样通过。
+func TestDescribeFailureExposesABoundedVocabulary(t *testing.T) {
+	leaky := []string{
+		"connect postgres://sub2api:s3cret@db.internal:5432/app: refused",
+		"dial redis://:hunter2@cache:6379: timeout",
+		"pq: password=hunter2 host=db user=app",
+		"dial tcp 10.0.0.5:5432: connect: connection refused",
+	}
+	for _, in := range leaky {
+		out := describeFailure(errors.New(in), testTimeout)
+		require.Equal(t, "unavailable", out, "input %q", in)
+		for _, secret := range []string{"s3cret", "hunter2", "10.0.0.5", "db.internal", "5432", "cache"} {
+			require.NotContainsf(t, out, secret, "对外文本泄露了 %q（来自 %q）", secret, in)
+		}
+	}
+	require.Equal(t, "timeout after "+testTimeout.String(), describeFailure(context.DeadlineExceeded, testTimeout))
+	// "没配"不是运行期故障，也不含任何内部地址，保留它对排障有用。
+	require.Equal(t, "not configured", describeFailure(ErrNotConfigured, testTimeout))
+	require.Equal(t, "not configured", describeFailure(fmt.Errorf("redis: %w", ErrNotConfigured), testTimeout))
+}
+
+// 日志侧仍保留原文，只去掉凭据——排障要看的就是这些。
+func TestDescribeFailureForLogHidesCredentialsButKeepsDetail(t *testing.T) {
 	cases := map[string]string{
 		"connect postgres://sub2api:s3cret@db.internal:5432/app: refused": "connect postgres://***@db.internal:5432/app: refused",
 		"dial redis://:hunter2@cache:6379: timeout":                       "dial redis://***@cache:6379: timeout",
@@ -249,9 +277,9 @@ func TestDescribeFailureHidesCredentials(t *testing.T) {
 		"dial tcp 10.0.0.5:5432: connect: connection refused":             "dial tcp 10.0.0.5:5432: connect: connection refused",
 	}
 	for in, want := range cases {
-		require.Equal(t, want, describeFailure(errors.New(in), testTimeout), "input %q", in)
+		require.Equal(t, want, describeFailureForLog(errors.New(in), testTimeout), "input %q", in)
 	}
-	require.Equal(t, "timeout after "+testTimeout.String(), describeFailure(context.DeadlineExceeded, testTimeout))
+	require.Equal(t, "timeout after "+testTimeout.String(), describeFailureForLog(context.DeadlineExceeded, testTimeout))
 }
 
 // 状态翻转才记日志的前提是结果被正确记账：这里只验证记账，不依赖日志输出。

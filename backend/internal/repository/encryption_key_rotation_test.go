@@ -327,9 +327,21 @@ func TestRotateEncryptionKey_UndecryptableRowsFailLoudlyAndKeepFingerprint(t *te
 	require.Len(t, users.Failures, 1)
 	require.Equal(t, fmt.Sprintf("users[%d]", f.lostUser), users.Failures[0].Row)
 	require.Contains(t, users.Failures[0].Err, "not configured", "error names the missing key")
+	// "not-a-ciphertext" 没有版本前缀且解不开 —— 与读路径（decryptStoredSecret）同一判据下
+	// 这是历史明文，加密收编而不是失败。判据必须与读路径一致：只要有一行 Failed 就不写
+	// 新指纹，而备份 S3 密钥这类字段历史上真的存过明文，否则轮换在这些部署上永远跑不完。
 	monitors := storeReport(t, report, "channel_monitors.")
-	require.Equal(t, 1, monitors.Failed)
-	require.Contains(t, monitors.Failures[0].Err, "legacy format")
+	require.Zero(t, monitors.Failed, "无版本前缀 = 历史明文，收编而不是失败")
+	require.Equal(t, 1, monitors.AdoptedLegacyPlaintext)
+	require.Equal(t, 2, monitors.Rotated, "收编计入 Rotated（另一行是正常的换钥匙）")
+
+	// 收编之后这个值可以正常读出来，而且内容没变。
+	monitorRow, err := client.ChannelMonitor.Query().Where(channelmonitor.NameEQ("garbage")).Only(ctx)
+	require.NoError(t, err)
+	require.True(t, secretcipher.IsVersioned(monitorRow.APIKeyEncrypted))
+	adopted, err := ring.Decrypt(monitorRow.APIKeyEncrypted)
+	require.NoError(t, err)
+	require.Equal(t, "not-a-ciphertext", adopted)
 
 	stored, _, err := ReadEncryptionKeyFingerprint(ctx, client)
 	require.NoError(t, err)
@@ -339,6 +351,7 @@ func TestRotateEncryptionKey_UndecryptableRowsFailLoudlyAndKeepFingerprint(t *te
 	report.Write(&buf)
 	require.Contains(t, buf.String(), fmt.Sprintf("failed: users[%d]:", f.lostUser))
 	require.Contains(t, buf.String(), "stored fingerprint NOT updated")
+	require.Contains(t, buf.String(), "held legacy plaintext", "收编必须在报告里单列一行：这些字段过去在库里是明文的")
 }
 
 func TestRotateEncryptionKey_NoFingerprintYetIsReported(t *testing.T) {

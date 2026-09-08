@@ -127,3 +127,42 @@ func TestEverySyntheticEmailDomainIsRegistered(t *testing.T) {
 			"provider %q 不是合法的 signup_source：合成邮箱域名登记了，但归一化列表漏了它", provider)
 	}
 }
+
+// TestEveryBypassRegistrationSwitchIsWired 遍历源码里声明的每一个
+// "*BypassRegistration" 配置开关，要求对应 provider 已在
+// oauthRegistrationBypassChecks 里登记。
+//
+// 针对的形状：飞书的 FEISHU_CONNECT_BYPASS_REGISTRATION 建好了、校验了、文档写了，
+// 但放行判断写死 signupSource != "dingtalk"，于是它是个从不执行的开关——白名单内的
+// 员工被展示"创建账号"表单，提交后收到 REGISTRATION_DISABLED。写下来却没接线的
+// 规则比没有更糟：它给的是假信心。
+func TestEveryBypassRegistrationSwitchIsWired(t *testing.T) {
+	declared := map[string]string{} // provider -> 声明位置
+	for _, spec := range []struct {
+		provider string
+		file     string
+		pattern  string
+	}{
+		{"dingtalk", "../config/config.go", `DingTalkConnectBypassRegistration|dingtalk_connect_bypass_registration`},
+		{"feishu", "../config/validate_feishu.go", `BypassRegistration`},
+	} {
+		source, err := os.ReadFile(spec.file)
+		require.NoError(t, err, spec.file)
+		if regexp.MustCompile(spec.pattern).Match(source) {
+			declared[spec.provider] = spec.file
+		}
+	}
+	require.NotEmpty(t, declared, "没扫到任何 BypassRegistration 开关，护栏和源码脱节了")
+
+	for provider, where := range declared {
+		require.Containsf(t, oauthRegistrationBypassChecks, provider,
+			"%s 声明了 BypassRegistration 开关（%s），但 oauthRegistrationBypassChecks 里没有它："+
+				"这个开关打开后不会有任何效果，用户会在提交注册表单时收到 REGISTRATION_DISABLED",
+			provider, where)
+	}
+	// 反向：登记了的必须是合法 signup_source，否则归一化之后永远查不到。
+	for provider := range oauthRegistrationBypassChecks {
+		require.Equalf(t, provider, NormalizeOAuthSignupSource(provider),
+			"oauthRegistrationBypassChecks 的键 %q 不是归一化后的 signup_source，永远匹配不上", provider)
+	}
+}

@@ -268,30 +268,42 @@ func (h *AuthHandler) FeishuOAuthCallback(c *gin.Context) {
 	}
 
 	secureCookie := isRequestHTTPS(c)
-	defer func() {
-		clearFeishuCookie(c, feishuOAuthStateCookieName, secureCookie)
-		clearFeishuCookie(c, feishuOAuthRedirectCookie, secureCookie)
-		clearFeishuCookie(c, feishuOAuthIntentCookieName, secureCookie)
-		clearFeishuCookie(c, feishuOAuthVerifierCookieName, secureCookie)
-		clearOAuthPromoCodeCookie(c, secureCookie)
-	}()
+	// 立即清，不能 defer：本函数的每一条出口都以 c.Redirect 结束，而 Redirect 会把
+	// 响应头一起写出去；defer 里再 SetCookie 时头已经提交，Set-Cookie 根本到不了浏览器
+	// （实测 302 响应里一个 Set-Cookie 都没有）。结果是 state 在整个 600s TTL 内一直有效，
+	// 所谓"一次性 state"在运行上根本不成立。这里先读出要用的值，再当场清掉。
+	expectedState, stateErr := readCookieDecoded(c, feishuOAuthStateCookieName)
+	redirectTo, _ := readCookieDecoded(c, feishuOAuthRedirectCookie)
+	intent, _ := readCookieDecoded(c, feishuOAuthIntentCookieName)
+	codeVerifier, verifierErr := readCookieDecoded(c, feishuOAuthVerifierCookieName)
+	clearFeishuCookie(c, feishuOAuthStateCookieName, secureCookie)
+	clearFeishuCookie(c, feishuOAuthRedirectCookie, secureCookie)
+	clearFeishuCookie(c, feishuOAuthIntentCookieName, secureCookie)
+	clearFeishuCookie(c, feishuOAuthVerifierCookieName, secureCookie)
+	clearOAuthPromoCodeCookie(c, secureCookie)
 
-	expectedState, err := readCookieDecoded(c, feishuOAuthStateCookieName)
-	if err != nil || state != expectedState {
+	if stateErr != nil || state != expectedState {
 		redirectOAuthError(c, frontendCallback, "csrf", "state mismatch", "")
 		return
 	}
-	redirectTo, _ := readCookieDecoded(c, feishuOAuthRedirectCookie)
-	intent, _ := readCookieDecoded(c, feishuOAuthIntentCookieName)
 	intent = normalizeOAuthIntent(intent)
 	browserSessionKey, _ := readOAuthPendingBrowserCookie(c)
 	if strings.TrimSpace(browserSessionKey) == "" {
 		redirectOAuthError(c, frontendCallback, "missing_browser_session", "missing browser session cookie", "")
 		return
 	}
-	codeVerifier := ""
 	if cfg.UsePKCE {
-		codeVerifier, _ = readCookieDecoded(c, feishuOAuthVerifierCookieName)
+		// 失败即拒绝，不降级。丢掉这个错误的话，带着 state cookie 但没有 verifier
+		// cookie 的回调会静默退回裸 authorization code 流程——PKCE 的防护整个消失，
+		// 而日志和响应里都看不出这次登录没有走 PKCE。
+		if verifierErr != nil || strings.TrimSpace(codeVerifier) == "" {
+			slog.Warn("feishu_oauth.pkce_verifier_missing: refusing to fall back to a bare authorization code exchange",
+				"error", verifierErr)
+			redirectOAuthError(c, frontendCallback, "pkce_verifier_missing", "missing PKCE verifier cookie", "")
+			return
+		}
+	} else {
+		codeVerifier = ""
 	}
 
 	client := h.feishuClient(cfg)

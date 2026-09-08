@@ -8,6 +8,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/internal/server/readiness"
+	"github.com/Wei-Shaw/sub2api/internal/server/routes"
 	"log"
 	"net/http"
 	"os"
@@ -112,11 +114,19 @@ func main() {
 	runMainServer()
 }
 
+// setupProbeTimeout 只是 Checker 的构造参数：向导阶段没有依赖检查项，探针不会用到它。
+const setupProbeTimeout = 5 * time.Second
+
 func runSetupServer() {
 	r := gin.New()
 	r.Use(middleware.Recovery())
 	r.Use(middleware.CORS(config.CORSConfig{}))
 	r.Use(middleware.SecurityHeaders(config.CSPConfig{Enabled: true, Policy: config.DefaultCSPPolicy}, nil))
+
+	// 探针：向导 Pod 也要能被就绪探针探到，否则它永远 NotReady、Service 没有 endpoint，
+	// 运维进不去向导页面。向导阶段还没有数据库/Redis 配置，checker 不带任何依赖检查项：
+	// 此时"能不能服务"的答案就是"能，提供向导"。
+	routes.RegisterProbeRoutes(r, readiness.NewChecker(setupProbeTimeout))
 
 	// Register setup routes
 	setup.RegisterRoutes(r)

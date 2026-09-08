@@ -314,20 +314,20 @@ func (h *AuthHandler) DingTalkOAuthCallback(c *gin.Context) {
 	}
 
 	secureCookie := isRequestHTTPS(c)
-	defer func() {
-		clearDingTalkCookie(c, dingTalkOAuthStateCookieName, secureCookie)
-		clearDingTalkCookie(c, dingTalkOAuthRedirectCookie, secureCookie)
-		clearDingTalkCookie(c, dingTalkOAuthIntentCookieName, secureCookie)
-		clearOAuthPromoCodeCookie(c, secureCookie)
-	}()
+	// 立即清，不能 defer：每条出口都以 c.Redirect 结束，Redirect 已经把响应头写出去了，
+	// defer 里再 SetCookie 到不了浏览器，state 会在整个 TTL 内保持有效。
+	expectedState, stateErr := readCookieDecoded(c, dingTalkOAuthStateCookieName)
+	redirectTo, _ := readCookieDecoded(c, dingTalkOAuthRedirectCookie)
+	intent, _ := readCookieDecoded(c, dingTalkOAuthIntentCookieName)
+	clearDingTalkCookie(c, dingTalkOAuthStateCookieName, secureCookie)
+	clearDingTalkCookie(c, dingTalkOAuthRedirectCookie, secureCookie)
+	clearDingTalkCookie(c, dingTalkOAuthIntentCookieName, secureCookie)
+	clearOAuthPromoCodeCookie(c, secureCookie)
 
-	expectedState, err := readCookieDecoded(c, dingTalkOAuthStateCookieName)
-	if err != nil || state != expectedState {
+	if stateErr != nil || state != expectedState {
 		redirectOAuthError(c, frontendCallback, "csrf", "state mismatch", "")
 		return
 	}
-	redirectTo, _ := readCookieDecoded(c, dingTalkOAuthRedirectCookie)
-	intent, _ := readCookieDecoded(c, dingTalkOAuthIntentCookieName)
 	intent = normalizeOAuthIntent(intent)
 	browserSessionKey, _ := readOAuthPendingBrowserCookie(c)
 	if strings.TrimSpace(browserSessionKey) == "" {

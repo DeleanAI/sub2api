@@ -52,7 +52,7 @@ func DependencyChecks(db *sql.DB, rdb *redis.Client) []Check {
 func pingPostgres(db *sql.DB) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		if db == nil {
-			return errors.New("not configured")
+			return ErrNotConfigured
 		}
 		return db.PingContext(ctx)
 	}
@@ -61,7 +61,7 @@ func pingPostgres(db *sql.DB) func(ctx context.Context) error {
 func pingRedis(rdb *redis.Client) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
 		if rdb == nil {
-			return errors.New("not configured")
+			return ErrNotConfigured
 		}
 		return rdb.Ping(ctx).Err()
 	}
@@ -148,15 +148,18 @@ func (c *Checker) runOne(parent context.Context, chk Check) string {
 	}
 
 	result := resultOK
+	detail := ""
 	if err != nil {
 		result = resultErrorPrefix + describeFailure(err, c.timeout)
+		detail = describeFailureForLog(err, c.timeout)
 	}
-	c.recordTransition(chk.Name, result)
+	c.recordTransition(chk.Name, result, detail)
 	return result
 }
 
-// recordTransition 只在 ok<->failed 翻转时记录日志。
-func (c *Checker) recordTransition(name, result string) {
+// recordTransition 只在 ok<->failed 翻转时记录日志。detail 是不对外暴露的错误原文
+// （已去凭据）：响应体只说 unavailable，排障需要的具体原因在这里。
+func (c *Checker) recordTransition(name, result, detail string) {
 	failed := result != resultOK
 
 	c.mu.Lock()
@@ -167,14 +170,35 @@ func (c *Checker) recordTransition(name, result string) {
 	switch {
 	case failed && !wasFailing:
 		slog.Warn("readiness: dependency check failed; instance reports not ready until it recovers",
-			"check", name, "result", result)
+			"check", name, "result", result, "detail", detail)
 	case !failed && wasFailing:
 		slog.Info("readiness: dependency check recovered", "check", name)
 	}
 }
 
-// describeFailure 把错误变成可以对外暴露的文本：超时统一措辞，其余经过脱敏。
+// ErrNotConfigured 是"这个依赖压根没配"的哨兵错误：它不是运行期故障，也不含任何
+// 内部地址，因此可以原样对外暴露——探针据此能区分"配错了"和"连不上"。
+var ErrNotConfigured = errors.New("not configured")
+
+// describeFailure 生成对外暴露的失败文本。
+//
+// 只区分"超时"和"不可达"两种，不透出驱动原文：/readyz 是匿名可读的，
+// 而驱动错误里带着内网地址与端口（dial tcp 10.0.0.5:5432: connect: connection refused）。
+// 探针需要知道的只是"这个依赖此刻不健康"，具体原因给运维看日志（logFailure 打全文，
+// 经 sanitizeError 去掉凭据）。
 func describeFailure(err error, timeout time.Duration) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Sprintf("timeout after %s", timeout)
+	case errors.Is(err, ErrNotConfigured):
+		return ErrNotConfigured.Error()
+	default:
+		return "unavailable"
+	}
+}
+
+// describeFailureForLog 是给日志用的版本：保留原文，只去掉凭据。
+func describeFailureForLog(err error, timeout time.Duration) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return fmt.Sprintf("timeout after %s", timeout)
 	}

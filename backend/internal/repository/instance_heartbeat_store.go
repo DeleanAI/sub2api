@@ -45,26 +45,41 @@ func encodeInstanceMember(inst service.InstanceInfo) (string, error) {
 	return string(raw), nil
 }
 
-func (s *instanceHeartbeatStore) Heartbeat(ctx context.Context, inst service.InstanceInfo, now time.Time, window time.Duration) error {
+// heartbeatScript 用 Redis 自己的 TIME 作为唯一时间基准：打分、淘汰截止都取自它。
+//
+// 副本的本地时钟一律不参与。这段逻辑的目的是"有别的副本在跑就拒绝原地更新"，
+// 而用各自的时钟打分/算截止会让时钟偏移直接把它变成失败开放：慢的副本写下偏小的
+// 分数从而对别人不可见，快的副本一次淘汰就能把所有健康成员删光。
+var heartbeatScript = redis.NewScript(`
+local now = tonumber(redis.call('TIME')[1])
+local window = tonumber(ARGV[2])
+redis.call('ZADD', KEYS[1], now, ARGV[1])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', '(' .. tostring(now - window))
+redis.call('EXPIRE', KEYS[1], window * 2)
+return now
+`)
+
+// listActiveScript 同样以 Redis TIME 为基准取窗口内的成员。
+var listActiveScript = redis.NewScript(`
+local now = tonumber(redis.call('TIME')[1])
+local window = tonumber(ARGV[1])
+return redis.call('ZRANGEBYSCORE', KEYS[1], now - window, '+inf', 'WITHSCORES')
+`)
+
+func (s *instanceHeartbeatStore) Heartbeat(ctx context.Context, inst service.InstanceInfo, window time.Duration) error {
 	member, err := encodeInstanceMember(inst)
 	if err != nil {
 		return err
 	}
-
-	cutoff := strconv.FormatInt(now.Add(-window).Unix(), 10)
-	pipe := s.rdb.TxPipeline()
-	pipe.ZAdd(ctx, instanceHeartbeatKey, redis.Z{Score: float64(now.Unix()), Member: member})
-	pipe.ZRemRangeByScore(ctx, instanceHeartbeatKey, "-inf", "("+cutoff)
-	pipe.Expire(ctx, instanceHeartbeatKey, 2*window)
-	_, err = pipe.Exec(ctx)
-	return err
+	return heartbeatScript.Run(ctx, s.rdb, []string{instanceHeartbeatKey}, member, int64(window.Seconds())).Err()
 }
 
-func (s *instanceHeartbeatStore) ListActive(ctx context.Context, since time.Time) ([]service.InstanceInfo, error) {
-	entries, err := s.rdb.ZRangeByScoreWithScores(ctx, instanceHeartbeatKey, &redis.ZRangeBy{
-		Min: strconv.FormatInt(since.Unix(), 10),
-		Max: "+inf",
-	}).Result()
+func (s *instanceHeartbeatStore) ListActive(ctx context.Context, window time.Duration) ([]service.InstanceInfo, error) {
+	raw, err := listActiveScript.Run(ctx, s.rdb, []string{instanceHeartbeatKey}, int64(window.Seconds())).Slice()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := decodeZRangeWithScores(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -97,4 +112,28 @@ func (s *instanceHeartbeatStore) Remove(ctx context.Context, inst service.Instan
 		return err
 	}
 	return s.rdb.ZRem(ctx, instanceHeartbeatKey, member).Err()
+}
+
+// decodeZRangeWithScores 把 Lua 返回的扁平 [member, score, ...] 还原成 redis.Z。
+func decodeZRangeWithScores(raw []any) ([]redis.Z, error) {
+	if len(raw)%2 != 0 {
+		return nil, fmt.Errorf("instance registry: ZRANGEBYSCORE WITHSCORES returned %d elements, expected an even count", len(raw))
+	}
+	out := make([]redis.Z, 0, len(raw)/2)
+	for i := 0; i < len(raw); i += 2 {
+		member, ok := raw[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("instance registry member has unexpected type %T", raw[i])
+		}
+		scoreText, ok := raw[i+1].(string)
+		if !ok {
+			return nil, fmt.Errorf("instance registry score has unexpected type %T", raw[i+1])
+		}
+		score, err := strconv.ParseFloat(scoreText, 64)
+		if err != nil {
+			return nil, fmt.Errorf("instance registry score %q is not a number: %w", scoreText, err)
+		}
+		out = append(out, redis.Z{Member: member, Score: score})
+	}
+	return out, nil
 }

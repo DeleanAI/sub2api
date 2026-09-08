@@ -30,7 +30,7 @@ func newFakeHeartbeatStore() *fakeHeartbeatStore {
 	return &fakeHeartbeatStore{beat: make(chan struct{}, 64)}
 }
 
-func (s *fakeHeartbeatStore) Heartbeat(_ context.Context, inst InstanceInfo, _ time.Time, window time.Duration) error {
+func (s *fakeHeartbeatStore) Heartbeat(_ context.Context, inst InstanceInfo, window time.Duration) error {
 	s.mu.Lock()
 	s.heartbeats = append(s.heartbeats, inst)
 	s.windows = append(s.windows, window)
@@ -43,7 +43,7 @@ func (s *fakeHeartbeatStore) Heartbeat(_ context.Context, inst InstanceInfo, _ t
 	return err
 }
 
-func (s *fakeHeartbeatStore) ListActive(context.Context, time.Time) ([]InstanceInfo, error) {
+func (s *fakeHeartbeatStore) ListActive(context.Context, time.Duration) ([]InstanceInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]InstanceInfo(nil), s.listed...), s.listErr

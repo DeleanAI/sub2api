@@ -28,11 +28,12 @@ func TestInstanceHeartbeatStoreRoundTrip(t *testing.T) {
 	mr, store := newInstanceStoreFixture(t)
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
+	mr.SetTime(now)
 	inst := service.InstanceInfo{ID: "a", Hostname: "host-a", Version: "1.0.0"}
 
-	require.NoError(t, store.Heartbeat(ctx, inst, now, testLivenessWindow))
+	require.NoError(t, store.Heartbeat(ctx, inst, testLivenessWindow))
 
-	active, err := store.ListActive(ctx, now.Add(-testLivenessWindow))
+	active, err := store.ListActive(ctx, testLivenessWindow)
 	require.NoError(t, err)
 	require.Len(t, active, 1)
 	require.Equal(t, "a", active[0].ID)
@@ -44,50 +45,79 @@ func TestInstanceHeartbeatStoreRoundTrip(t *testing.T) {
 	require.Equal(t, 2*testLivenessWindow, mr.TTL(instanceHeartbeatKey))
 
 	// 同一实例再次心跳只更新时间戳，不产生重复成员。
-	require.NoError(t, store.Heartbeat(ctx, inst, now.Add(15*time.Second), testLivenessWindow))
-	active, err = store.ListActive(ctx, now.Add(-testLivenessWindow))
+	mr.SetTime(now.Add(15 * time.Second))
+	require.NoError(t, store.Heartbeat(ctx, inst, testLivenessWindow))
+	active, err = store.ListActive(ctx, testLivenessWindow)
 	require.NoError(t, err)
 	require.Len(t, active, 1)
 	require.Equal(t, now.Add(15*time.Second).Unix(), active[0].LastSeen.Unix())
 }
 
 func TestInstanceHeartbeatStoreExpiresStaleInstances(t *testing.T) {
-	_, store := newInstanceStoreFixture(t)
+	mr, store := newInstanceStoreFixture(t)
 	ctx := context.Background()
 	t0 := time.Unix(1_700_000_000, 0)
+	mr.SetTime(t0)
 	a := service.InstanceInfo{ID: "a", Hostname: "host-a"}
 	b := service.InstanceInfo{ID: "b", Hostname: "host-b"}
 
-	require.NoError(t, store.Heartbeat(ctx, a, t0, testLivenessWindow))
+	require.NoError(t, store.Heartbeat(ctx, a, testLivenessWindow))
 
-	// 窗口内可见，窗口外不可见（读取侧的时间过滤）。
-	active, err := store.ListActive(ctx, t0.Add(44*time.Second).Add(-testLivenessWindow))
+	// 窗口内可见，窗口外不可见（读取侧的时间过滤，基准取自 Redis TIME）。
+	mr.SetTime(t0.Add(44 * time.Second))
+	active, err := store.ListActive(ctx, testLivenessWindow)
 	require.NoError(t, err)
 	require.Len(t, active, 1)
-	active, err = store.ListActive(ctx, t0.Add(46*time.Second).Add(-testLivenessWindow))
+	mr.SetTime(t0.Add(46 * time.Second))
+	active, err = store.ListActive(ctx, testLivenessWindow)
 	require.NoError(t, err)
 	require.Empty(t, active)
 
 	// 别人的心跳顺手淘汰过期成员（写入侧的物理清理）。
-	require.NoError(t, store.Heartbeat(ctx, b, t0.Add(60*time.Second), testLivenessWindow))
-	active, err = store.ListActive(ctx, time.Unix(0, 0))
+	mr.SetTime(t0.Add(60 * time.Second))
+	require.NoError(t, store.Heartbeat(ctx, b, testLivenessWindow))
+	active, err = store.ListActive(ctx, 24*time.Hour)
 	require.NoError(t, err)
 	require.Len(t, active, 1)
 	require.Equal(t, "b", active[0].ID)
 }
 
-func TestInstanceHeartbeatStoreRemove(t *testing.T) {
-	_, store := newInstanceStoreFixture(t)
+// TestInstanceHeartbeatStoreIgnoresCallerClocks 钉死"时间基准只有 Redis 一个"。
+//
+// 之前打分用写入方的时钟、算截止用读取方的时钟：慢 60s 的副本写下偏小的分数，
+// 对别人不可见——"只有我一个实例"于是成立，原地更新被放行，而这段代码存在的全部
+// 意义就是在有别的副本时拒绝它。快 60s 的副本更糟：一次 ZREMRANGEBYSCORE 就能把
+// 所有健康成员删光。接口不再接收调用方的时刻，这条断言用真实响应验证它。
+func TestInstanceHeartbeatStoreIgnoresCallerClocks(t *testing.T) {
+	mr, store := newInstanceStoreFixture(t)
 	ctx := context.Background()
-	now := time.Unix(1_700_000_000, 0)
+	serverNow := time.Unix(1_700_000_000, 0)
+	mr.SetTime(serverNow)
+
+	// 两个副本先后心跳；本地时钟无从传入，分数只可能来自 Redis。
+	require.NoError(t, store.Heartbeat(ctx, service.InstanceInfo{ID: "slow"}, testLivenessWindow))
+	require.NoError(t, store.Heartbeat(ctx, service.InstanceInfo{ID: "fast"}, testLivenessWindow))
+
+	active, err := store.ListActive(ctx, testLivenessWindow)
+	require.NoError(t, err)
+	require.Len(t, active, 2, "同一个 Redis 时钟下两个副本必须互相可见")
+	for _, inst := range active {
+		require.Equal(t, serverNow.Unix(), inst.LastSeen.Unix(), "分数必须是 Redis 的 TIME")
+	}
+}
+
+func TestInstanceHeartbeatStoreRemove(t *testing.T) {
+	mr, store := newInstanceStoreFixture(t)
+	ctx := context.Background()
+	mr.SetTime(time.Unix(1_700_000_000, 0))
 	a := service.InstanceInfo{ID: "a", Hostname: "host-a", Version: "1.0.0"}
 	b := service.InstanceInfo{ID: "b", Hostname: "host-b", Version: "1.0.0"}
-	require.NoError(t, store.Heartbeat(ctx, a, now, testLivenessWindow))
-	require.NoError(t, store.Heartbeat(ctx, b, now, testLivenessWindow))
+	require.NoError(t, store.Heartbeat(ctx, a, testLivenessWindow))
+	require.NoError(t, store.Heartbeat(ctx, b, testLivenessWindow))
 
 	require.NoError(t, store.Remove(ctx, a))
 
-	active, err := store.ListActive(ctx, now.Add(-testLivenessWindow))
+	active, err := store.ListActive(ctx, testLivenessWindow)
 	require.NoError(t, err)
 	require.Len(t, active, 1)
 	require.Equal(t, "b", active[0].ID)
@@ -97,10 +127,11 @@ func TestInstanceHeartbeatStoreRemove(t *testing.T) {
 func TestInstanceHeartbeatStoreFailsClosedOnUndecodableMember(t *testing.T) {
 	mr, store := newInstanceStoreFixture(t)
 	now := time.Unix(1_700_000_000, 0)
-	require.NoError(t, store.Heartbeat(context.Background(), service.InstanceInfo{ID: "a"}, now, testLivenessWindow))
+	mr.SetTime(now)
+	require.NoError(t, store.Heartbeat(context.Background(), service.InstanceInfo{ID: "a"}, testLivenessWindow))
 	mr.ZAdd(instanceHeartbeatKey, float64(now.Unix()), "not-json")
 
-	_, err := store.ListActive(context.Background(), now.Add(-testLivenessWindow))
+	_, err := store.ListActive(context.Background(), testLivenessWindow)
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "not decodable")
@@ -115,7 +146,7 @@ func TestInstanceRegistryEndToEndWithRedis(t *testing.T) {
 	first.Start()
 	t.Cleanup(first.Stop)
 	require.Eventually(t, func() bool {
-		active, err := store.ListActive(ctx, time.Now().Add(-testLivenessWindow))
+		active, err := store.ListActive(ctx, testLivenessWindow)
 		return err == nil && len(active) == 1 && active[0].ID == first.Self().ID
 	}, 5*time.Second, 10*time.Millisecond, "first heartbeat must land in Redis")
 

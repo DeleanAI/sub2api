@@ -663,17 +663,48 @@ func (s *AuthService) LoginOrRegisterOAuth(ctx context.Context, email, username 
 	return token, user, nil
 }
 
-// canBypassRegistrationDisabledForOAuth 在钉钉企业模式（internal_only）且
-// dingtalk_connect_bypass_registration=true 时，允许跳过全局 registration_enabled 检查。
+// oauthRegistrationBypassChecks 声明哪些登录方式可以在全局关闭注册时放行新建账号。
+//
+// 这是一张声明表而不是一串 if：之前这里写死 signupSource != "dingtalk" 直接返回
+// false，于是飞书的 FEISHU_CONNECT_BYPASS_REGISTRATION 成了一个写下来却从不执行的
+// 开关——白名单内的员工被展示"创建账号"表单（callback 明明回了
+// create_account_allowed: true），提交后收到 REGISTRATION_DISABLED。
+// 新增一个支持该开关的登录方式时必须在这里登记，守护测试遍历这张表。
+//
+// 共同约束：放行的前提永远是"闭域"——只有企业内 / 指定租户的人才可能走到这条路径。
+// 没有闭域限制的放行等于对全网开放注册。
+var oauthRegistrationBypassChecks = map[string]func(*AuthService, context.Context) bool{
+	"dingtalk": func(s *AuthService, ctx context.Context) bool {
+		cfg, err := s.settingService.GetDingTalkConnectOAuthConfig(ctx)
+		if err != nil || !cfg.Enabled || !cfg.BypassRegistration {
+			return false
+		}
+		// internal_only：只有本企业成员能登录，闭域成立。
+		return cfg.CorpRestrictionPolicy == "internal_only"
+	},
+	"feishu": func(s *AuthService, ctx context.Context) bool {
+		if s.cfg == nil {
+			return false
+		}
+		cfg := s.cfg.Feishu
+		if !cfg.Enabled || !cfg.BypassRegistration {
+			return false
+		}
+		// 租户白名单非空：只有白名单租户的人能登录，闭域成立。
+		// 配置校验（config.validateFeishu）已经要求开关打开时白名单必须非空，
+		// 这里再判一次是因为放行注册这件事不能依赖"别处已经拦过"。
+		return len(cfg.AllowedTenantKeyList()) > 0
+	},
+}
+
+// canBypassRegistrationDisabledForOAuth 报告某个登录方式此刻是否可以跳过
+// 全局 registration_enabled 检查。
 func (s *AuthService) canBypassRegistrationDisabledForOAuth(ctx context.Context, signupSource string) bool {
-	if signupSource != "dingtalk" {
+	check, ok := oauthRegistrationBypassChecks[NormalizeOAuthSignupSource(signupSource)]
+	if !ok {
 		return false
 	}
-	cfg, err := s.settingService.GetDingTalkConnectOAuthConfig(ctx)
-	if err != nil || !cfg.Enabled || !cfg.BypassRegistration {
-		return false
-	}
-	return cfg.CorpRestrictionPolicy == "internal_only"
+	return check(s, ctx)
 }
 
 // LoginOrRegisterOAuthWithTokenPair 用于第三方 OAuth/SSO 登录，返回完整的 TokenPair。
