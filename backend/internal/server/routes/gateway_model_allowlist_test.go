@@ -69,9 +69,13 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 	source := string(routeSource)
 
 	// rootRoute helper：apiKeyAuth 之后、compositeTarget 之前。
-	rootHelper := regexp.MustCompile(regexp.QuoteMeta(`r.Handle(method, path, limit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), groupModelAllowlist, compositeTarget, requireGroupAnthropic, handler)`))
-	require.Regexp(t, rootHelper, source,
-		"root alias helper must place the allowlist between apiKeyAuth and compositeTarget")
+	//
+	// 断言的是**顺序关系**而不是整条链的字面量：链上随时可能插入别的中间件
+	// （负载审计就是这么加进来的），字面量断言会在每一次这种改动上假失败，
+	// 而它真正要保护的东西——白名单必须在鉴权之后、composite 改写之前——没有变。
+	requireOrderedInHelper(t, source,
+		`r.Handle(method, path, limit,`,
+		[]string{"gin.HandlerFunc(apiKeyAuth)", "groupModelAllowlist", "compositeTarget", "handler)"})
 
 	chains := []struct {
 		group     string
@@ -93,9 +97,10 @@ func TestGatewayRoutesGroupModelAllowlistMountedOnEveryGatewayRoute(t *testing.T
 			"%s chain must mount groupModelAllowlist after auth and before %s", chain.group, chain.composite)
 	}
 
-	// codexDirect 链是一条 Use 调用，直接断言顺序。
-	codexDirect := regexp.MustCompile(regexp.QuoteMeta(`codexDirect.Use(bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), groupModelAllowlist, compositeTarget, requireGroupAnthropic)`))
-	require.Regexp(t, codexDirect, source, "codexDirect chain must mount the allowlist after auth and before compositeTarget")
+	// codexDirect 链是一条 Use 调用，同样只断言顺序。
+	requireOrderedInHelper(t, source,
+		`codexDirect.Use(`,
+		[]string{"gin.HandlerFunc(apiKeyAuth)", "groupModelAllowlist", "compositeTarget"})
 
 	// 所有带 apiKeyAuth 的根路径路由必须收敛到 rootRoute，避免漏挂。
 	stray := regexp.MustCompile(`\br\.(GET|POST|PUT|PATCH|DELETE)\("[^"]+",[^(]*apiKeyAuth`)
@@ -204,5 +209,30 @@ func TestGatewayRoutesGroupModelAllowlistModelFreeRoutesUnaffected(t *testing.T)
 		router.ServeHTTP(w, req)
 		require.NotContains(t, w.Body.String(), "not available for this group",
 			"%s should not be blocked by the allowlist middleware, got: %s", path, w.Body.String())
+	}
+}
+
+// requireOrderedInHelper 在 source 里找到以 prefix 开头的那一行，断言 tokens 按给定
+// 顺序出现在这一行里。
+//
+// 只钉顺序、不钉整行：中间件链会增删（负载审计、限流……），钉整行等于每加一个
+// 中间件就假失败一次，而顺序才是这条护栏要保护的不变式。
+func requireOrderedInHelper(t *testing.T, source, prefix string, tokens []string) {
+	t.Helper()
+	var line string
+	for _, candidate := range strings.Split(source, "\n") {
+		if strings.Contains(candidate, prefix) {
+			line = candidate
+			break
+		}
+	}
+	require.NotEmptyf(t, line, "找不到以 %q 开头的中间件链，护栏和 gateway.go 脱节了", prefix)
+
+	cursor := 0
+	for _, token := range tokens {
+		idx := strings.Index(line[cursor:], token)
+		require.GreaterOrEqualf(t, idx, 0,
+			"中间件链里找不到 %q（或它排在前一个之前）：\n  %s", token, strings.TrimSpace(line))
+		cursor += idx + len(token)
 	}
 }

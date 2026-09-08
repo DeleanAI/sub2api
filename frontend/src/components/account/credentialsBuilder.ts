@@ -362,7 +362,7 @@ export function defaultCNAdaptiveBaseUrls(
     anthropic: defaultCNBaseUrl(platform, mode, 'anthropic'),
     // 走 cnSupportsNativeResponses 而不是写死 deepseek：上游已把 Kimi 也纳入，
     // 而 qwen 的 preset 里没有 responses 协议，这个判据天然把它排除掉。
-    responses: cnSupportsNativeResponses(normalizedPlatform) ? defaultCNBaseUrl(platform, mode, 'responses') : ''
+    responses: cnSupportsNativeResponses(normalizedPlatform ?? '') ? defaultCNBaseUrl(platform, mode, 'responses') : ''
   }
 }
 

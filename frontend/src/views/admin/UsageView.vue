@@ -133,6 +133,7 @@
             :default-sort-order="'desc'"
             @sort="handleSort"
             @userClick="handleUserClick"
+            @payloadClick="openPayload"
             @ipGeoBatchFailed="handleIpGeoBatchFailed"
           />
           <Pagination v-if="pagination.total > 0" :page="pagination.page" :total="pagination.total" :page-size="pagination.page_size" @update:page="handlePageChange" @update:pageSize="handlePageSizeChange" />
@@ -181,6 +182,14 @@
     :hide-actions="true"
     @close="showBalanceHistoryModal = false; balanceHistoryUser = null"
   />
+  <UsagePayloadDetailModal
+    :show="payloadModalVisible"
+    :payload="payloadDetail"
+    :loading="payloadLoading"
+    :unavailable="payloadUnavailable"
+    :error-message="payloadErrorMessage"
+    @close="payloadModalVisible = false"
+  />
 </template>
 
 <script setup lang="ts">
@@ -195,6 +204,7 @@ import { resolveUsageRequestType, requestTypeToLegacyStream } from '@/utils/usag
 import AppLayout from '@/components/layout/AppLayout.vue'; import Pagination from '@/components/common/Pagination.vue'; import Select from '@/components/common/Select.vue'; import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import UsageStatsCards from '@/components/admin/usage/UsageStatsCards.vue'; import UsageFilters from '@/components/admin/usage/UsageFilters.vue'
 import UsageTable from '@/components/admin/usage/UsageTable.vue'; import UsageExportProgress from '@/components/admin/usage/UsageExportProgress.vue'
+import UsagePayloadDetailModal from '@/components/admin/usage/UsagePayloadDetailModal.vue'
 import UserTokenRanking from '@/components/admin/usage/UserTokenRanking.vue'
 import UsageCleanupDialog from '@/components/admin/usage/UsageCleanupDialog.vue'
 import UserBalanceHistoryModal from '@/components/admin/user/UserBalanceHistoryModal.vue'
@@ -205,7 +215,7 @@ import type { OpsErrorLog } from '@/api/admin/ops'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'; import GroupDistributionChart from '@/components/charts/GroupDistributionChart.vue'; import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 import EndpointDistributionChart from '@/components/charts/EndpointDistributionChart.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
+import type { AdminUsageLog, TrendDataPoint, ModelStat, GroupStat, EndpointStat, AdminUser, RequestPayloadDetail } from '@/types'; import type { AdminUsageStatsResponse, AdminUsageQueryParams } from '@/api/admin/usage'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -238,6 +248,30 @@ const cleanupDialogVisible = ref(false)
 // Balance history modal state
 const showBalanceHistoryModal = ref(false)
 const balanceHistoryUser = ref<AdminUser | null>(null)
+const payloadModalVisible = ref(false)
+const payloadDetail = ref<RequestPayloadDetail | null>(null)
+const payloadLoading = ref(false)
+const payloadUnavailable = ref(false)
+const payloadErrorMessage = ref('')
+
+const openPayload = async (row: AdminUsageLog) => {
+  payloadModalVisible.value = true
+  payloadDetail.value = null
+  payloadUnavailable.value = false
+  payloadErrorMessage.value = ''
+  payloadLoading.value = true
+  try {
+    payloadDetail.value = await adminUsageAPI.getPayload(row.id)
+  } catch (error: any) {
+    if (error?.status === 404) {
+      payloadUnavailable.value = true
+    } else {
+      payloadErrorMessage.value = t('usage.loadPayloadFailed')
+    }
+  } finally {
+    payloadLoading.value = false
+  }
+}
 
 const breakdownFilters = computed(() => {
   const f: Record<string, any> = {}
@@ -629,7 +663,7 @@ const exportToExcel = async () => {
 }
 
 // Column visibility
-const ALWAYS_VISIBLE = ['user', 'created_at']
+const ALWAYS_VISIBLE = ['user', 'created_at', 'actions']
 const DEFAULT_HIDDEN_COLUMNS = ['reasoning_effort', 'request_id', 'upstream_request_id', 'user_agent']
 const HIDDEN_COLUMNS_KEY = 'usage-hidden-columns'
 const HIDDEN_COLUMNS_VERSION_KEY = 'usage-hidden-columns-version'
@@ -655,7 +689,8 @@ const allColumns = computed(() => [
   { key: 'request_id', label: t('admin.usage.requestId'), sortable: false },
   { key: 'upstream_request_id', label: t('admin.usage.upstreamRequestId'), sortable: false },
   { key: 'user_agent', label: t('usage.userAgent'), sortable: false },
-  { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false }
+  { key: 'ip_address', label: t('admin.usage.ipAddress'), sortable: false },
+  { key: 'actions', label: t('common.actions'), sortable: false, class: 'w-16 min-w-16 text-center' }
 ])
 
 const hiddenColumns = reactive<Set<string>>(new Set())

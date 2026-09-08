@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +26,42 @@ type UsageHandler struct {
 	apiKeyService  *service.APIKeyService
 	adminService   service.AdminService
 	cleanupService *service.UsageCleanupService
+	payloadAudit   *service.RequestPayloadAuditService
+}
+
+func (h *UsageHandler) SetRequestPayloadAuditService(audit *service.RequestPayloadAuditService) {
+	h.payloadAudit = audit
+}
+
+// GetPayload returns the retained request and response content for an admin
+// usage-log lookup. The surrounding route group already requires admin auth.
+// GET /api/v1/admin/usage/:id/payload
+func (h *UsageHandler) GetPayload(c *gin.Context) {
+	usageID, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || usageID <= 0 {
+		response.BadRequest(c, "Invalid usage ID")
+		return
+	}
+	record, err := h.usageService.GetByID(c.Request.Context(), usageID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	if h.payloadAudit == nil {
+		response.NotFound(c, "Request content is not available")
+		return
+	}
+
+	detail, err := h.payloadAudit.GetByUsageRequest(c.Request.Context(), record.RequestID, record.APIKeyID)
+	if errors.Is(err, service.ErrRequestPayloadAuditNotFound) {
+		response.NotFound(c, "Request content is not available")
+		return
+	}
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, detail)
 }
 
 // NewUsageHandler creates a new admin usage handler

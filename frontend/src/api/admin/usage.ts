@@ -4,7 +4,7 @@
  */
 
 import { apiClient } from '../client'
-import type { AdminUsageLog, UsageQueryParams, PaginatedResponse, UsageRequestType } from '@/types'
+import type { AdminUsageLog, UsageQueryParams, PaginatedResponse, RequestPayloadDetail, UsageRequestType } from '@/types'
 import type { EndpointStat } from '@/types'
 
 // ==================== Types ====================
@@ -111,6 +111,11 @@ export async function list(
   return data
 }
 
+export async function getPayload(id: number): Promise<RequestPayloadDetail> {
+  const { data } = await apiClient.get<RequestPayloadDetail>(`/admin/usage/${id}/payload`)
+  return data
+}
+
 /**
  * Get usage statistics with optional filters (admin only)
  * @param params - Query parameters for filtering
@@ -209,6 +214,7 @@ export async function cancelCleanupTask(taskId: number): Promise<{ id: number; s
 
 export const adminUsageAPI = {
   list,
+  getPayload,
   getStats,
   searchUsers,
   searchApiKeys,

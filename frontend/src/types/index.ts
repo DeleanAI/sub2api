@@ -1770,6 +1770,15 @@ export interface UsageLogAccountSummary {
   name: string
 }
 
+export interface RequestPayloadDetail {
+  request_body: string
+  response_body: string
+  metadata: Record<string, unknown>
+  stored_bytes: number
+  created_at: string
+  updated_at: string
+}
+
 export interface AdminUsageLog extends UsageLog {
   upstream_model?: string | null
   upstream_reasoning_effort?: string | null
