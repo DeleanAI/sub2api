@@ -22,6 +22,10 @@ type customPageRepoMem struct {
 	assets map[string]map[string]*service.CustomPageAsset
 }
 
+func (m *customPageRepoMem) LegacyImportDone(context.Context, string) (bool, error) { return true, nil }
+
+func (m *customPageRepoMem) MarkLegacyImportDone(context.Context, string, string) error { return nil }
+
 func newCustomPageRepoMem() *customPageRepoMem {
 	return &customPageRepoMem{pages: map[string]*service.CustomPage{}, assets: map[string]map[string]*service.CustomPageAsset{}}
 }

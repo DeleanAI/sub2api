@@ -99,6 +99,10 @@ func (h *PageHandler) ServePageImage(c *gin.Context) {
 
 	// ServeContent 负责 If-Modified-Since / Range；Content-Type 以存储的类型为准，不做嗅探。
 	c.Header("Content-Type", asset.ContentType)
+	// 纵深防御：白名单已经挡掉活动内容类型，这两个头保证即便某天有一种类型被误判为
+	// 安全并存了进来，它也拿不到同源脚本能力——附件是匿名可读的公开路由。
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Security-Policy", "default-src 'none'; sandbox; base-uri 'none'; form-action 'none'")
 	http.ServeContent(c.Writer, c.Request, asset.Path, asset.UpdatedAt, bytes.NewReader(asset.Data))
 }
 

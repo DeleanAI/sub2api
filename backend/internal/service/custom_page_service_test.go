@@ -20,6 +20,19 @@ type customPageRepoFake struct {
 	assets map[string]map[string]*CustomPageAsset
 	// importCalls 记录 ImportIfAbsent 的调用，用于断言导入只发生一次、内容正确。
 	importCalls int
+	// legacyImportMarker 模拟 settings 里的"已导入"标记（空串表示未落标记）。
+	legacyImportMarker string
+}
+
+func (f *customPageRepoFake) LegacyImportDone(context.Context, string) (bool, error) {
+	return f.legacyImportMarker != "", nil
+}
+
+func (f *customPageRepoFake) MarkLegacyImportDone(_ context.Context, dir, note string) error {
+	if f.legacyImportMarker == "" {
+		f.legacyImportMarker = dir + "|" + note
+	}
+	return nil
 }
 
 func newCustomPageRepoFake() *customPageRepoFake {
@@ -244,26 +257,57 @@ func TestSaveAssetEnforcesSizeTypeAndCount(t *testing.T) {
 }
 
 // 遍历声明的拒绝表而不是硬编码某个类型：新增条目当天就被覆盖。
-func TestSaveAssetRejectsEveryBlockedMediaType(t *testing.T) {
-	require.NotEmpty(t, customPageAssetBlockedMediaTypes)
+// TestCustomPageAssetActiveContentTypesAreRejected 遍历一张"已知会执行脚本"的类型表，
+// 而不是遍历放行/拦截规则本身。
+//
+// 遍历规则表的测试对本类缺陷是结构性失明的：之前的黑名单里没有 image/svg+xml，
+// 而测试正是遍历那张黑名单逐条断言被拦，于是它永远不可能发现漏了谁。这张表独立
+// 于实现，列的是攻击面而不是当前实现认得的东西。
+func TestCustomPageAssetActiveContentTypesAreRejected(t *testing.T) {
+	activeContentTypes := []string{
+		"text/html",
+		"application/xhtml+xml",
+		"text/javascript",
+		"application/javascript",
+		"application/x-javascript",
+		"application/ecmascript",
+		"text/ecmascript",
+		// SVG 可以内嵌 <script>，附件是同源内联提供的公开路由。
+		"image/svg+xml",
+		"text/xml",
+		"application/xml",
+		"application/xslt+xml",
+		"text/vtt",
+		"application/x-shockwave-flash",
+		"application/wasm",
+		"text/css",
+	}
 	repo := newCustomPageRepoFake()
 	svc := NewCustomPageService(repo)
 	ctx := context.Background()
 	_, err := svc.SavePage(ctx, "guide", "# Guide", nil)
 	require.NoError(t, err)
 
-	for mediaType := range customPageAssetBlockedMediaTypes {
+	for _, mediaType := range activeContentTypes {
 		t.Run(mediaType, func(t *testing.T) {
 			_, err := svc.SaveAsset(ctx, "guide", "payload.bin", mediaType, []byte("<script>"))
 			require.ErrorIs(t, err, ErrCustomPageAssetContentTypeRejected)
 			_, err = svc.SaveAsset(ctx, "guide", "payload.bin", strings.ToUpper(mediaType)+"; charset=utf-8", []byte("<script>"))
-			require.ErrorIs(t, err, ErrCustomPageAssetContentTypeRejected, "case and parameters must not bypass the list")
+			require.ErrorIs(t, err, ErrCustomPageAssetContentTypeRejected, "case and parameters must not bypass the rule")
+			// 扩展名也不是控制点：声明类型即便被拒，也不能靠改扩展名换一条路进来。
+			_, err = svc.SaveAsset(ctx, "guide", "payload.svg", mediaType, []byte("<script>"))
+			require.ErrorIs(t, err, ErrCustomPageAssetContentTypeRejected)
 		})
 	}
 
-	// 扩展名推断出的活动类型同样被拒：.html 文件不能借"未声明类型"混进来。
-	_, err = svc.SaveAsset(ctx, "guide", "page.html", "", []byte("<html>"))
-	require.ErrorIs(t, err, ErrCustomPageAssetContentTypeRejected)
+	// .svg 扩展名在不声明类型时也会被 mime.TypeByExtension 推成 image/svg+xml。
+	_, err = svc.SaveAsset(ctx, "guide", "evil.svg", "", []byte("<svg xmlns=\"http://www.w3.org/2000/svg\"><script/></svg>"))
+	require.ErrorIs(t, err, ErrCustomPageAssetContentTypeRejected, "扩展名推断出的活动类型同样必须被拒")
+
+	// 正常图片仍然放行，白名单不能把功能一起关掉。
+	asset, err := svc.SaveAsset(ctx, "guide", "images/logo.png", "image/png", []byte("png-bytes"))
+	require.NoError(t, err)
+	require.Equal(t, "image/png", asset.ContentType)
 }
 
 func TestSaveAssetCountLimitAllowsReplacingExisting(t *testing.T) {
@@ -361,11 +405,13 @@ func TestImportFromDiskImportsPagesAndAssetsOnce(t *testing.T) {
 	require.Equal(t, "image/png", asset.ContentType)
 	require.Equal(t, []byte("png-bytes"), asset.Data)
 
-	// 第二次启动：表已非空，磁盘文件被忽略且列在报告里，不再写库。
+	// 第二次启动：持久标记已落，连目录都不再扫描（IgnoredFiles 因此为空），更不写库。
+	// 扫描发生在监听端口之前且会把所有附件字节读进内存，"已经导入过"必须在碰磁盘之前判掉。
 	report, err = svc.ImportFromDisk(context.Background(), dir)
 	require.NoError(t, err)
+	require.True(t, report.AlreadyImported)
 	require.Zero(t, report.InsertedPages)
-	require.ElementsMatch(t, []string{"faq.md", "guide.md", "guide/images/logo.png", "guide/notes.txt"}, report.IgnoredFiles)
+	require.Empty(t, report.IgnoredFiles, "标记已存在时不扫描目录")
 	require.Equal(t, 1, repo.importCalls, "no second import")
 }
 
@@ -458,3 +504,79 @@ type failingCountRepo struct {
 }
 
 func (failingCountRepo) CountPages(context.Context) (int, error) { return 0, errBoom }
+
+// TestImportFromDisk_NeverResurrectsDeletedPages 钉死"导入是一次性的"。
+//
+// 判据曾经是"表里有没有行"，而这个判据每次启动都重算：管理员依法删掉最后一个页面
+// （法务要求撤下旧版 ToS 是真实场景），下一次重启就把磁盘上那份撤下的文本重新导回来
+// 并对外提供，updated_by 还是 NULL。Compose 默认把 /app/data 挂在持久卷上，
+// 磁盘文件一直都在，所以这不是理论问题。
+func TestImportFromDisk_NeverResurrectsDeletedPages(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tos.md"), []byte("# OLD TERMS FROM DISK"), 0o600))
+
+	repo := newCustomPageRepoFake()
+	svc := NewCustomPageService(repo)
+	ctx := context.Background()
+
+	report, err := svc.ImportFromDisk(ctx, dir)
+	require.NoError(t, err)
+	require.Equal(t, 1, report.InsertedPages)
+	require.NotEmpty(t, repo.legacyImportMarker, "导入成功后必须落下持久标记")
+
+	// 管理员撤下这个页面，表变空。
+	require.NoError(t, svc.DeletePage(ctx, "tos"))
+	count, err := repo.CountPages(ctx)
+	require.NoError(t, err)
+	require.Zero(t, count)
+
+	// 重启：磁盘文件还在，但撤下的内容不得复活。
+	report, err = svc.ImportFromDisk(ctx, dir)
+	require.NoError(t, err)
+	require.True(t, report.AlreadyImported)
+	require.Zero(t, report.InsertedPages)
+	require.Equal(t, 1, repo.importCalls, "第二次启动不得再次写入")
+
+	page, err := svc.GetPage(ctx, "tos")
+	require.ErrorIs(t, err, ErrCustomPageNotFound)
+	require.Nil(t, page)
+}
+
+// TestImportFromDisk_DoesNotTouchDiskOnceImported 钉死"先看标记，再碰磁盘"的顺序。
+//
+// 扫描会把整个目录（含每个附件的全部字节）读进内存，而这发生在监听端口之前：
+// 按上限 200 附件 × 5 MiB 算是 ~1 GiB 常驻，512Mi 的 Pod 会在数据库明明已有内容的
+// 情况下反复 OOM。用一个不可读的目录代表"碰了磁盘就会出事"。
+func TestImportFromDisk_DoesNotTouchDiskOnceImported(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tos.md"), []byte("# terms"), 0o600))
+
+	repo := newCustomPageRepoFake()
+	repo.legacyImportMarker = "已导入"
+	svc := NewCustomPageService(repo)
+
+	require.NoError(t, os.Chmod(dir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	report, err := svc.ImportFromDisk(context.Background(), dir)
+	require.NoError(t, err, "标记已存在时不应该去读目录，因而也读不出错")
+	require.True(t, report.AlreadyImported)
+	require.Zero(t, repo.importCalls)
+}
+
+// TestImportFromDisk_MarksDoneWhenTableAlreadyHasRows 覆盖"这一版之前就有页面"的升级路径：
+// 表非空说明导入这件事已经了结，同样要落标记，否则删空页面后磁盘内容仍会复活。
+func TestImportFromDisk_MarksDoneWhenTableAlreadyHasRows(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tos.md"), []byte("# terms from disk"), 0o600))
+
+	repo := newCustomPageRepoFake()
+	repo.pages["about"] = &CustomPage{Slug: "about", Content: "# about"}
+	svc := NewCustomPageService(repo)
+
+	report, err := svc.ImportFromDisk(context.Background(), dir)
+	require.NoError(t, err)
+	require.Zero(t, report.InsertedPages)
+	require.NotEmpty(t, report.IgnoredFiles)
+	require.NotEmpty(t, repo.legacyImportMarker, "表非空同样要落标记")
+}

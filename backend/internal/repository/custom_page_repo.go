@@ -291,3 +291,37 @@ func isForeignKeyViolation(err error) bool {
 	}
 	return false
 }
+
+// customPageLegacyImportSettingKey 是"旧版磁盘目录已导入"标记在 settings 表里的键。
+//
+// 放 settings 而不是新开一张表：这是一条一次性的部署事实，settings 已经是这类
+// 键值的去处，也省掉一次会与上游迁移号相撞的新迁移。
+const customPageLegacyImportSettingKey = "custom_pages_legacy_import_done"
+
+// LegacyImportDone 报告磁盘目录是否已经导入过。
+func (r *customPageRepository) LegacyImportDone(ctx context.Context, dir string) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, fmt.Errorf("nil custom page repository")
+	}
+	var value string
+	err := r.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = $1`, customPageLegacyImportSettingKey).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return value != "", nil
+}
+
+// MarkLegacyImportDone 落下"已导入"标记；已存在时不覆盖（第一次的记录更有价值）。
+func (r *customPageRepository) MarkLegacyImportDone(ctx context.Context, dir string, note string) error {
+	if r == nil || r.db == nil {
+		return fmt.Errorf("nil custom page repository")
+	}
+	value := fmt.Sprintf("%s|%s|%s", time.Now().UTC().Format(time.RFC3339), dir, note)
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, NOW()) ON CONFLICT (key) DO NOTHING`,
+		customPageLegacyImportSettingKey, value)
+	return err
+}

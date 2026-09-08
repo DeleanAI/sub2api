@@ -53,17 +53,41 @@ const (
 
 var customPageSlugPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
-// customPageAssetBlockedMediaTypes 列出不允许作为页面附件的活动内容类型。
-// 附件只应是图片等静态媒体；同源提供 HTML/脚本会把"管理员上传"变成 XSS 入口。
-// 测试遍历这张表做回归，新增类型只需在这里登记。
-var customPageAssetBlockedMediaTypes = map[string]struct{}{
-	"text/html":                {},
-	"application/xhtml+xml":    {},
-	"text/javascript":          {},
-	"application/javascript":   {},
-	"application/x-javascript": {},
-	"application/ecmascript":   {},
-	"text/ecmascript":          {},
+// customPageAssetAllowedMediaTypes 是页面附件允许的媒体类型白名单。
+//
+// 这里之前是黑名单，而黑名单在这个位置注定不完整：它挡住了 html/xhtml/javascript，
+// 却放过 image/svg+xml——SVG 里可以带 <script>，附件又是同源、内联提供的，于是
+// "管理员上传一张图"就等于在每个访客的会话里执行脚本。text/xml、application/xml
+// 同理。补上这三个只是修掉今天这一个，下一种活动类型照样会漏。
+//
+// 白名单反过来：没在表里的一律拒绝，新类型必须有人显式判断它是否安全才能加进来。
+// 精确类型而不是 image/* 这样的前缀匹配，正是为了不把 image/svg+xml 顺手放进来。
+var customPageAssetAllowedMediaTypes = map[string]struct{}{
+	"image/png":                {},
+	"image/jpeg":               {},
+	"image/gif":                {},
+	"image/webp":               {},
+	"image/avif":               {},
+	"image/bmp":                {},
+	"image/x-icon":             {},
+	"image/vnd.microsoft.icon": {},
+	"image/tiff":               {},
+	"video/mp4":                {},
+	"video/webm":               {},
+	"audio/mpeg":               {},
+	"audio/ogg":                {},
+	"audio/wav":                {},
+	"font/woff":                {},
+	"font/woff2":               {},
+	"font/ttf":                 {},
+	"font/otf":                 {},
+	"application/pdf":          {},
+	"text/plain":               {},
+	"text/csv":                 {},
+	"text/markdown":            {},
+	// 认不出扩展名时的兜底类型：不透明字节流，浏览器不会执行它，配合响应上的
+	// nosniff + sandbox CSP 无法变成活动内容。保留它是为了不把"传个 zip"一起关掉。
+	customPageDefaultContentType: {},
 }
 
 var (
@@ -134,6 +158,15 @@ type CustomPageRepository interface {
 	// ImportIfAbsent 在一个事务里写入页面与附件，已存在的键跳过（ON CONFLICT DO NOTHING），
 	// 返回实际插入的条数。用于一次性磁盘导入，多副本同时启动也不会重复写入。
 	ImportIfAbsent(ctx context.Context, pages []CustomPage, assets []CustomPageAsset) (insertedPages, insertedAssets int, err error)
+
+	// LegacyImportDone / MarkLegacyImportDone 是"磁盘目录已经导入过"的持久标记。
+	//
+	// 没有这个标记时，唯一的判据只能是"表里有没有行"，而这个判据每次启动都重算：
+	// 管理员依法删掉最后一个页面（例如法务要求撤下旧版 ToS），下一次重启就会把
+	// 磁盘上那份撤下的文本重新导回来并对外提供。Compose 默认把 /app/data 挂在
+	// 持久卷上，所以磁盘文件一直都在。标记只写一次，之后与表里有几行无关。
+	LegacyImportDone(ctx context.Context, dir string) (bool, error)
+	MarkLegacyImportDone(ctx context.Context, dir string, note string) error
 }
 
 // CustomPageService 自定义页面服务。
@@ -370,7 +403,7 @@ func normalizeCustomPageAssetContentType(declared, assetPath string) (string, er
 	if mediaType == "" {
 		mediaType = customPageDefaultContentType
 	}
-	if _, blocked := customPageAssetBlockedMediaTypes[mediaType]; blocked {
+	if _, allowed := customPageAssetAllowedMediaTypes[mediaType]; !allowed {
 		return "", ErrCustomPageAssetContentTypeRejected
 	}
 	if len(mediaType) > maxCustomPageContentTypeLength {
@@ -384,6 +417,8 @@ type CustomPageImportReport struct {
 	Dir string
 	// DirMissing 表示目录不存在（全新部署的常态）。
 	DirMissing bool
+	// AlreadyImported 表示持久标记已存在，本次连磁盘都没碰。
+	AlreadyImported bool
 	// LockHeldByPeer 表示等待超时后锁仍被其它副本持有，本副本放弃导入。
 	LockHeldByPeer bool
 	// IgnoredFiles 表示表已非空时磁盘上仍存在、被忽略的文件。
@@ -406,6 +441,19 @@ type customPageImportCandidate struct {
 // 多副本同时启动时通过 leader lock 串行化，写入本身也是 ON CONFLICT DO NOTHING。
 func (s *CustomPageService) ImportFromDisk(ctx context.Context, dir string) (*CustomPageImportReport, error) {
 	report := &CustomPageImportReport{Dir: dir}
+
+	// 先看标记，再碰磁盘。扫描会把整个目录（含每个附件的全部字节）读进内存，
+	// 而绝大多数启动都是"早就导入过"——按上限 200 个附件 × 5 MiB 算是 ~1 GiB 常驻，
+	// 发生在监听端口之前，512Mi 的 Pod 会在数据库里明明已有内容的情况下反复 OOM。
+	done, err := s.repo.LegacyImportDone(ctx, dir)
+	if err != nil {
+		return nil, fmt.Errorf("check custom pages import marker: %w", err)
+	}
+	if done {
+		report.AlreadyImported = true
+		slog.Debug("custom_pages.import_skipped: legacy dir was already imported once", "dir", dir)
+		return report, nil
+	}
 
 	candidate, err := scanCustomPagesDir(dir)
 	if err != nil {
@@ -441,12 +489,22 @@ func (s *CustomPageService) ImportFromDisk(ctx context.Context, dir string) (*Cu
 		slog.Warn("custom_pages.disk_files_ignored: custom_pages already has rows, files under the legacy pages dir are never read again; "+
 			"manage pages via the admin UI/API and remove the directory",
 			"dir", dir, "existing_pages", existing, "ignored", truncateImportList(candidate.files))
+		// 表已有内容说明导入这件事已经了结（这一版导入过，或页面本就由管理界面创建）。
+		// 落标记，否则"表非空"这个判据每次启动都重算，删空页面后磁盘内容会复活。
+		s.markLegacyImportDone(ctx, dir, fmt.Sprintf("custom_pages already had %d row(s)", existing))
 		return report, nil
 	}
 
 	if len(candidate.skips) > 0 {
-		slog.Warn("custom_pages.import: some files were skipped because they do not satisfy the page/asset rules",
-			"dir", dir, "skipped", truncateImportList(candidate.skips))
+		// ERROR 而不是 WARN：磁盘时代 c.File() 对大小没有任何限制，被跳过的文件是
+		// 升级前真的在对外提供、升级后不再提供的内容，而且管理员也无法重新上传
+		// （写入路径用的是同一组上限）。这不是"顺带提一句"，是需要人处理的降级。
+		slog.Error("custom_pages.import_dropped_content: these files were served before the upgrade and are NOT imported; "+
+			"the corresponding pages/assets will 404 until the content is reduced under the limits and uploaded via the admin UI",
+			"dir", dir,
+			"page_limit_bytes", MaxCustomPageContentSize,
+			"asset_limit_bytes", MaxCustomPageAssetSize,
+			"dropped", truncateImportList(candidate.skips))
 	}
 	if len(candidate.pages) == 0 {
 		slog.Warn("custom_pages.import: no importable page found", "dir", dir, "files", len(candidate.files))
@@ -462,7 +520,18 @@ func (s *CustomPageService) ImportFromDisk(ctx context.Context, dir string) (*Cu
 	slog.Info("custom_pages.imported_from_disk",
 		"count", insertedPages, "assets", insertedAssets, "dir", dir,
 		"candidates_pages", len(candidate.pages), "candidates_assets", len(candidate.assets))
+	s.markLegacyImportDone(ctx, dir, fmt.Sprintf("imported %d page(s), %d asset(s)", insertedPages, insertedAssets))
 	return report, nil
+}
+
+// markLegacyImportDone 落"已导入"标记。写失败不改变本次导入的结果（内容已经进库），
+// 但必须留痕：标记没落上，下一次启动会重新扫描目录，删空页面后磁盘内容会复活。
+func (s *CustomPageService) markLegacyImportDone(ctx context.Context, dir, note string) {
+	if err := s.repo.MarkLegacyImportDone(ctx, dir, note); err != nil {
+		slog.Error("custom_pages.import_marker_write_failed: the legacy dir will be scanned again on the next start; "+
+			"if every page is later deleted, the disk copies would be re-imported",
+			"dir", dir, "note", note, "error", err)
+	}
 }
 
 // acquireImportLock 在有限时间内反复尝试拿导入锁：同时启动的副本里，后来者等前者导入完成后
