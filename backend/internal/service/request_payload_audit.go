@@ -351,7 +351,14 @@ func (s *RequestPayloadAuditService) run() {
 				zap.String("component", "service.request_payload_audit"),
 				zap.Int("batch_size", len(pending)),
 				zap.Error(err),
-			).Warn("request_payload_audit.batch_persist_failed")
+			).Warn("request_payload_audit.batch_persist_dropped")
+			// 丢掉这一批，不要留在 pending 里等下次重试。
+			//
+			// 原来这里直接 return，pending 不清空：只要写库持续失败（schema 不匹配、
+			// 磁盘满、权限变更……），队列就无上限增长，最终把进程撑爆——而这是一条
+			// 审计旁路，它不该有能力搞死网关本身。审计数据可丢，网关不可丢。
+			// 失败已计数（failedBatches）并留了日志，不是静默丢弃。
+			pending = pending[:0]
 			return
 		}
 		s.applyPersistResult(len(pending), result)

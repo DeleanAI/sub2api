@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -244,13 +245,61 @@ func redactJSONValue(value any) {
 	}
 }
 
+// credentialWords 是"这个词出现在字段名里就说明它承载凭据"的唯一声明。
+var credentialWords = map[string]bool{
+	"authorization": true, "auth": true, "credential": true, "credentials": true,
+	"key": true, "apikey": true, "secret": true, "token": true,
+	"password": true, "passwd": true, "pwd": true,
+	"cookie": true, "signature": true, "sign": true, "session": true,
+}
+
+// isSensitiveField 判断字段/查询参数名是否承载凭据。
+//
+// 按"词"判断而不是按后缀：原来的 strings.HasSuffix(normalized, "key") 会把 monkey、
+// keyboard 这类正常字段一起打码，而审计记录被过度打码就失去了排障价值。反过来，
+// 原来的名单里没有裸 "key"，于是 Gemini 的 ?key=AIza… 明文进了 metadata.query，
+// 并由用户端和管理端两个接口原样返回。
+//
+// 分词同时处理下划线/中划线/点分隔与 camelCase：api_key、access-key、apiKey、
+// sessionKey 都会被切出 "key" 这个词，而 monkey 只有 "monkey" 一个词。
 func isSensitiveField(key string) bool {
-	normalized := strings.NewReplacer("_", "", "-", "", ".", "").Replace(strings.ToLower(strings.TrimSpace(key)))
-	switch normalized {
-	case "authorization", "apikey", "accesstoken", "refreshtoken", "idtoken", "secret", "clientsecret", "password", "cookie", "setcookie", "credential", "credentials":
-		return true
+	for _, word := range splitFieldNameWords(key) {
+		if credentialWords[word] {
+			return true
+		}
 	}
-	return strings.HasSuffix(normalized, "apikey") || strings.HasSuffix(normalized, "token") || strings.HasSuffix(normalized, "secret") || strings.HasSuffix(normalized, "password")
+	return false
+}
+
+// splitFieldNameWords 把字段名切成小写词：按 _ - . 空格分隔，并在 camelCase 边界断开。
+func splitFieldNameWords(key string) []string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	var words []string
+	var current []rune
+	flush := func() {
+		if len(current) > 0 {
+			words = append(words, strings.ToLower(string(current)))
+			current = current[:0]
+		}
+	}
+	runes := []rune(key)
+	for i, r := range runes {
+		switch {
+		case r == '_' || r == '-' || r == '.' || r == ' ':
+			flush()
+		case unicode.IsUpper(r) && i > 0 && (unicode.IsLower(runes[i-1]) || unicode.IsDigit(runes[i-1])):
+			// camelCase 边界：apiKey -> api | Key
+			flush()
+			current = append(current, r)
+		default:
+			current = append(current, r)
+		}
+	}
+	flush()
+	return words
 }
 
 var sensitiveTextFieldPattern = regexp.MustCompile(`(?i)(["']?(?:authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|password|cookie|credential)["']?\s*[:=]\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,\s}\]]+)`)

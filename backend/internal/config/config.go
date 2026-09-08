@@ -2506,7 +2506,10 @@ func setDefaults() {
 	viper.SetDefault("gateway.usage_record.auto_scale_down_step", 16)
 	viper.SetDefault("gateway.usage_record.auto_scale_check_interval_seconds", 3)
 	viper.SetDefault("gateway.usage_record.auto_scale_cooldown_seconds", 10)
-	viper.SetDefault("gateway.request_payload_audit.enabled", true)
+	// 默认关闭：这个功能会把每一个请求与响应的正文留存到数据库，属于会显著改变
+	// 数据留存面的能力（内含用户 prompt）。升级到带这个功能的版本，不应该在运维
+	// 毫不知情的情况下就开始留存全量正文——要开由部署方显式打开。
+	viper.SetDefault("gateway.request_payload_audit.enabled", false)
 	viper.SetDefault("gateway.request_payload_audit.max_storage_mb", 10240)
 	viper.SetDefault("gateway.request_payload_audit.retention_days", 7)
 	viper.SetDefault("gateway.request_payload_audit.max_entry_mb", 1)
