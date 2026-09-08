@@ -1393,10 +1393,46 @@ func (a *Account) IsCodingPlan() bool {
 	return a.GetAccountMode() == AccountModeCoding
 }
 
-// IsTokenPlan reports Qwen's one-time Token Plan mode. Unlike Coding Plan,
-// an exhausted Token Plan never has a rolling reset window.
+// IsTokenPlan 报告这个账号是不是阿里 Token Plan（一次性额度，耗尽后没有滚动重置窗口）。
+//
+// 判据有两条，命中任一即可：
+//
+//  1. 显式声明：platform=qwen 且 account_mode=token_plan（管理界面新建 Qwen 账号的走法）；
+//  2. **实际连的就是 Token Plan 端点**：base_url 指向 token-plan.<region>.maas.aliyuncs.com。
+//
+// 第二条是必需的，不是保险。生产上 121 个 Token Plan 账号全部是
+// platform=anthropic + type=apikey + base_url=https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic，
+// 一个都没有 account_mode——它们是在 qwen 平台支持存在之前、按"Anthropic 兼容端点"
+// 建的。只按声明判定的话，Token Plan 的全部处理（额度耗尽停调、跳过余额/额度探测）
+// 对这批号一行都跑不到，而它们恰恰是这个功能唯一的目标。
+//
+// 账号是不是 Token Plan，取决于它实际在跟谁说话，不取决于运维有没有把某个下拉框选对。
 func (a *Account) IsTokenPlan() bool {
-	return a != nil && a.Platform == PlatformQwen && a.GetAccountMode() == AccountModeTokenPlan
+	if a == nil {
+		return false
+	}
+	if a.Platform == PlatformQwen && a.GetAccountMode() == AccountModeTokenPlan {
+		return true
+	}
+	return isQwenTokenPlanEndpoint(a.GetCredential("base_url"))
+}
+
+// isQwenTokenPlanEndpoint 判断一个 base_url 是否指向阿里 Token Plan 的接入点。
+//
+// 按 host 判定而不是整串前缀匹配：同一个 Token Plan 端点至少有
+// /compatible-mode/v1（OpenAI 兼容）与 /apps/anthropic（Anthropic 兼容）两种路径，
+// 区域前缀也会变（cn-beijing / cn-hangzhou……），只有 host 的形状是稳定的。
+func isQwenTokenPlanEndpoint(baseURL string) bool {
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return false
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return strings.HasPrefix(host, "token-plan.") && strings.HasSuffix(host, ".aliyuncs.com")
 }
 
 // GetAPIProtocol 返回国产供应商账号的上游 API 协议。存储于

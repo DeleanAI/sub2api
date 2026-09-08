@@ -164,17 +164,25 @@ func (s *RateLimitService) applyCNProviderReactive429(
 	headers http.Header,
 	responseBody []byte,
 ) bool {
-	if account == nil || !account.IsCNProvider() {
+	if account == nil {
 		return false
 	}
-	// Token Plan is a one-time allowance. Its documented exhaustion response is
-	// a 429 with explicit quota wording. Do not turn a generic 429, credential
-	// error, or transport failure into a permanent scheduling block.
+	// Token Plan 的判定放在 IsCNProvider 之前。
+	//
+	// IsCNProvider 是按 platform 字段判的，而生产上 121 个 Token Plan 账号全部登记在
+	// platform=anthropic 下（base_url 指向阿里的 Anthropic 兼容端点），一个都过不了这道门。
+	// 先按 platform 分流、再判 Token Plan，等于让这个功能对它唯一的目标群体永远不生效。
+	// Token Plan 是"账号连的是哪个上游"的属性，不是"它被归到哪个平台"的属性。
 	if account.IsTokenPlan() {
+		// 一次性额度：文档化的耗尽响应是带明确额度措辞的 429。普通 429、凭据错误、
+		// 传输失败都不能变成永久停调（判据见 qwenTokenPlanQuotaExhausted）。
 		if qwenTokenPlanQuotaExhausted(responseBody) {
 			s.handleQwenTokenPlanExhausted(ctx, account, responseBody)
 			return true
 		}
+		return false
+	}
+	if !account.IsCNProvider() {
 		return false
 	}
 	// 1) 余额不足文案：可恢复临时停调（含智谱 payg 这类无余额端点的场景）。

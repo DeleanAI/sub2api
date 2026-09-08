@@ -3,6 +3,8 @@
 package service
 
 import (
+	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -179,5 +181,106 @@ func TestQwenTokenPlanExhaustionRequiresPersistence(t *testing.T) {
 		_, ok := qwenTokenPlanExhaustedSince(account)
 		require.False(t, ok,
 			"解析不了的起点必须当作没有：当成零值会让 now-since 远大于观察窗，一次 429 就永久停调")
+	})
+}
+
+// newProdShapedTokenPlanAccount 复刻生产上 Token Plan 账号的真实形态。
+//
+// may 生产库 2026-09-08 实测：121 个 Token Plan 账号全部是
+// platform=anthropic + type=apikey + base_url=token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic，
+// **没有一个设了 account_mode**。它们建于 qwen 平台支持之前，按"Anthropic 兼容端点"接入。
+func newProdShapedTokenPlanAccount() *Account {
+	return &Account{
+		ID:       931,
+		Platform: PlatformAnthropic,
+		Type:     AccountTypeAPIKey,
+		Status:   StatusActive,
+		Credentials: map[string]any{
+			"api_key":  "sk-prod-shaped",
+			"base_url": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+		},
+	}
+}
+
+// TestTokenPlanIsDetectedFromTheUpstreamEndpoint 钉死"账号是不是 Token Plan 由它实际
+// 连的上游决定，而不是由运维有没有把下拉框选对决定"。
+//
+// 这条护栏针对的是真实发生过的形状：判定原本是 platform=qwen && account_mode=token_plan，
+// 而生产上 121 个 Token Plan 账号一个都不满足——功能上线后对它唯一的目标群体
+// 一行代码都没跑到，而且不会报错，只是"看起来没生效"。
+func TestTokenPlanIsDetectedFromTheUpstreamEndpoint(t *testing.T) {
+	t.Run("生产形态：anthropic 平台 + token-plan 端点 + 无 account_mode", func(t *testing.T) {
+		require.True(t, newProdShapedTokenPlanAccount().IsTokenPlan(),
+			"按端点判定必须认出它；只认声明的话这 121 个号永远走不到 Token Plan 逻辑")
+	})
+
+	t.Run("显式声明的 qwen 账号仍然认得", func(t *testing.T) {
+		require.True(t, newQwenTokenPlanAccount().IsTokenPlan())
+	})
+
+	t.Run("其它区域与协议路径", func(t *testing.T) {
+		for _, u := range []string{
+			"https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+			"https://token-plan.cn-hangzhou.maas.aliyuncs.com/apps/anthropic",
+			"https://TOKEN-PLAN.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+		} {
+			a := newProdShapedTokenPlanAccount()
+			a.Credentials["base_url"] = u
+			require.Truef(t, a.IsTokenPlan(), "应认出 Token Plan 端点：%s", u)
+		}
+	})
+
+	t.Run("不能误伤非 Token Plan 账号", func(t *testing.T) {
+		for _, u := range []string{
+			"https://api.anthropic.com",
+			"https://dashscope.aliyuncs.com/compatible-mode/v1", // 阿里的按量付费端点，不是 Token Plan
+			"https://dashscope.aliyuncs.com/apps/anthropic",
+			"https://token-plan.example.com/v1", // 域名像但不是阿里
+			"https://evil.com/?x=token-plan.cn-beijing.maas.aliyuncs.com",
+			"",
+			"::not a url::",
+		} {
+			a := newProdShapedTokenPlanAccount()
+			a.Credentials["base_url"] = u
+			require.Falsef(t, a.IsTokenPlan(), "不该认成 Token Plan：%q", u)
+		}
+	})
+}
+
+// TestProdShapedTokenPlanAccountReachesTheExhaustionPath 钉死这类账号能真的走到
+// 额度耗尽处理，而不是被"按 platform 分流"的门挡在外面。
+func TestProdShapedTokenPlanAccountReachesTheExhaustionPath(t *testing.T) {
+	body := []byte(`{"code":"Throttling.AllocationQuota","message":"Your token-plan quota has been exhausted."}`)
+
+	t.Run("首次命中：记观察起点 + 临时冷却，不停调度", func(t *testing.T) {
+		repo := &qwenTokenPlanRepo{}
+		svc := NewRateLimitService(repo, nil, nil, nil, nil)
+		require.True(t, svc.applyCNProviderReactive429(context.Background(), newProdShapedTokenPlanAccount(), http.Header{}, body),
+			"生产形态的账号必须被专用路径接管（此前被 IsCNProvider 挡掉）")
+		require.Empty(t, repo.schedulableCalls, "观察期内不得关闭调度")
+		require.Equal(t, 1, repo.rateLimitCalls)
+		require.Len(t, repo.extraWrites, 1)
+		require.NotEmpty(t, repo.extraWrites[0][qwenTokenPlanExhaustedSinceExtraKey])
+	})
+
+	t.Run("熬过观察窗：关闭调度", func(t *testing.T) {
+		repo := &qwenTokenPlanRepo{}
+		svc := NewRateLimitService(repo, nil, nil, nil, nil)
+		account := newProdShapedTokenPlanAccount()
+		account.Extra = map[string]any{
+			qwenTokenPlanExhaustedSinceExtraKey: time.Now().UTC().Add(-qwenTokenPlanExhaustionConfirmWindow - time.Minute).Format(time.RFC3339),
+		}
+		require.True(t, svc.applyCNProviderReactive429(context.Background(), account, http.Header{}, body))
+		require.Equal(t, []bool{false}, repo.schedulableCalls)
+	})
+
+	t.Run("普通限流不会让它停调", func(t *testing.T) {
+		repo := &qwenTokenPlanRepo{}
+		svc := NewRateLimitService(repo, nil, nil, nil, nil)
+		transient := []byte(`{"code":"Throttling.ResourceExhausted","message":"An error occurred in model serving, error message is: [Too many requests.]"}`)
+		require.False(t, svc.applyCNProviderReactive429(context.Background(), newProdShapedTokenPlanAccount(), http.Header{}, transient),
+			"临时限流应交回默认 429 逻辑")
+		require.Empty(t, repo.schedulableCalls)
+		require.Empty(t, repo.extraWrites)
 	})
 }

@@ -1152,13 +1152,15 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		}
 		return
 	}
-	// 国产供应商的 429 走专用路径：Qwen Token Plan 额度耗尽 → 永久停调；
+	// 国产供应商 / Token Plan 的 429 走专用路径：Token Plan 额度耗尽 → 观察窗后停调；
 	// 余额不足 → 临时停调；Coding Plan 窗口耗尽 → 冷却到快照重置点。
 	// 未命中则继续默认 429 逻辑（短冷却，不会永久停用）。
-	if account.IsCNProvider() {
-		if s.applyCNProviderReactive429(ctx, account, headers, responseBody) {
-			return
-		}
+	//
+	// 这里不再预先判 IsCNProvider：适用性由 applyCNProviderReactive429 自己决定，
+	// 否则同一条规则写在两处，而这里的那份是按 platform 判的——生产上 Token Plan
+	// 账号登记在 platform=anthropic 下，会被这道门挡在专用路径之外。
+	if s.applyCNProviderReactive429(ctx, account, headers, responseBody) {
+		return
 	}
 	// 1. OpenAI 平台：优先尝试解析 x-codex-* 响应头（用于 rate_limit_exceeded）
 	if account.Platform == PlatformOpenAI {
