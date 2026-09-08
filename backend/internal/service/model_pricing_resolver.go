@@ -169,27 +169,42 @@ func matchModelPatternNormalized(pattern, model string) modelPatternMatchKind {
 	return modelPatternNoMatch
 }
 
-func matchGroupModelPricing(group *Group, model string) *ChannelModelPricing {
-	if group == nil {
-		return nil
-	}
-	var wildcard *ChannelModelPricing
-	for i := range group.ModelPricing {
-		entry := &group.ModelPricing[i]
-		for _, pattern := range entry.Models {
+// selectByModelPattern 是"一组带模式的条目里该选哪一条"的唯一优先级规则：
+// 精确命中优先于通配命中；同为通配时取列表中靠前的一条。
+//
+// 抽出来是因为逐模型定价和逐模型倍率原本各写一套：定价是"精确优先"，倍率是
+// "命中即返回"。规则 [{claude-*: 2}, {claude-haiku-4: 1}] 下，同一个 haiku 请求在
+// 管理页上下相邻的两个编辑器里得到 2× 和 1× 两个答案。共用一份实现之后不存在这种分叉。
+func selectByModelPattern(count int, patternsAt func(i int) []string, model string) (index int, ok bool) {
+	wildcard := -1
+	for i := 0; i < count; i++ {
+		for _, pattern := range patternsAt(i) {
 			switch matchModelPatternNormalized(pattern, model) {
 			case modelPatternMatchExact:
-				cp := entry.Clone()
-				return &cp
+				return i, true
 			case modelPatternMatchWildcard:
-				if wildcard == nil {
-					cp := entry.Clone()
-					wildcard = &cp
+				if wildcard < 0 {
+					wildcard = i
 				}
 			}
 		}
 	}
-	return wildcard
+	if wildcard < 0 {
+		return 0, false
+	}
+	return wildcard, true
+}
+
+func matchGroupModelPricing(group *Group, model string) *ChannelModelPricing {
+	if group == nil {
+		return nil
+	}
+	i, ok := selectByModelPattern(len(group.ModelPricing), func(i int) []string { return group.ModelPricing[i].Models }, model)
+	if !ok {
+		return nil
+	}
+	cp := group.ModelPricing[i].Clone()
+	return &cp
 }
 
 // resolveBasePricing 从 LiteLLM 或 Fallback 获取基础定价

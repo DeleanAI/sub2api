@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,5 +133,75 @@ func fillSnapshotProbe(t *testing.T, v reflect.Value, name string, seed int) {
 		}
 	default:
 		t.Fatalf("snapshot probe does not know how to fill %s (%s)", name, v.Type())
+	}
+}
+
+// groupFieldsIntentionallyAbsentFromAuthSnapshot 声明哪些 Group 字段刻意不进认证快照。
+//
+// 认证快照是网关热路径唯一读到的分组视图。少一个字段的症状是"这个分组配置在网关上
+// 完全不起作用"，而且不会有任何报错——历史上 model_pricing 就是这么漏掉的。
+//
+// 只有"快照少了字段"这一个方向会造成这种故障，而原来的 round-trip 护栏遍历的是
+// 快照结构体：往 Group 上加一个新字段而忘了加进快照，它全绿。这里把方向反过来，
+// 遍历 Group：新增字段必须要么进快照，要么在这张表里写下不进的理由。
+var groupFieldsIntentionallyAbsentFromAuthSnapshot = map[string]string{
+	"Description":             "管理页展示文案，网关不读",
+	"SortOrder":               "管理页排序，网关不读",
+	"DuplicateOperationID":    "复制分组的幂等键，只在管理写路径用",
+	"CreatedAt":               "记账列",
+	"UpdatedAt":               "记账列",
+	"Hydrated":                "内存态标记（这份 Group 是否已完整加载），不是分组配置",
+	"AccountCount":            "聚合统计，管理页用",
+	"ActiveAccountCount":      "聚合统计，管理页用",
+	"RateLimitedAccountCount": "聚合统计，管理页用",
+	"AccountGroups":           "关联对象，不是分组配置",
+	"DefaultValidityDays":     "建密钥时用，鉴权链路不读",
+	// 批量图片走 GroupRepo.GetByIDLite 现取分组（batch_image_public.go:1008），
+	// 不经过认证快照。
+	"BatchImageDiscountMultiplier": "批量图片结算按 GetByIDLite 现取分组，不走认证快照",
+	"BatchImageHoldMultiplier":     "同上",
+	// 账号侧准入校验按现取的分组判断（account_service.go），不在网关鉴权热路径上。
+	"RequireOAuthOnly":  "账号准入校验用，按现取分组判断",
+	"RequirePrivacySet": "同上",
+}
+
+// TestEveryGroupFieldIsEitherInTheAuthSnapshotOrDeclaredAbsent 遍历 Group 的每个字段，
+// 要求它要么出现在 APIKeyAuthGroupSnapshot 里，要么在上面的声明表里写明为什么不进。
+//
+// 没有第三种"默默不带"的状态：漏带的字段在网关上静默失效，而调用方看到的是一个
+// 完全正常的响应。
+func TestEveryGroupFieldIsEitherInTheAuthSnapshotOrDeclaredAbsent(t *testing.T) {
+	snapshotType := reflect.TypeOf(APIKeyAuthGroupSnapshot{})
+	inSnapshot := map[string]bool{}
+	for i := 0; i < snapshotType.NumField(); i++ {
+		inSnapshot[snapshotType.Field(i).Name] = true
+	}
+
+	groupType := reflect.TypeOf(Group{})
+	var undeclared []string
+	for i := 0; i < groupType.NumField(); i++ {
+		name := groupType.Field(i).Name
+		if inSnapshot[name] {
+			continue
+		}
+		if reason, ok := groupFieldsIntentionallyAbsentFromAuthSnapshot[name]; ok {
+			require.NotEmptyf(t, reason, "Group.%s 声明为不进快照，但没写理由", name)
+			continue
+		}
+		undeclared = append(undeclared, name)
+	}
+	sort.Strings(undeclared)
+	require.Emptyf(t, undeclared,
+		"这些 Group 字段既不在认证快照里，也没在 groupFieldsIntentionallyAbsentFromAuthSnapshot 里声明：\n  %s\n"+
+			"网关热路径只读快照，漏带的字段会在网关上静默失效（model_pricing 就是这么漏的）。"+
+			"要么加进 APIKeyAuthGroupSnapshot 并在 snapshotFromAPIKey/snapshotToAPIKey 里映射，"+
+			"要么在声明表里写明为什么不需要。",
+		strings.Join(undeclared, "\n  "))
+
+	// 反向：声明表里不许出现快照其实带了的字段（否则这张表会慢慢变成谎话）。
+	for name := range groupFieldsIntentionallyAbsentFromAuthSnapshot {
+		require.Falsef(t, inSnapshot[name], "Group.%s 其实在快照里，从声明表里删掉它", name)
+		_, ok := groupType.FieldByName(name)
+		require.Truef(t, ok, "声明表里的 Group.%s 已经不存在了", name)
 	}
 }

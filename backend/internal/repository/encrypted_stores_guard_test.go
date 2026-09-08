@@ -77,7 +77,17 @@ func TestEveryEncryptCallSiteIsRegistered(t *testing.T) {
 	var unmapped []string
 	used := map[string]bool{}
 	for file, lines := range found {
+		// 整文件归属只在该文件确实只有一个调用点时成立。
+		//
+		// 否则往一个"已登记"的文件里再加一个 Encrypt（例如给 users 表加一列
+		// totp_recovery_codes_encrypted）会被这条整文件登记一并遮住，护栏保持全绿——
+		// 而新那一处的密文根本不会被轮换，换钥匙之后就永远读不出来了。
 		if _, ok := registered[file]; ok {
+			require.Lenf(t, lines, 1,
+				"%s 有 %d 个 Encrypt 调用点，却只按整个文件登记了一次：\n"+
+					"  一个文件里出现多个调用点时必须逐个按 \"%s:<行号>\" 登记，"+
+					"否则新增的那一处会被这条整文件登记遮住、静默不参与轮换。\n"+
+					"  调用点在第 %s 行。", file, len(lines), file, strings.Join(lines, ", "))
 			used[file] = true
 			continue
 		}

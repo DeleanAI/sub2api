@@ -1051,7 +1051,8 @@ export default {
         orderHint: 'Rules are matched in order and the first match wins; put specific patterns before wildcard ones. Exact names and trailing * wildcards are supported, case-insensitive.',
         patternRequired: 'Model pattern is required',
         multiplierRange: 'Factor must be greater than 0 and at most 100',
-        duplicatePattern: 'Duplicate model pattern (case-insensitive)'
+        duplicatePattern: 'Duplicate model pattern (case-insensitive)',
+        patternWildcard: 'The * wildcard is only supported once, at the end (e.g. claude-opus-*)'
       },
       voicePricing: {
         title: 'Grok Voice Pricing',

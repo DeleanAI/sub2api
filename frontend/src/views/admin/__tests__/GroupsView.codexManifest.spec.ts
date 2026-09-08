@@ -1,5 +1,6 @@
 import { defineComponent, h, type PropType } from "vue";
 import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AdminGroup, CodexModelsManifestConfig } from "@/types";
@@ -228,6 +229,10 @@ const mountView = () =>
 
 describe("GroupsView Codex manifest binding", () => {
   beforeEach(() => {
+    // GroupsView 挂载时会用到 store；没有活跃的 Pinia 实例，挂载直接抛
+    // 「getActivePinia() was called but there was no active Pinia」。
+    // 同目录的 DashboardView.spec.ts 一直是这么做的，这个用例漏了。
+    setActivePinia(createPinia());
     localStorage.clear();
     listGroups.mockReset();
     getModelsListCandidates.mockReset();

@@ -65,6 +65,10 @@ func NormalizeGroupModelRateMultipliers(entries []GroupModelRateMultiplier) ([]G
 				fmt.Sprintf("model_rate_multipliers[%d] (%s): multiplier must be > 0 and <= %v, got %v",
 					i, pattern, MaxGroupModelRateMultiplier, entry.Multiplier))
 		}
+		if err := validateModelPatternSyntax(pattern); err != nil {
+			return nil, infraerrors.New(http.StatusBadRequest, "GROUP_MODEL_RATE_MULTIPLIER_PATTERN_INVALID",
+				fmt.Sprintf("model_rate_multipliers[%d] (%s): %s", i, pattern, err.Error()))
+		}
 		key := normalizeChannelPricingModelName(pattern)
 		if prev, dup := seen[key]; dup {
 			return nil, infraerrors.New(http.StatusBadRequest, "GROUP_MODEL_RATE_MULTIPLIER_DUPLICATE_PATTERN",
@@ -76,18 +80,18 @@ func NormalizeGroupModelRateMultipliers(entries []GroupModelRateMultiplier) ([]G
 	return out, nil
 }
 
-// ModelRateMultiplierFor 按列表顺序返回第一条命中 model 的规则；没有命中返回 ok=false。
-// 顺序即优先级：更具体的模式应排在更宽泛的通配之前（UI 与文档同口径）。
+// ModelRateMultiplierFor 返回命中 model 的那条规则；没有命中返回 ok=false。
+// 优先级与逐模型定价共用 selectByModelPattern：精确命中优先，同为通配时取靠前的一条。
 func (g *Group) ModelRateMultiplierFor(model string) (GroupModelRateMultiplier, bool) {
 	if g == nil || len(g.ModelRateMultipliers) == 0 || strings.TrimSpace(model) == "" {
 		return GroupModelRateMultiplier{}, false
 	}
-	for _, entry := range g.ModelRateMultipliers {
-		if matchModelPatternNormalized(entry.ModelPattern, model) != modelPatternNoMatch {
-			return entry, true
-		}
+	i, ok := selectByModelPattern(len(g.ModelRateMultipliers),
+		func(i int) []string { return []string{g.ModelRateMultipliers[i].ModelPattern} }, model)
+	if !ok {
+		return GroupModelRateMultiplier{}, false
 	}
-	return GroupModelRateMultiplier{}, false
+	return g.ModelRateMultipliers[i], true
 }
 
 // invalidModelRateMultiplierWarnSeen 让"存量脏倍率被降级为 1"的告警每个 (分组, 模式)
@@ -141,4 +145,25 @@ func EffectiveDownstreamMultiplier(billingGroup *Group, resolvedRate float64, pr
 // ResolveGroupModelRateMultiplier 是 resolveGroupModelRateMultiplier 的导出入口（handler 展示用）。
 func ResolveGroupModelRateMultiplier(group *Group, model string) float64 {
 	return resolveGroupModelRateMultiplier(group, model)
+}
+
+// validateModelPatternSyntax 拒绝匹配器根本无法兑现的模式。
+//
+// matchModelPattern 只支持末尾一个 *。而校验从前只看"非空"，于是
+// claude-*-thinking 能保存成功、在编辑器里预览成 2.0×、还会出现在
+// /v1/sub2api/billing 的响应里——然后永远不匹配任何模型。保存成功、界面确认、
+// 实际不生效，这是最难被发现的一类错。规则只支持什么，保存时就必须只接受什么。
+func validateModelPatternSyntax(pattern string) error {
+	stars := strings.Count(pattern, "*")
+	if stars == 0 {
+		return nil
+	}
+	if stars > 1 {
+		return fmt.Errorf("model_pattern supports at most one %q, and only at the end (e.g. %q)", "*", "claude-opus-*")
+	}
+	if !strings.HasSuffix(pattern, "*") {
+		return fmt.Errorf("model_pattern only supports a trailing %q (e.g. %q); %q would never match anything",
+			"*", "claude-opus-*", pattern)
+	}
+	return nil
 }

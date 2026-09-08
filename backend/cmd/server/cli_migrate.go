@@ -16,6 +16,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/migrations"
 
+	// PostgreSQL 驱动注册。放在这里而不是 wire_gen.go：wire_gen.go 是生成文件，
+	// 手加的 import 会在下一次 `wire` 重新生成时被悄悄删掉，而症状是运行时
+	// "unknown driver postgres"。
 	_ "github.com/lib/pq"
 )
 

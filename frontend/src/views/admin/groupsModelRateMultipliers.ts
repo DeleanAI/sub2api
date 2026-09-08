@@ -14,7 +14,7 @@ export type ModelRateMultiplierFormEntry = {
 
 export type ModelRateMultiplierValidationError = {
   index: number;
-  errorKey: "patternRequired" | "multiplierRange" | "duplicatePattern";
+  errorKey: "patternRequired" | "patternWildcard" | "multiplierRange" | "duplicatePattern";
 };
 
 export const emptyModelRateMultiplierEntry = (): ModelRateMultiplierFormEntry => ({
@@ -49,6 +49,13 @@ export const validateModelRateMultiplierEntries = (
     if (!pattern) {
       return { index, errorKey: "patternRequired" };
     }
+    // 与后端 validateModelPatternSyntax 同口径：匹配器只支持末尾一个 *。
+    // claude-*-thinking 从前能保存成功、在这里预览成 2.0×、还会出现在
+    // /v1/sub2api/billing 的响应里，然后永远不匹配任何模型。
+    const stars = (pattern.match(/\*/g) ?? []).length;
+    if (stars > 1 || (stars === 1 && !pattern.endsWith("*"))) {
+      return { index, errorKey: "patternWildcard" };
+    }
     const multiplier = Number(entry.multiplier);
     if (
       entry.multiplier === null ||
@@ -68,7 +75,8 @@ export const validateModelRateMultiplierEntries = (
   return null;
 };
 
-// 表单行 -> API 列表。顺序即匹配优先级，原样保留；调用方应先通过 validate 再调用。
+// 表单行 -> API 列表。顺序保留原样（同为通配时靠前的一条优先；精确命中始终优先于通配，
+// 与逐模型定价编辑器共用后端的 selectByModelPattern）；调用方应先通过 validate 再调用。
 export const modelRateMultipliersToAPI = (
   entries: ModelRateMultiplierFormEntry[],
 ): GroupModelRateMultiplier[] =>

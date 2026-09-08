@@ -82,9 +82,13 @@ func TestGroupModelRateMultiplierFor(t *testing.T) {
 		{ModelPattern: "GPT-5.4", Multiplier: 1.5},
 	}}
 
+	// 精确命中优先于通配，与上下相邻的逐模型定价编辑器同一条优先级规则
+	// （两者共用 selectByModelPattern）。此前倍率是"命中即返回"、定价是"精确优先"，
+	// 同一个 claude-opus-4-1 请求在两个编辑器里会得到 2× 和 3× 两个答案。
 	entry, ok := group.ModelRateMultiplierFor("claude-opus-4-1")
 	require.True(t, ok)
-	require.Equal(t, "claude-opus-*", entry.ModelPattern, "列表顺序即优先级：第一条命中的通配遮蔽后面的精确条目")
+	require.Equal(t, "claude-opus-4-1", entry.ModelPattern, "精确命中优先于通配")
+	require.Equal(t, 3.0, entry.Multiplier)
 
 	entry, ok = group.ModelRateMultiplierFor("Claude-Opus-4.5")
 	require.True(t, ok, "模型名归一化（大小写、claude 系列 . → -）后再匹配")
@@ -101,10 +105,27 @@ func TestGroupModelRateMultiplierFor(t *testing.T) {
 	_, ok = (*Group)(nil).ModelRateMultiplierFor("claude-opus-4-1")
 	require.False(t, ok)
 
-	// 与分组逐模型定价共用同一条匹配规则：同一模式对同一模型的命中结论一致。
+	// 与分组逐模型定价共用同一条匹配规则与同一条优先级规则。
 	pricingGroup := &Group{ModelPricing: []ChannelModelPricing{{Models: []string{"claude-opus-*"}, BillingMode: BillingModeToken}}}
 	require.NotNil(t, matchGroupModelPricing(pricingGroup, "Claude-Opus-4.5"))
 	require.Nil(t, matchGroupModelPricing(pricingGroup, "claude-sonnet-4"))
+
+	// 同一份规则表喂给两个编辑器，对同一个模型必须给出同一条结论。
+	shared := []string{"claude-*", "claude-haiku-4"}
+	multiplierGroup := &Group{ModelRateMultipliers: []GroupModelRateMultiplier{
+		{ModelPattern: shared[0], Multiplier: 2},
+		{ModelPattern: shared[1], Multiplier: 1},
+	}}
+	pricingTwo := &Group{ModelPricing: []ChannelModelPricing{
+		{Models: []string{shared[0]}, BillingMode: BillingModeToken, PerRequestPrice: floatPtr(2)},
+		{Models: []string{shared[1]}, BillingMode: BillingModeToken, PerRequestPrice: floatPtr(1)},
+	}}
+	multiplierEntry, ok := multiplierGroup.ModelRateMultiplierFor("claude-haiku-4")
+	require.True(t, ok)
+	pricingEntry := matchGroupModelPricing(pricingTwo, "claude-haiku-4")
+	require.NotNil(t, pricingEntry)
+	require.Equal(t, multiplierEntry.Multiplier, *pricingEntry.PerRequestPrice,
+		"倍率编辑器与定价编辑器对同一模型必须选中同一条规则")
 }
 
 func TestResolveGroupModelRateMultiplier_DegradesInvalidStoredValueToOneAndLogs(t *testing.T) {
@@ -440,4 +461,36 @@ func TestProfitControlGateResolvesCompositeModelOnBothPaths(t *testing.T) {
 
 	// 按别名解析会得到 0.375，正是本缺陷放行 0.6× 上游的那个阈值。
 	require.Greater(t, gatewayGate.threshold, 0.5*0.75+1e-9)
+}
+
+// TestNormalizeGroupModelRateMultipliersRejectsUnhonourablePatterns 钉死"保存时接受的
+// 模式，匹配器必须真的能兑现"。
+//
+// matchModelPattern 只支持末尾一个 *，而校验从前只看非空：claude-*-thinking 能保存
+// 成功、在编辑器里预览成 2.0×、还会出现在 /v1/sub2api/billing 的响应里，然后永远
+// 不匹配任何模型。保存成功 + 界面确认 + 实际不生效，是最难被发现的一类错。
+func TestNormalizeGroupModelRateMultipliersRejectsUnhonourablePatterns(t *testing.T) {
+	rejected := []string{"claude-*-thinking", "*-thinking", "*claude*", "cl*ude-*", "**"}
+	for _, pattern := range rejected {
+		t.Run(pattern, func(t *testing.T) {
+			_, err := NormalizeGroupModelRateMultipliers([]GroupModelRateMultiplier{{ModelPattern: pattern, Multiplier: 2}})
+			require.Errorf(t, err, "%q 永远匹配不到任何模型，不能让它保存成功", pattern)
+
+			// 若真被放行，它对任何模型都不会命中——这正是"保存了却不生效"的形状。
+			group := &Group{ModelRateMultipliers: []GroupModelRateMultiplier{{ModelPattern: pattern, Multiplier: 2}}}
+			for _, model := range []string{"claude-opus-4-1-thinking", "claude-3-thinking", "claude-haiku-4"} {
+				_, ok := group.ModelRateMultiplierFor(model)
+				require.Falsef(t, ok, "%q 竟然匹配到了 %q：匹配器和校验的口径又分叉了", pattern, model)
+			}
+		})
+	}
+
+	accepted := []string{"claude-opus-*", "claude-opus-4-1", "*"}
+	for _, pattern := range accepted {
+		t.Run("accepted/"+pattern, func(t *testing.T) {
+			out, err := NormalizeGroupModelRateMultipliers([]GroupModelRateMultiplier{{ModelPattern: pattern, Multiplier: 2}})
+			require.NoError(t, err)
+			require.Len(t, out, 1)
+		})
+	}
 }

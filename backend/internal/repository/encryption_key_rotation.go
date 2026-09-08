@@ -84,16 +84,23 @@ var EncryptedStores = []EncryptedStore{
 		},
 	},
 	{
-		Name:        "channel_monitors.api_key_encrypted",
-		SourceFiles: []string{"internal/service/channel_monitor_service.go"},
-		table:       channelmonitor.Table, idColumn: channelmonitor.FieldID, column: channelmonitor.FieldAPIKeyEncrypted, idKind: idInt,
+		Name: "channel_monitors.api_key_encrypted",
+		// 逐调用点登记而不是整个文件：这个文件有三处 Encrypt（新建、复制、改 key），
+		// 三处都写 channel_monitors.api_key_encrypted。整文件登记会把"以后再加一处
+		// 写别的列的 Encrypt"一并遮住，而被遮住的那一处不参与轮换，换钥匙后就读不出来了。
+		SourceFiles: []string{
+			"internal/service/channel_monitor_service.go:162",
+			"internal/service/channel_monitor_service.go:224",
+			"internal/service/channel_monitor_service.go:562",
+		},
+		table: channelmonitor.Table, idColumn: channelmonitor.FieldID, column: channelmonitor.FieldAPIKeyEncrypted, idKind: idInt,
 		where: func() *entsql.Predicate { return entsql.NEQ(channelmonitor.FieldAPIKeyEncrypted, "") },
 	},
 	settingStore(service.SettingKeyBackupS3Config, "internal/service/backup_service.go",
 		jsonKey(service.BackupS3Config{}, "SecretAccessKey")),
 	settingStore(service.SettingKeyImageStorageConfig, "internal/service/image_storage_settings.go",
 		jsonKey(service.ImageStorageSettings{}, "SecretAccessKey")),
-	settingStore(securityaudit.SettingKeyPromptAuditConfig, "internal/securityaudit/prompt_config_store.go",
+	settingStore(securityaudit.SettingKeyPromptAuditConfig, "internal/securityaudit/prompt_config_store.go:378",
 		jsonKey(securityaudit.DefaultStorageConfig(), "Endpoints"), "[]", jsonKey(securityaudit.StorageEndpoint{}, "TokenCiphertext")),
 	{
 		Name:        "accounts.extra." + service.OllamaCloudUsageSessionExtraKey,
@@ -128,9 +135,12 @@ var EncryptedStores = []EncryptedStore{
 // 的源文件，以及原因。守护测试要求每个 Encrypt 调用点要么属于某个 EncryptedStore，
 // 要么在这里给出理由——没有第三种"默默不管"的状态。
 var NonRotatableEncryptSites = map[string]string{
-	"internal/securityaudit/prompt_service.go":    "删除确认 token：5 分钟有效，只在请求之间往返，从不落库",
-	"internal/service/plugin_manager.go:836":      "插件 UI 会话令牌：带用途前缀、TTL 内有效、只在请求之间往返，不落库",
-	"internal/service/openai_live_attestation.go": "Live attestation 用 JWT secret 派生的独立密钥加密，不在落库密文密钥环上",
+	"internal/securityaudit/prompt_service.go": "删除确认 token：5 分钟有效，只在请求之间往返，从不落库",
+	// ConfigManager.Encrypt 是个转发方法，本身不决定密文去向；去向由调用方决定，
+	// 目前唯一的调用方是上面那个不落库的删除确认 token。
+	"internal/securityaudit/prompt_config_store.go:414": "ConfigManager.Encrypt 转发方法：密文去向由调用方登记（当前唯一调用方是删除确认 token）",
+	"internal/service/plugin_manager.go:836":            "插件 UI 会话令牌：带用途前缀、TTL 内有效、只在请求之间往返，不落库",
+	"internal/service/openai_live_attestation.go":       "Live attestation 用 JWT secret 派生的独立密钥加密，不在落库密文密钥环上",
 }
 
 func settingStore(key, sourceFile string, jsonPath ...string) EncryptedStore {

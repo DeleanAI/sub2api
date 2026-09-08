@@ -161,7 +161,24 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		MaxReasoningEffortOverLimit: source.MaxReasoningEffortOverLimit,
 		ReasoningEffortMappings:     append([]ReasoningEffortMapping(nil), source.ReasoningEffortMappings...),
 		ModelRateMultipliers:        append([]GroupModelRateMultiplier(nil), source.ModelRateMultipliers...),
+		// 逐模型定价与长上下文开关都直接决定计费口径；漏掉它们的复制品会按另一套价格
+		// 扣费，而管理员看到的是一个"和源分组一样"的新分组。
+		ModelPricing:              cloneGroupModelPricing(source.ModelPricing),
+		LongContextPricingEnabled: source.LongContextPricingEnabled,
 	}
+}
+
+// cloneGroupModelPricing 深拷贝逐模型定价：Models 切片必须独立，否则改复制品会
+// 顺手改掉源分组的定价。
+func cloneGroupModelPricing(source []ChannelModelPricing) []ChannelModelPricing {
+	if source == nil {
+		return nil
+	}
+	out := make([]ChannelModelPricing, 0, len(source))
+	for i := range source {
+		out = append(out, source[i].Clone())
+	}
+	return out
 }
 
 // RecoverDuplicateGroup performs a read-only lookup for a copy that was already

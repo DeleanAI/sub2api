@@ -46,11 +46,9 @@ func resolvePluginRootDir(cfg *config.Config) string {
 	if cfg != nil && strings.TrimSpace(cfg.Plugins.DataDir) != "" {
 		return filepath.Clean(cfg.Plugins.DataDir)
 	}
-	base := strings.TrimSpace(os.Getenv("DATA_DIR"))
-	if base == "" {
-		base = "./data"
-	}
-	return filepath.Join(base, "plugins")
+	// 数据目录只有一条裁决规则（config.ResolveDataDir）；这里曾经自己读一遍 DATA_DIR，
+	// 兜底还与运行期数据目录不一致（漏了"容器里 /app/data 可写"这一档）。
+	return filepath.Join(config.DefaultRuntimeDataDir(), "plugins")
 }
 
 func (i *PluginPackageInstaller) RootDir() string {

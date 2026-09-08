@@ -1048,7 +1048,8 @@ export default {
         orderHint: '按顺序匹配，第一条命中的规则生效；请把更具体的模式放在通配规则之前。支持精确模型名与末尾 * 通配，大小写不敏感。',
         patternRequired: '模型模式不能为空',
         multiplierRange: '倍率因子应大于 0 且不超过 100',
-        duplicatePattern: '模型模式重复（大小写不敏感）'
+        duplicatePattern: '模型模式重复（大小写不敏感）',
+        patternWildcard: '通配符 * 只能出现一次且必须在末尾，例如 claude-opus-*'
       },
       voicePricing: {
         title: 'Grok Voice 定价',

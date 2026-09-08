@@ -13,6 +13,9 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"github.com/Wei-Shaw/sub2api/migrations"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -131,7 +134,15 @@ func TestAuthCacheInvalidationTrigger_EveryGroupColumnExceptBookkeeping(t *testi
 		return count
 	}
 
-	bookkeeping := map[string]bool{"id": true, "updated_at": true}
+	// 排除列表从迁移 SQL 里解析出来，不在这里重抄一份：两边各写一份必然分叉，
+	// 而分叉的方向是"以为排除了其实没排除"（多余回源，能忍）或"以为没排除其实排除了"
+	// （计费配置静默陈旧，不能忍）。id 是主键，不参与更新。
+	excluded := parseRowDiffExcludedColumns(t)
+	require.Contains(t, excluded, "updated_at", "记账列必须在排除列表里")
+	bookkeeping := map[string]bool{"id": true}
+	for _, name := range excluded {
+		bookkeeping[name] = true
+	}
 	walked := 0
 	for _, probe := range loadGroupsColumnProbes(t, ctx, integrationDB) {
 		if bookkeeping[probe.name] {
@@ -148,8 +159,31 @@ func TestAuthCacheInvalidationTrigger_EveryGroupColumnExceptBookkeeping(t *testi
 	}
 	require.Greater(t, walked, 20, "column walk must cover the real groups table, not a handful of columns")
 
-	t.Run("updated_at alone is bookkeeping", func(t *testing.T) {
-		require.Zero(t, outboxRowsAfter(t, "UPDATE groups SET updated_at = updated_at + interval '1 second' WHERE id = $1"))
+	// 排除列逐个验证真的不入队：光在 SQL 里写下 - 'col' 不等于它生效
+	//（列名写错、迁移没跑到，都会静默变成"照常入队"）。
+	for _, name := range excluded {
+		name := name
+		t.Run("excluded/"+name, func(t *testing.T) {
+			var probe *groupsColumnProbe
+			for _, p := range loadGroupsColumnProbes(t, ctx, integrationDB) {
+				if p.name == name {
+					p := p
+					probe = &p
+					break
+				}
+			}
+			require.NotNilf(t, probe, "排除列表里的 %s 在 groups 表里不存在：列名写错了", name)
+			expr, ok := probe.changedValueSQL(group.ID)
+			require.True(t, ok, "column %s has no probe; extend changedValueSQL", name)
+			require.Zerof(t, outboxRowsAfter(t, fmt.Sprintf("UPDATE groups SET %s = %s WHERE id = $1", name, expr)),
+				"groups.%s 在排除列表里，改它不应该产生失效", name)
+		})
+	}
+
+	t.Run("sort order drag does not invalidate every key", func(t *testing.T) {
+		// 管理页拖动排序（UpdateSortOrders）是纯外观操作：10 个分组 × 5000 把密钥
+		// 曾经等于 5 万条 outbox 行和 5 万次认证回源。
+		require.Zero(t, outboxRowsAfter(t, "UPDATE groups SET sort_order = sort_order + 1 WHERE id = $1"))
 	})
 	t.Run("no-op update does not enqueue", func(t *testing.T) {
 		require.Zero(t, outboxRowsAfter(t, "UPDATE groups SET rate_multiplier = rate_multiplier, name = name WHERE id = $1"))
@@ -160,4 +194,39 @@ func TestAuthCacheInvalidationTrigger_EveryGroupColumnExceptBookkeeping(t *testi
 	t.Run("delete enqueues", func(t *testing.T) {
 		require.Equal(t, 1, outboxRowsAfter(t, "DELETE FROM groups WHERE id = $1"))
 	})
+}
+
+// rowDiffExcludedColumn 匹配触发器里 to_jsonb(OLD) - 'col' 形式的排除项。
+var rowDiffExcludedColumn = regexp.MustCompile(`- '([a-z_]+)'`)
+
+// parseRowDiffExcludedColumns 从内嵌迁移里读出行差异触发器排除了哪些列。
+//
+// 读 SQL 而不是在测试里抄一份：排除列表是"这一列不进 APIKeyAuthGroupSnapshot"的
+// 判断结果，只应该有一处。抄一份的话，改了 SQL 忘了改测试，测试还会继续为一个
+// 早已不存在的规则背书。
+func parseRowDiffExcludedColumns(t *testing.T) []string {
+	t.Helper()
+	entries, err := migrations.FS.ReadDir(".")
+	require.NoError(t, err)
+	var latest string
+	for _, entry := range entries {
+		// 目录按文件名字典序遍历，最后一个匹配的就是最新一版触发器定义。
+		if strings.Contains(entry.Name(), "group_auth_cache_row_diff") {
+			latest = entry.Name()
+		}
+	}
+	require.NotEmpty(t, latest, "找不到行差异触发器的迁移文件，护栏和迁移目录脱节了")
+	body, err := migrations.FS.ReadFile(latest)
+	require.NoError(t, err)
+
+	seen := map[string]bool{}
+	out := make([]string, 0, 4)
+	for _, m := range rowDiffExcludedColumn.FindAllStringSubmatch(string(body), -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			out = append(out, m[1])
+		}
+	}
+	require.NotEmpty(t, out, "%s 里没解析出任何排除列，正则和 SQL 写法脱节了", latest)
+	return out
 }

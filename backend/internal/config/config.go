@@ -2067,7 +2067,10 @@ func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 	}
 
 	// Add config paths in priority order.
-	if dataDir := strings.TrimSpace(os.Getenv("DATA_DIR")); dataDir != "" {
+	// 走 ResolveDataDir 而不是自己读 DATA_DIR：数据目录的裁决规则只有一条。
+	// 传空兜底表示"没有 DATA_DIR、/app/data 也不可写时这里不追加任何路径"，
+	// 后面的固定候选路径照常生效。
+	if dataDir := strings.TrimSpace(ResolveDataDir("")); dataDir != "" {
 		addConfigPath(dataDir)
 	}
 	addConfigPath("/app/data")

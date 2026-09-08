@@ -8,6 +8,8 @@ import (
 )
 
 // 数据目录只有一条裁决规则，写在 ResolveDataDir 里；其它地方只能调用它，不许再各自读 DATA_DIR。
+// 这条规则由 TestNothingElseReadsDataDirEnv 遍历源码执行——它曾经只是一句注释，
+// 而实际有三处（配置文件搜索路径、日志路径、插件根目录）各自读了一遍，兜底还互不相同。
 //
 // 为什么需要 fallback 参数而不是一个固定默认值：裸机安装（deploy/install.sh）把二进制、
 // config.yaml/.installed 放在 /opt/sub2api（工作目录），把运行期数据放在 /opt/sub2api/data。

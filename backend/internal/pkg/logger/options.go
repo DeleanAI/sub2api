@@ -1,7 +1,7 @@
 package logger
 
 import (
-	"os"
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"path/filepath"
 	"strings"
 	"time"
@@ -96,8 +96,10 @@ func resolveLogFilePath(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
-	dataDir := strings.TrimSpace(os.Getenv("DATA_DIR"))
-	if dataDir != "" {
+	// 走 config.ResolveDataDir，不自己读 DATA_DIR：数据目录的裁决规则只有一条
+	// （见 internal/config/data_dir.go）。这里曾经自己读一遍、并且用的是不同的兜底，
+	// 于是"DATA_DIR 没设但 /app/data 可写"时日志目录与其它运行期数据分道扬镳。
+	if dataDir := strings.TrimSpace(config.ResolveDataDir("")); dataDir != "" {
 		return filepath.Join(dataDir, "logs", defaultLogFilename)
 	}
 	return DefaultContainerLogPath
