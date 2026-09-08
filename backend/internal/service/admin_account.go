@@ -1284,6 +1284,17 @@ func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Ac
 	if err := s.accountRepo.ClearTempUnschedulable(ctx, id); err != nil {
 		return nil, err
 	}
+	// Token Plan 的耗尽标记也要清。它是永久状态、只能人工恢复，而"清除错误"就是
+	// 人工恢复的入口；不清的话后台会一直显示红色的"额度已耗尽"，而且下一次偶发
+	// 429 会因为观察起点还在而立刻再次永久停调。
+	if err := s.accountRepo.UpdateExtra(ctx, id, map[string]any{
+		qwenTokenPlanExhaustedExtraKey:       nil,
+		qwenTokenPlanExhaustedAtExtraKey:     nil,
+		qwenTokenPlanExhaustedSinceExtraKey:  nil,
+		qwenTokenPlanExhaustedReasonExtraKey: nil,
+	}); err != nil {
+		return nil, err
+	}
 	if s.runtimeBlocker != nil {
 		s.runtimeBlocker.ClearAccountSchedulingBlock(id)
 	}

@@ -1152,8 +1152,9 @@ func (s *RateLimitService) handle429(ctx context.Context, account *Account, head
 		}
 		return
 	}
-	// 国产供应商（kimi/zhipu/deepseek）的 429 走专用可恢复路径：余额不足 → 临时停调，
-	// Coding Plan 窗口耗尽 → 冷却到快照重置点。未命中则继续默认 429 逻辑。
+	// 国产供应商的 429 走专用路径：Qwen Token Plan 额度耗尽 → 永久停调；
+	// 余额不足 → 临时停调；Coding Plan 窗口耗尽 → 冷却到快照重置点。
+	// 未命中则继续默认 429 逻辑（短冷却，不会永久停用）。
 	if account.IsCNProvider() {
 		if s.applyCNProviderReactive429(ctx, account, headers, responseBody) {
 			return
@@ -2090,6 +2091,14 @@ func (s *RateLimitService) ClearRateLimit(ctx context.Context, accountID int64) 
 	// 清除限流时一并清理临时不可调度状态，避免周限/窗口重置后仍被本地临时状态阻断。
 	if err := s.accountRepo.ClearTempUnschedulable(ctx, accountID); err != nil {
 		return err
+	}
+	// Token Plan 的耗尽观察起点也要清掉：这个账号刚刚成功过一次，说明上一轮 429 是
+	// 临时窗口而不是额度枯竭。不清的话观察起点会一直停在很久以前，下一次偶发 429
+	// 会被当成"已经熬过 15 分钟"而直接永久停调。
+	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
+		qwenTokenPlanExhaustedSinceExtraKey: nil,
+	}); err != nil {
+		slog.Warn("qwen_token_plan_exhaustion_reset_failed", "account_id", accountID, "error", err)
 	}
 	if s.tempUnschedCache != nil {
 		if err := s.tempUnschedCache.DeleteTempUnsched(ctx, accountID); err != nil {
