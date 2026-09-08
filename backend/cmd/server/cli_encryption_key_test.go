@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -28,6 +30,15 @@ const (
 )
 
 // cliTestEnv 让真正的 config.LoadForBootstrap 跑起来：命令的校验全部走配置加载。
+// keyFile 把一把密钥写进临时文件并返回路径。命令只从文件/stdin 读密钥，
+// 不接受 flag 值——argv 在 /proc/<pid>/cmdline 里对同机任何用户可见。
+func keyFile(t *testing.T, key string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "key")
+	require.NoError(t, os.WriteFile(path, []byte(key+"\n"), 0o600))
+	return path
+}
+
 func cliTestEnv(t *testing.T) {
 	t.Helper()
 	viper.Reset()
@@ -141,17 +152,24 @@ func TestEncryptionKeyRotate_RejectsBadInvocations(t *testing.T) {
 	tests := []struct {
 		name    string
 		args    []string
+		argsFn  func(*testing.T) []string
 		env     map[string]string
 		wantErr string
 	}{
-		{name: "same_old_and_new_flag", args: []string{"--old-key", cliOldKey, "--new-key", cliOldKey}, wantErr: "same key"},
+		{name: "same_old_and_new_flag", argsFn: func(t *testing.T) []string {
+			return []string{"--old-key-file", keyFile(t, cliOldKey), "--new-key-file", keyFile(t, cliOldKey)}
+		}, wantErr: "same key"},
 		{name: "positional_args", args: []string{"extra"}, wantErr: "unexpected arguments"},
 		{name: "unknown_flag", args: []string{"--bogus"}, wantErr: "flag provided but not defined"},
 		{name: "no_primary_in_release", wantErr: "totp.encryption_key is required when server.mode=release"},
 		{name: "no_previous_key", env: map[string]string{"TOTP_ENCRYPTION_KEY": cliNewKey}, wantErr: "no key to rotate from"},
 		{name: "previous_equals_primary_via_env", env: map[string]string{"TOTP_ENCRYPTION_KEY": cliNewKey, "TOTP_ENCRYPTION_KEY_PREVIOUS": cliNewKey}, wantErr: "duplicates the primary key"},
-		{name: "invalid_new_key_flag", args: []string{"--new-key", "zz", "--old-key", cliOldKey}, wantErr: "totp.encryption_key"},
-		{name: "auto_generated_primary_in_debug", env: map[string]string{"SERVER_MODE": "debug"}, args: []string{"--old-key", cliOldKey}, wantErr: "auto-generated key"},
+		{name: "invalid_new_key_flag", argsFn: func(t *testing.T) []string {
+			return []string{"--new-key-file", keyFile(t, "zz"), "--old-key-file", keyFile(t, cliOldKey)}
+		}, wantErr: "totp.encryption_key"},
+		{name: "missing_key_file", args: []string{"--new-key-file", "/nonexistent/key"}, wantErr: "--new-key-file"},
+		{name: "empty_key_file", argsFn: func(t *testing.T) []string { return []string{"--new-key-file", keyFile(t, "")} }, wantErr: "file is empty"},
+		{name: "auto_generated_primary_in_debug", env: map[string]string{"SERVER_MODE": "debug"}, argsFn: func(t *testing.T) []string { return []string{"--old-key-file", keyFile(t, cliOldKey)} }, wantErr: "auto-generated key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -159,8 +177,12 @@ func TestEncryptionKeyRotate_RejectsBadInvocations(t *testing.T) {
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
+			args := tt.args
+			if tt.argsFn != nil {
+				args = tt.argsFn(t)
+			}
 			var out, errOut bytes.Buffer
-			err := runEncryptionKeyCommandWith(append([]string{"rotate"}, tt.args...), &out, &errOut, cliDeps(t, nil))
+			err := runEncryptionKeyCommandWith(append([]string{"rotate"}, args...), &out, &errOut, cliDeps(t, nil))
 			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}
@@ -198,7 +220,7 @@ func TestEncryptionKeyRotate_EndToEndAndIdempotent(t *testing.T) {
 
 	// dry-run：报告但不写。
 	var out, errOut bytes.Buffer
-	require.NoError(t, runEncryptionKeyCommandWith([]string{"rotate", "--dry-run", "--old-key", cliOldKey, "--new-key", cliNewKey}, &out, &errOut, cliDeps(t, m)))
+	require.NoError(t, runEncryptionKeyCommandWith([]string{"rotate", "--dry-run", "--old-key-file", keyFile(t, cliOldKey), "--new-key-file", keyFile(t, cliNewKey)}, &out, &errOut, cliDeps(t, m)))
 	require.Contains(t, out.String(), "mode=dry-run")
 	require.Contains(t, out.String(), "dry-run: nothing was written")
 	require.Equal(t, oldRing.PrimaryFingerprint(), storedFingerprint())
@@ -207,7 +229,7 @@ func TestEncryptionKeyRotate_EndToEndAndIdempotent(t *testing.T) {
 
 	// 正式执行。
 	out.Reset()
-	require.NoError(t, runEncryptionKeyCommandWith([]string{"rotate", "--old-key", cliOldKey, "--new-key", cliNewKey}, &out, &errOut, cliDeps(t, m)))
+	require.NoError(t, runEncryptionKeyCommandWith([]string{"rotate", "--old-key-file", keyFile(t, cliOldKey), "--new-key-file", keyFile(t, cliNewKey)}, &out, &errOut, cliDeps(t, m)))
 	require.Contains(t, out.String(), "mode=execute")
 	require.Contains(t, out.String(), "stored fingerprint updated to primary key "+newRing.PrimaryKeyID())
 	require.Equal(t, newRing.PrimaryFingerprint(), storedFingerprint())
@@ -220,7 +242,7 @@ func TestEncryptionKeyRotate_EndToEndAndIdempotent(t *testing.T) {
 
 	// 再跑一次：没有行需要重写，仍然成功。
 	out.Reset()
-	require.NoError(t, runEncryptionKeyCommandWith([]string{"rotate", "--old-key", cliOldKey, "--new-key", cliNewKey}, &out, &errOut, cliDeps(t, m)))
+	require.NoError(t, runEncryptionKeyCommandWith([]string{"rotate", "--old-key-file", keyFile(t, cliOldKey), "--new-key-file", keyFile(t, cliNewKey)}, &out, &errOut, cliDeps(t, m)))
 	require.Equal(t, secret, storedSecret(), "already-current rows are left untouched")
 }
 

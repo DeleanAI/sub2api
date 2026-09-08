@@ -74,6 +74,12 @@ func SetupRouter(
 	}))
 	r.Use(middleware2.ServerTiming(cfg.Server.EnableServerTiming))
 
+	// 旧布局的前端产物会让 HasEmbeddedFrontend 变成 false，于是所有 UI 路径静默 404。
+	// 这是构建产物过期，当场失败比"起来了但什么都打不开"有用得多。
+	if err := web.EmbeddedFrontendLayoutError(); err != nil {
+		return nil, err
+	}
+
 	// Serve embedded frontend with settings injection if available
 	if web.HasEmbeddedFrontend() {
 		// 静态覆盖目录挂在统一的数据目录下（绝对路径），启动时打印一次，便于多副本部署核对挂载。

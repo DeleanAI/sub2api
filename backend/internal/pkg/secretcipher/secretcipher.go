@@ -228,22 +228,52 @@ func (r *Ring) Decrypt(ciphertext string) (string, error) {
 // 返回值 changed=false 表示密文已经是主密钥的新格式（或为空），无需重写；
 // 这是轮换工具幂等的依据。解不开（未知 key-id、密钥丢失）直接返回错误，
 // 不会把解不开的数据当成"无需处理"悄悄跳过。
-func (r *Ring) Rotate(ciphertext string) (rotated string, changed bool, err error) {
+// RotateOutcome 说明一次 Rotate 实际做了什么，供调用方分别计数与打点。
+type RotateOutcome int
+
+const (
+	// RotateUnchanged：已经是主密钥写的当前格式密文。
+	RotateUnchanged RotateOutcome = iota
+	// RotateReEncrypted：旧密钥的密文，已用主密钥重写。
+	RotateReEncrypted
+	// RotateAdoptedLegacyPlaintext：无版本前缀且任何一把钥匙都解不开，
+	// 按历史明文收编——直接加密存回。
+	RotateAdoptedLegacyPlaintext
+)
+
+// Rotate 把一个存量值改写成主密钥写的当前格式密文。
+//
+// 关于历史明文：备份 S3 密钥、图片存储密钥这类字段历史上存过未加密的明文，读路径
+// 至今仍容忍它们（见 decryptStoredSecret）。轮换若只会解密，这些行必然失败，而
+// 一旦有任何一行失败，命令就不写新指纹；操作者按文档清掉 TOTP_ENCRYPTION_KEY_PREVIOUS
+// 重启后，release 模式会因指纹对不上拒绝启动——每个副本都起不来。
+//
+// 判据与读路径完全一致：带版本前缀却解不开，说明密钥环缺了写它的那把钥匙，这是
+// 真失败，必须报出来；没有前缀才可能是历史明文，收编它。真是"用失落密钥加密的
+// 无前缀密文"时，这个值本来也已经读不出来了，收编不会让任何人多丢东西。
+func (r *Ring) Rotate(ciphertext string) (rotated string, outcome RotateOutcome, err error) {
 	if ciphertext == "" {
-		return "", false, nil
+		return "", RotateUnchanged, nil
 	}
 	if keyID, _, versioned := splitCiphertext(ciphertext); versioned && keyID == r.keys[0].id {
-		return ciphertext, false, nil
+		return ciphertext, RotateUnchanged, nil
 	}
-	plaintext, err := r.Decrypt(ciphertext)
-	if err != nil {
-		return "", false, err
+	plaintext, decErr := r.Decrypt(ciphertext)
+	if decErr != nil {
+		if IsVersioned(ciphertext) {
+			return "", RotateUnchanged, decErr
+		}
+		adopted, encErr := r.Encrypt(ciphertext)
+		if encErr != nil {
+			return "", RotateUnchanged, encErr
+		}
+		return adopted, RotateAdoptedLegacyPlaintext, nil
 	}
 	rotated, err = r.Encrypt(plaintext)
 	if err != nil {
-		return "", false, err
+		return "", RotateUnchanged, err
 	}
-	return rotated, true, nil
+	return rotated, RotateReEncrypted, nil
 }
 
 func (r *Ring) allKeyIDs() []string {

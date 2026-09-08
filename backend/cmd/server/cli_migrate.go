@@ -241,7 +241,10 @@ func describeVerdict(verdict string) string {
 
 // planMigrationsFromConfig 用与服务完全相同的配置来源和驱动连库，只读，不执行迁移。
 func planMigrationsFromConfig(ctx context.Context) (*repository.MigrationPlan, error) {
-	cfg, err := config.LoadForBootstrap()
+	// LoadForSchemaTooling 而不是 LoadForBootstrap：plan 只读 schema_migrations 与
+	// 内嵌迁移的校验和，不碰任何密文。用启动配置会让还没配 TOTP_ENCRYPTION_KEY 的
+	// 存量实例连闸门都跑不了（退出 1 = 阻止升级），正好是最需要这道闸门的那批。
+	cfg, err := config.LoadForSchemaTooling()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}

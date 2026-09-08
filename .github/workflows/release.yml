@@ -74,7 +74,11 @@ jobs:
         working-directory: frontend
 
       - name: Build frontend
-        run: pnpm run build
+        # build:all，不是 build：前端变体（SERVER_FRONTEND_VARIANT）要求
+        # dist/<variant>/ 逐个产出。只跑 build 的话发布的二进制里只有 default，
+        # 裸机安装设了 SERVER_FRONTEND_VARIANT=acme 会在启动时直接退出，
+        # 提示 available variants: default——尽管仓库里明明有 acme。
+        run: pnpm run build:all
         working-directory: frontend
 
       - name: Upload frontend artifact

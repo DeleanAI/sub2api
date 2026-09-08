@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/migrations"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -174,4 +176,28 @@ func TestRunMigratePlan_FlagErrors(t *testing.T) {
 func TestExitCodeError_Message(t *testing.T) {
 	require.Equal(t, "exit code 20", (&exitCodeError{code: 20}).Error())
 	require.Equal(t, "boom", (&exitCodeError{code: 1, message: "boom"}).Error())
+}
+
+// TestMigratePlanRunsWithoutEncryptionKey 钉死"升级闸门不依赖落库密文密钥"。
+//
+// plan 是文档里的升级前置检查，而它曾经走 LoadForBootstrap：release 模式下缺
+// TOTP_ENCRYPTION_KEY 直接退出 1，而 1 在闸门契约里表示"阻止升级"。最需要这道闸门的
+// 恰恰是升级前还没配过密钥的存量实例——闸门对它们永远不可用，运维只能绕过。
+// plan 只读 schema_migrations 和内嵌迁移的校验和，一个密文都不碰。
+func TestMigratePlanRunsWithoutEncryptionKey(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("CONFIG_FILE", "")
+	t.Setenv("DATA_DIR", "")
+	t.Setenv("SERVER_MODE", "release")
+	t.Setenv("JWT_SECRET", strings.Repeat("j", 32))
+	t.Setenv("TOTP_ENCRYPTION_KEY", "")
+	t.Setenv("TOTP_ENCRYPTION_KEY_PREVIOUS", "")
+
+	_, err := config.LoadForSchemaTooling()
+	require.NoError(t, err, "闸门用的配置加载不得要求落库密文密钥")
+
+	_, err = config.LoadForBootstrap()
+	require.ErrorContains(t, err, "totp.encryption_key is required when server.mode=release",
+		"服务进程的加载仍必须要求它——两者的区别正是本测试要钉住的")
 }

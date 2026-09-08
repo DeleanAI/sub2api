@@ -55,3 +55,6 @@ func ServeEmbeddedFrontend(overrideDir, variant string) (gin.HandlerFunc, error)
 func HasEmbeddedFrontend() bool {
 	return false
 }
+
+// EmbeddedFrontendLayoutError 在非 embed 构建里没有产物可查，恒为 nil。
+func EmbeddedFrontendLayoutError() error { return nil }

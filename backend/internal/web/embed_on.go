@@ -467,3 +467,22 @@ func serveIndexHTML(c *gin.Context, fsys fs.FS) {
 func HasEmbeddedFrontend() bool {
 	return len(AvailableVariants()) > 0
 }
+
+// EmbeddedFrontendLayoutError 检测"嵌进来的是变体化之前的旧产物"这一种情况。
+//
+// HasEmbeddedFrontend 的含义随变体功能变成了"至少有一个 dist/<name>/index.html"。
+// 用旧布局（dist/index.html 直接在根下）编译出来的二进制能编译、能启动、能听端口，
+// 只是每一个前端路径都 404，日志里只有一条 WARN——恰恰是这套设计声明要杜绝的
+// "看起来没生效"。构建产物过期是个操作错误，必须当场说清楚，不是让它跑起来。
+func EmbeddedFrontendLayoutError() error {
+	if len(AvailableVariants()) > 0 {
+		return nil
+	}
+	if _, err := fs.Stat(frontendFS, path.Join(distDirName, indexHTMLName)); err == nil {
+		return fmt.Errorf("embedded frontend uses the pre-variant layout: %s/%s exists but there is no %s/<variant>/%s. "+
+			"The binary was built against a stale frontend build; every UI path would 404. "+
+			"Rebuild the frontend with `pnpm run build:all` (or `make build-frontend`) so each variant lands in %s/<variant>/",
+			distDirName, indexHTMLName, distDirName, indexHTMLName, distDirName)
+	}
+	return nil
+}

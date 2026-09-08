@@ -174,96 +174,101 @@ func rewriteLegacyPaymentConfig(stored string, ring *secretcipher.Ring) (string,
 }
 
 // rewriteValue 对一行的列值执行改写，返回新值、是否有变化、是否见到了密文。
-func (s *EncryptedStore) rewriteValue(value string, ring *secretcipher.Ring) (out string, changed bool, sawCiphertext bool, err error) {
+func (s *EncryptedStore) rewriteValue(value string, ring *secretcipher.Ring) (out string, changed bool, sawCiphertext bool, adoptedLegacy bool, err error) {
 	if value == "" {
-		return value, false, false, nil
+		return value, false, false, false, nil
 	}
 	if s.rewrite != nil {
 		out, changed, err = s.rewrite(value, ring)
-		return out, changed, true, err
+		return out, changed, true, false, err
 	}
 	if len(s.jsonPath) == 0 {
-		out, changed, err = ring.Rotate(value)
-		return out, changed, true, err
+		rotated, outcome, rotErr := ring.Rotate(value)
+		if rotErr != nil {
+			return "", false, true, false, rotErr
+		}
+		return rotated, outcome != secretcipher.RotateUnchanged, true, outcome == secretcipher.RotateAdoptedLegacyPlaintext, nil
 	}
-	raw, changed, sawCiphertext, err := rewriteJSONStrings([]byte(value), s.jsonPath, ring.Rotate)
+	raw, changed, sawCiphertext, adoptedLegacy, err := rewriteJSONStrings([]byte(value), s.jsonPath, ring.Rotate)
 	if err != nil {
-		return "", false, sawCiphertext, err
+		return "", false, sawCiphertext, adoptedLegacy, err
 	}
 	if !changed {
-		return value, false, sawCiphertext, nil
+		return value, false, sawCiphertext, adoptedLegacy, nil
 	}
-	return string(raw), true, sawCiphertext, nil
+	return string(raw), true, sawCiphertext, adoptedLegacy, nil
 }
 
 // rewriteJSONStrings 只改写 path 指向的字符串值；其余节点以 json.RawMessage 原样
 // 保留，整数精度与未知字段都不会在往返中丢失。空字符串视为"没有密文"。
-func rewriteJSONStrings(raw []byte, path []string, fn func(string) (string, bool, error)) (out []byte, changed bool, sawCiphertext bool, err error) {
+func rewriteJSONStrings(raw []byte, path []string, fn func(string) (string, secretcipher.RotateOutcome, error)) (out []byte, changed bool, sawCiphertext bool, adoptedLegacy bool, err error) {
 	if len(path) == 0 {
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
-			return nil, false, false, fmt.Errorf("expected a JSON string, got %s", truncateJSON(raw))
+			return nil, false, false, false, fmt.Errorf("expected a JSON string, got %s", truncateJSON(raw))
 		}
 		if s == "" {
-			return raw, false, false, nil
+			return raw, false, false, false, nil
 		}
-		rotated, changed, err := fn(s)
+		rotated, outcome, err := fn(s)
 		if err != nil {
-			return nil, false, true, err
+			return nil, false, true, false, err
 		}
-		if !changed {
-			return raw, false, true, nil
+		adopted := outcome == secretcipher.RotateAdoptedLegacyPlaintext
+		if outcome == secretcipher.RotateUnchanged {
+			return raw, false, true, false, nil
 		}
 		encoded, err := json.Marshal(rotated)
 		if err != nil {
-			return nil, false, true, err
+			return nil, false, true, adopted, err
 		}
-		return encoded, true, true, nil
+		return encoded, true, true, adopted, nil
 	}
 	if isJSONNull(raw) {
-		return raw, false, false, nil
+		return raw, false, false, false, nil
 	}
 	segment, rest := path[0], path[1:]
 	if segment == "[]" {
 		var items []json.RawMessage
 		if err := json.Unmarshal(raw, &items); err != nil {
-			return nil, false, false, fmt.Errorf("expected a JSON array, got %s", truncateJSON(raw))
+			return nil, false, false, false, fmt.Errorf("expected a JSON array, got %s", truncateJSON(raw))
 		}
 		for i := range items {
-			item, itemChanged, itemSaw, err := rewriteJSONStrings(items[i], rest, fn)
+			item, itemChanged, itemSaw, itemAdopted, err := rewriteJSONStrings(items[i], rest, fn)
 			if err != nil {
-				return nil, false, sawCiphertext || itemSaw, fmt.Errorf("[%d]: %w", i, err)
+				return nil, false, sawCiphertext || itemSaw, adoptedLegacy || itemAdopted, fmt.Errorf("[%d]: %w", i, err)
 			}
 			sawCiphertext = sawCiphertext || itemSaw
+			adoptedLegacy = adoptedLegacy || itemAdopted
 			if itemChanged {
 				items[i] = item
 				changed = true
 			}
 		}
 		if !changed {
-			return raw, false, sawCiphertext, nil
+			return raw, false, sawCiphertext, adoptedLegacy, nil
 		}
 		out, err = json.Marshal(items)
-		return out, true, sawCiphertext, err
+		return out, true, sawCiphertext, adoptedLegacy, err
 	}
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil {
-		return nil, false, false, fmt.Errorf("expected a JSON object with key %q, got %s", segment, truncateJSON(raw))
+		return nil, false, false, false, fmt.Errorf("expected a JSON object with key %q, got %s", segment, truncateJSON(raw))
 	}
 	child, ok := object[segment]
 	if !ok || isJSONNull(child) {
-		return raw, false, false, nil
+		return raw, false, false, false, nil
 	}
-	child, changed, sawCiphertext, err = rewriteJSONStrings(child, rest, fn)
+	child, changed, sawCiphertext, adoptedLegacy, err = rewriteJSONStrings(child, rest, fn)
 	if err != nil {
-		return nil, false, sawCiphertext, fmt.Errorf("%s: %w", segment, err)
+		return nil, false, sawCiphertext, adoptedLegacy, fmt.Errorf("%s: %w", segment, err)
 	}
 	if !changed {
-		return raw, false, sawCiphertext, nil
+		return raw, false, sawCiphertext, adoptedLegacy, nil
 	}
 	object[segment] = child
 	out, err = json.Marshal(object)
-	return out, true, sawCiphertext, err
+	return out, true, sawCiphertext, adoptedLegacy, err
 }
 
 func isJSONNull(raw []byte) bool {
@@ -297,7 +302,10 @@ type StoreReport struct {
 	// Rotated 已重写（dry-run 时表示将会重写）；Current 已是主密钥新格式；
 	// Empty 候选行里没有密文；Failed 解不开或写不回。
 	Rotated, Current, Empty, Failed int
-	Failures                        []RowFailure
+	// AdoptedLegacyPlaintext 是 Rotated 中"存的本来就是历史明文、这次顺手加密"的行数。
+	// 单列出来是因为它对操作者有意义：这些字段过去在库里是明文的。
+	AdoptedLegacyPlaintext int
+	Failures               []RowFailure
 }
 
 // RotationReport 是整次轮换的结果，供命令行打印与测试断言。
@@ -353,6 +361,12 @@ func (r *RotationReport) Write(w io.Writer) {
 	}
 	rotated, current, empty, failed := r.Totals()
 	fmt.Fprintf(w, "%-72s %8d %8d %8d %8d\n", "total", rotated, current, empty, failed)
+	for _, s := range r.Stores {
+		if s.AdoptedLegacyPlaintext > 0 {
+			fmt.Fprintf(w, "note: %s: %d row(s) held legacy plaintext and are now encrypted with the primary key\n",
+				s.Store, s.AdoptedLegacyPlaintext)
+		}
+	}
 	for _, s := range r.Stores {
 		for _, f := range s.Failures {
 			fmt.Fprintf(w, "failed: %s: %s\n", f.Row, f.Err)
@@ -465,6 +479,9 @@ func (s *EncryptedStore) rotateAll(ctx context.Context, client *dbent.Client, d 
 			result.Current++
 		case outcomeEmpty:
 			result.Empty++
+		case outcomeAdoptedLegacyPlaintext:
+			result.AdoptedLegacyPlaintext++
+			result.Rotated++
 		}
 	}
 	return result, nil
@@ -476,6 +493,9 @@ const (
 	outcomeRotated rowOutcome = iota
 	outcomeCurrent
 	outcomeEmpty
+	// outcomeAdoptedLegacyPlaintext：该行存的是历史明文（无版本前缀且解不开），
+	// 已加密收编。单独计数，因为这是"轮换顺手补加密"而不是"换了把钥匙"。
+	outcomeAdoptedLegacyPlaintext
 )
 
 func (s *EncryptedStore) listIDs(ctx context.Context, client *dbent.Client, d string) ([]any, error) {
@@ -539,7 +559,7 @@ func (s *EncryptedStore) rotateRow(ctx context.Context, client *dbent.Client, d 
 		return outcomeEmpty, nil
 	}
 
-	out, changed, sawCiphertext, err := s.rewriteValue(value, ring)
+	out, changed, sawCiphertext, adoptedLegacy, err := s.rewriteValue(value, ring)
 	if err != nil {
 		return 0, err
 	}
@@ -549,8 +569,14 @@ func (s *EncryptedStore) rotateRow(ctx context.Context, client *dbent.Client, d 
 		}
 		return outcomeCurrent, nil
 	}
+	rotatedOutcome := outcomeRotated
+	if adoptedLegacy {
+		rotatedOutcome = outcomeAdoptedLegacyPlaintext
+		slog.Warn("encryption key rotation: row held legacy plaintext (no version prefix, not decryptable by any configured key); it has been encrypted with the primary key",
+			"store", s.Name, "id", id)
+	}
 	if dryRun {
-		return outcomeRotated, nil
+		return rotatedOutcome, nil
 	}
 	upd := builder.Update(s.table).Set(s.column, out).Where(entsql.EQ(s.idColumn, id))
 	query, args = upd.Query()
@@ -565,7 +591,7 @@ func (s *EncryptedStore) rotateRow(ctx context.Context, client *dbent.Client, d 
 		return 0, fmt.Errorf("commit: %w", err)
 	}
 	committed = true
-	return outcomeRotated, nil
+	return rotatedOutcome, nil
 }
 
 // queryNullString 读单行单列文本；jsonb 列由驱动以字节返回，NullString 能接住。

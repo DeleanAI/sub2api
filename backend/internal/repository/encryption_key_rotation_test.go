@@ -360,19 +360,26 @@ func TestRotateEncryptionKey_NoFingerprintYetIsReported(t *testing.T) {
 }
 
 func TestRewriteJSONStrings(t *testing.T) {
-	upper := func(s string) (string, bool, error) {
-		if s == "boom" {
-			return "", false, fmt.Errorf("cannot rotate %q", s)
+	// "legacy" 代表历史明文：被收编（加密）而不是失败，走 RotateAdoptedLegacyPlaintext。
+	upper := func(s string) (string, secretcipher.RotateOutcome, error) {
+		switch {
+		case s == "boom":
+			return "", secretcipher.RotateUnchanged, fmt.Errorf("cannot rotate %q", s)
+		case s == "legacy":
+			return "LEGACY", secretcipher.RotateAdoptedLegacyPlaintext, nil
+		case strings.ToUpper(s) != s:
+			return strings.ToUpper(s), secretcipher.RotateReEncrypted, nil
+		default:
+			return s, secretcipher.RotateUnchanged, nil
 		}
-		return strings.ToUpper(s), strings.ToUpper(s) != s, nil
 	}
 	tests := []struct {
-		name         string
-		raw          string
-		path         []string
-		want         string
-		changed, saw bool
-		wantErr      string
+		name                  string
+		raw                   string
+		path                  []string
+		want                  string
+		changed, saw, adopted bool
+		wantErr               string
 	}{
 		{name: "top_level_string", raw: `{"a":"x","n":9007199254740993}`, path: []string{"a"}, want: `{"a":"X","n":9007199254740993}`, changed: true, saw: true},
 		{name: "already_current", raw: `{"a":"X"}`, path: []string{"a"}, want: `{"a":"X"}`, saw: true},
@@ -385,10 +392,12 @@ func TestRewriteJSONStrings(t *testing.T) {
 		{name: "not_an_object", raw: `[1]`, path: []string{"a"}, wantErr: "expected a JSON object"},
 		{name: "not_an_array", raw: `{"eps":{}}`, path: []string{"eps", "[]", "t"}, wantErr: "expected a JSON array"},
 		{name: "leaf_error_is_located", raw: `{"eps":[{"t":"ok"},{"t":"boom"}]}`, path: []string{"eps", "[]", "t"}, wantErr: "eps: [1]: t: cannot rotate"},
+		{name: "legacy_plaintext_is_adopted", raw: `{"a":"legacy"}`, path: []string{"a"}, want: `{"a":"LEGACY"}`, changed: true, saw: true, adopted: true},
+		{name: "legacy_plaintext_in_array", raw: `{"eps":[{"t":"Y"},{"t":"legacy"}]}`, path: []string{"eps", "[]", "t"}, want: `{"eps":[{"t":"Y"},{"t":"LEGACY"}]}`, changed: true, saw: true, adopted: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, changed, saw, err := rewriteJSONStrings([]byte(tt.raw), tt.path, upper)
+			out, changed, saw, adopted, err := rewriteJSONStrings([]byte(tt.raw), tt.path, upper)
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				return
@@ -397,6 +406,7 @@ func TestRewriteJSONStrings(t *testing.T) {
 			require.Equal(t, tt.want, string(out))
 			require.Equal(t, tt.changed, changed)
 			require.Equal(t, tt.saw, saw)
+			require.Equal(t, tt.adopted, adopted, "历史明文收编必须能被上层单独计数")
 		})
 	}
 }

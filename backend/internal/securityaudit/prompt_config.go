@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -445,6 +446,12 @@ func ActiveFromStorage(cfg storageConfig, riskControlEnabled bool, encryptor Sec
 				// (issue #4887). Keep the ciphertext persisted, but exclude the
 				// endpoint from runtime use until the token is re-entered.
 				tokenInvalid = true
+				// 必须留痕：被禁用意味着这个外部审计节点从此不再参与筛查，请求照常放行。
+				// 静默下线一条安全管控链路，事后没有任何线索能还原"从什么时候开始没审"。
+				// 其余落库密文的解密失败点都打了日志，这里曾经是唯一一处把 err 丢掉的。
+				slog.Error("prompt_audit.endpoint_token_undecryptable: endpoint disabled until its token is re-entered; "+
+					"prompts are NOT being screened by it",
+					"endpoint_id", ep.ID, "endpoint_name", ep.Name, "error", err)
 			} else {
 				token = plain
 			}

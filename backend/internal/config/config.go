@@ -1842,17 +1842,30 @@ func NormalizeRunMode(value string) string {
 
 // Load 读取并校验完整配置（要求 jwt.secret 已显式提供）。
 func Load() (*Config, error) {
-	return load(false)
+	return load(false, true)
 }
 
 // LoadForBootstrap 读取启动阶段配置。
 //
 // 启动阶段允许 jwt.secret 先留空，后续由数据库初始化流程补齐并再次完整校验。
 func LoadForBootstrap() (*Config, error) {
-	return load(true)
+	return load(true, true)
 }
 
-func load(allowMissingJWTSecret bool) (*Config, error) {
+// LoadForSchemaTooling 读取配置，但不施加落库密文密钥策略。
+//
+// 密钥策略的理由是"每个进程各自随机生成密钥会导致互相读不了数据"，它只对会读写
+// 密文的进程成立。`sub2api migrate plan` 只读 schema_migrations 和内嵌迁移的校验和，
+// 一个密文都不碰；让它因为缺 TOTP_ENCRYPTION_KEY 而退出，恰好卡死最需要这道闸门的
+// 那批部署——升级前还没配过密钥的存量实例——而退出码 1 在闸门契约里的含义是
+// "阻止升级"，于是运维只能绕过闸门。
+//
+// 只有确实不碰密文的只读命令可以用它；服务进程一律走 LoadForBootstrap。
+func LoadForSchemaTooling() (*Config, error) {
+	return load(true, false)
+}
+
+func load(allowMissingJWTSecret bool, requireEncryptionKey bool) (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	configureConfigSource(viper.SetConfigFile, viper.AddConfigPath)
@@ -2007,8 +2020,10 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Gateway.UserMessageQueue.Mode = ""
 	}
 
-	if err := applyEncryptionKeyPolicy(&cfg); err != nil {
-		return nil, err
+	if requireEncryptionKey {
+		if err := applyEncryptionKeyPolicy(&cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	originalJWTSecret := cfg.JWT.Secret

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -60,7 +61,7 @@ func runEncryptionKeyCommandWith(args []string, stdout, stderr io.Writer, deps e
 }
 
 func printEncryptionKeyUsage(w io.Writer) {
-	fmt.Fprintln(w, "Usage: sub2api encryption-key rotate [--dry-run] [--old-key HEX] [--new-key HEX]")
+	fmt.Fprintln(w, "Usage: sub2api encryption-key rotate [--dry-run] [--old-key-file PATH] [--new-key-file PATH]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Re-encrypts every stored ciphertext (TOTP secrets, channel monitor API keys, backup/image")
 	fmt.Fprintln(w, "storage S3 secrets, Ollama web sessions, prompt-audit endpoint tokens) under the primary")
@@ -71,15 +72,19 @@ func printEncryptionKeyUsage(w io.Writer) {
 	fmt.Fprintln(w, "  2. Run `sub2api encryption-key rotate --dry-run`, then without --dry-run. Already-rotated rows are skipped, so it can be re-run.")
 	fmt.Fprintln(w, "  3. When it reports the stored fingerprint updated, remove TOTP_ENCRYPTION_KEY_PREVIOUS and restart.")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "--old-key/--new-key override TOTP_ENCRYPTION_KEY_PREVIOUS/TOTP_ENCRYPTION_KEY for this run only.")
+	fmt.Fprintln(w, "--old-key-file/--new-key-file read a key from a file (\"-\" reads one line from stdin) and override")
+	fmt.Fprintln(w, "TOTP_ENCRYPTION_KEY_PREVIOUS/TOTP_ENCRYPTION_KEY for this run only. Keys are deliberately not")
+	fmt.Fprintln(w, "accepted as flag values: argv is world-readable via /proc/<pid>/cmdline and lands in shell history.")
 }
 
 func runEncryptionKeyRotate(args []string, stdout, stderr io.Writer, deps encryptionKeyDeps) error {
 	fs := flag.NewFlagSet("encryption-key rotate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dryRun := fs.Bool("dry-run", false, "report what would change without writing anything")
-	oldKey := fs.String("old-key", "", "key being retired (64 hex chars); overrides TOTP_ENCRYPTION_KEY_PREVIOUS")
-	newKey := fs.String("new-key", "", "new primary key (64 hex chars); overrides TOTP_ENCRYPTION_KEY")
+	// 密钥只从文件/stdin 读，不接受 flag 值：argv 在 /proc/<pid>/cmdline 里对同机
+	// 任何用户可见，也会原样进入 shell 历史。这是密钥轮换命令，泄露的正是它要保护的东西。
+	oldKeyFile := fs.String("old-key-file", "", `file holding the key being retired ("-" = stdin); overrides TOTP_ENCRYPTION_KEY_PREVIOUS`)
+	newKeyFile := fs.String("new-key-file", "", `file holding the new primary key ("-" = stdin); overrides TOTP_ENCRYPTION_KEY`)
 	fs.Usage = func() {
 		printEncryptionKeyUsage(stderr)
 		fmt.Fprintln(stderr)
@@ -92,9 +97,16 @@ func runEncryptionKeyRotate(args []string, stdout, stderr io.Writer, deps encryp
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
 	}
-	old, fresh := strings.TrimSpace(*oldKey), strings.TrimSpace(*newKey)
+	old, err := readKeyFile(*oldKeyFile, stdout)
+	if err != nil {
+		return fmt.Errorf("--old-key-file: %w", err)
+	}
+	fresh, err := readKeyFile(*newKeyFile, stdout)
+	if err != nil {
+		return fmt.Errorf("--new-key-file: %w", err)
+	}
 	if old != "" && fresh != "" && strings.EqualFold(old, fresh) {
-		return errors.New("refusing to rotate: --old-key and --new-key are the same key")
+		return errors.New("refusing to rotate: --old-key-file and --new-key-file hold the same key")
 	}
 	// 覆盖值通过环境变量交给配置加载：密钥格式、release 模式必填、新旧重复
 	// 这些规则只在配置加载里定义一次，命令行不另起一套校验。
@@ -114,7 +126,7 @@ func runEncryptionKeyRotate(args []string, stdout, stderr io.Writer, deps encryp
 		return fmt.Errorf("load config: %w", err)
 	}
 	if !cfg.Totp.EncryptionKeyConfigured {
-		return errors.New("refusing to rotate onto an auto-generated key: set TOTP_ENCRYPTION_KEY (or --new-key) to the new primary key")
+		return errors.New("refusing to rotate onto an auto-generated key: set TOTP_ENCRYPTION_KEY (or --new-key-file) to the new primary key")
 	}
 	ring, err := cfg.Totp.KeyRing()
 	if err != nil {
@@ -141,4 +153,36 @@ func runEncryptionKeyRotate(args []string, stdout, stderr io.Writer, deps encryp
 		return fmt.Errorf("%d row(s) could not be rotated; fix or reset them and re-run", failed)
 	}
 	return nil
+}
+
+// readKeyFile 从文件（"-" 表示 stdin 的第一行）读出一把密钥。
+//
+// 只读第一行并去掉空白：密钥文件常见的写法是 `openssl rand -hex 32 > key`，
+// 结尾会带换行。空路径表示没提供，交回空串由配置加载去决定。
+func readKeyFile(path string, prompt io.Writer) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	var raw []byte
+	var err error
+	if path == "-" {
+		fmt.Fprintln(prompt, "reading key from stdin...")
+		reader := bufio.NewReader(os.Stdin)
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return "", readErr
+		}
+		raw = []byte(line)
+	} else if raw, err = os.ReadFile(path); err != nil {
+		return "", err
+	}
+	key := strings.TrimSpace(string(raw))
+	if idx := strings.IndexAny(key, "\r\n"); idx >= 0 {
+		key = key[:idx]
+	}
+	if key == "" {
+		return "", errors.New("file is empty")
+	}
+	return key, nil
 }

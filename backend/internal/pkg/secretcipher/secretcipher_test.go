@@ -193,17 +193,17 @@ func TestRotateIsIdempotentAndFailsLoudly(t *testing.T) {
 	ring := mustRing(t, hexKey(0x01), hexKey(0x02))
 
 	// 空值：无事可做。
-	out, changed, err := ring.Rotate("")
+	out, outcome, err := ring.Rotate("")
 	require.NoError(t, err)
-	require.False(t, changed)
+	require.Equal(t, RotateUnchanged, outcome)
 	require.Empty(t, out)
 
 	// 旧密钥的新格式密文：重写到主密钥。
 	ct, err := old.Encrypt("secret")
 	require.NoError(t, err)
-	rotated, changed, err := ring.Rotate(ct)
+	rotated, outcome, err := ring.Rotate(ct)
 	require.NoError(t, err)
-	require.True(t, changed)
+	require.Equal(t, RotateReEncrypted, outcome)
 	id, _ := KeyIDOf(rotated)
 	require.Equal(t, ring.PrimaryKeyID(), id)
 	plain, err := ring.Decrypt(rotated)
@@ -211,25 +211,50 @@ func TestRotateIsIdempotentAndFailsLoudly(t *testing.T) {
 	require.Equal(t, "secret", plain)
 
 	// 再轮一次：已经是主密钥，不动。
-	again, changed, err := ring.Rotate(rotated)
+	again, outcome, err := ring.Rotate(rotated)
 	require.NoError(t, err)
-	require.False(t, changed)
+	require.Equal(t, RotateUnchanged, outcome)
 	require.Equal(t, rotated, again)
 
 	// 旧格式密文：升级成带 key-id 的新格式。
 	legacy, err := seal(old.keys[0].raw, "legacy")
 	require.NoError(t, err)
-	upgraded, changed, err := ring.Rotate(legacy)
+	upgraded, outcome, err := ring.Rotate(legacy)
 	require.NoError(t, err)
-	require.True(t, changed)
+	require.Equal(t, RotateReEncrypted, outcome)
 	require.True(t, IsVersioned(upgraded))
 
-	// 未知密钥：报错而不是跳过。
+	// 带版本前缀却解不开（密钥环缺那把钥匙）：报错而不是跳过，也不能当明文收编。
 	stranger := mustRing(t, hexKey(0x09))
 	foreign, err := stranger.Encrypt("x")
 	require.NoError(t, err)
 	_, _, err = ring.Rotate(foreign)
 	require.ErrorIs(t, err, ErrUnknownKeyID)
+}
+
+// TestRotateAdoptsLegacyPlaintext 钉死"历史明文被加密收编，而不是让整轮轮换失败"。
+//
+// 备份 S3 密钥这类字段历史上真的存过明文，读路径至今容忍（decryptStoredSecret）。
+// 轮换若只会解密，这些行必然 Failed；只要有一行 Failed 命令就不写新指纹，操作者按
+// 文档清掉 TOTP_ENCRYPTION_KEY_PREVIOUS 重启后，release 模式会因指纹对不上拒绝启动，
+// 每个副本都起不来——一条本该顺利的运维操作会把集群打死。
+func TestRotateAdoptsLegacyPlaintext(t *testing.T) {
+	ring := mustRing(t, hexKey(0x01))
+
+	const plaintext = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+	adopted, outcome, err := ring.Rotate(plaintext)
+	require.NoError(t, err, "历史明文不能让轮换失败")
+	require.Equal(t, RotateAdoptedLegacyPlaintext, outcome)
+	require.True(t, IsVersioned(adopted))
+
+	back, err := ring.Decrypt(adopted)
+	require.NoError(t, err)
+	require.Equal(t, plaintext, back, "收编不得改变字段的实际内容")
+
+	// 收编之后就是普通密文，再轮一次不动。
+	_, outcome, err = ring.Rotate(adopted)
+	require.NoError(t, err)
+	require.Equal(t, RotateUnchanged, outcome)
 }
 
 func TestRingIntrospection(t *testing.T) {

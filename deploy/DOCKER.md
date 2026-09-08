@@ -37,7 +37,9 @@ services:
       - DATABASE_URL=postgres://postgres:postgres@db:5432/sub2api?sslmode=disable
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET=change-me-to-a-random-secret-of-32-or-more-characters
-      - TOTP_ENCRYPTION_KEY=change-me-to-64-hex-characters
+      # 64 hex characters. Generate with: openssl rand -hex 32
+      # A non-hex placeholder is fatal at startup, not a warning.
+      - TOTP_ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000
       - TZ=Asia/Shanghai
     depends_on:
       db:
@@ -145,7 +147,7 @@ Defaults are those applied by `AUTO_SETUP`; they are written to `config.yaml` on
 | `ADMIN_EMAIL` | Admin account created on the first start | No | `admin@sub2api.local` |
 | `ADMIN_PASSWORD` | Admin password; generated and printed to the logs once when empty | No | *(generated)* |
 | `JWT_SECRET` | 32+ bytes. Generated on every start when empty, which logs all users out on restart | Recommended | *(generated)* |
-| `TOTP_ENCRYPTION_KEY` | 64 hex characters. Generated on every start when empty, which invalidates existing 2FA enrolments | Recommended | *(generated)* |
+| `TOTP_ENCRYPTION_KEY` | 64 hex characters (`openssl rand -hex 32`). Encrypts TOTP secrets and every other stored secret. **Startup fails when it is empty and `SERVER_MODE=release` (the default)**, and when the value is not 64 hex characters. Only `SERVER_MODE=debug` falls back to a per-process random key, which no other instance can read | **Yes** (release mode) | *(none; debug mode generates a per-process key)* |
 | `TZ` | Timezone for the application and for database sessions | No | `Asia/Shanghai` |
 | `DATA_DIR` | Directory for `config.yaml`, the install lock and log files | No | `/app/data` |
 
