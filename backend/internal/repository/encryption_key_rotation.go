@@ -64,8 +64,8 @@ const (
 
 // Table/IDColumn/Column/IDIsString 暴露声明里的物理位置。
 //
-// 大多数 store 的表由 ent schema 建出来，但 plugins 这类只存在于 SQL 迁移里的表
-// 没有 ent schema。基于 ent schema 搭起来的测试库因此缺表，而缺表只会在轮换真的
+// 大多数 store 的表由 ent schema 建出来，但 sub2api_plugin_installations 这类只存在于
+// SQL 迁移里的表没有 ent schema。基于 ent schema 搭起来的测试库因此缺表，而缺表只会在轮换真的
 // 跑到那一条 store 时炸开。测试用这些访问器遍历声明补齐缺的表——新增一处裸表
 // store 当天就被覆盖，不需要再往测试里手写一次表名。
 func (s EncryptedStore) Table() string    { return s.table }
@@ -112,12 +112,13 @@ var EncryptedStores = []EncryptedStore{
 		jsonPath: []string{service.OllamaCloudUsageSessionExtraKey},
 	},
 	{
-		// 上游 0.2.x 的插件配置：明文 JSON 用同一把密钥加密后写进 plugins.config_encrypted
-		// （internal/repository/plugin_repo.go:211）。plugins 表没有 ent schema，这里直接用表名。
+		// 上游 0.2.x 的插件配置：明文 JSON 用同一把密钥加密后写进
+		// sub2api_plugin_installations.config_encrypted（internal/repository/plugin_repo.go:211）。
+		// 这张表只由 SQL 迁移 229_plugins.sql 创建，没有 ent schema，所以这里直接写表名。
 		// 漏登记的后果与 issue #4 完全一致：轮换后插件配置解不开，而插件加载时才会发现。
-		Name:        "plugins.config_encrypted",
+		Name:        "sub2api_plugin_installations.config_encrypted",
 		SourceFiles: []string{"internal/service/plugin_manager.go:743"},
-		table:       "plugins", idColumn: "id", column: "config_encrypted", idKind: idInt,
+		table:       "sub2api_plugin_installations", idColumn: "id", column: "config_encrypted", idKind: idInt,
 		where: func() *entsql.Predicate { return entsql.NEQ("config_encrypted", "") },
 	},
 	{

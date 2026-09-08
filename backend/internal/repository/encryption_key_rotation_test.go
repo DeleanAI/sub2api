@@ -43,14 +43,36 @@ func newRotationSQLiteClient(t *testing.T) *dbent.Client {
 	drv := entsql.OpenDB(dialect.SQLite, db)
 	client := enttest.NewClient(t, enttest.WithOptions(dbent.Driver(drv)))
 	t.Cleanup(func() { _ = client.Close() })
-	// plugins 由 SQL 迁移建表、没有 ent schema，enttest 不会创建它。轮换注册表里
-	// 有 plugins.config_encrypted 这一项，缺表会让整轮轮换在"列出候选行"时失败。
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS plugins (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		config_encrypted TEXT NOT NULL DEFAULT ''
-	)`)
-	require.NoError(t, err)
+	createNonEntEncryptedStoreTables(t, db)
 	return client
+}
+
+// createNonEntEncryptedStoreTables 遍历 EncryptedStores，为其中没有 ent schema 的表
+// （只由 SQL 迁移创建的，如 sub2api_plugin_installations）建出轮换需要的最小结构。
+//
+// 遍历声明而不是写死表名：这里原本硬编码了 CREATE TABLE plugins，而真实表名是
+// sub2api_plugin_installations——测试库按错误的名字建了表，于是单元测试对着一张
+// 不存在于生产的表跑得全绿，真库上轮换直接报 relation does not exist。
+// 表名的正确性由 TestEveryEncryptedStorePointsAtRealSchema 对着真正迁移过的库校验，
+// 这里只负责"声明里有的表都存在"。
+func createNonEntEncryptedStoreTables(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, store := range EncryptedStores {
+		var exists int
+		err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, store.Table()).Scan(&exists)
+		require.NoError(t, err)
+		if exists > 0 {
+			continue
+		}
+		idType := "INTEGER"
+		if store.IDIsString() {
+			idType = "TEXT"
+		}
+		_, err = db.Exec(fmt.Sprintf(
+			`CREATE TABLE IF NOT EXISTS %q (%q %s PRIMARY KEY, %q TEXT NOT NULL DEFAULT '')`,
+			store.Table(), store.IDColumn(), idType, store.Column()))
+		require.NoError(t, err, "create non-ent table for encrypted store %s", store.Name)
+	}
 }
 
 func mustRing(t *testing.T, primary string, previous ...string) *secretcipher.Ring {

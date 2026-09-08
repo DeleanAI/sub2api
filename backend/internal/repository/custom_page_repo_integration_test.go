@@ -195,9 +195,23 @@ func TestCustomPageImportFromDiskEndToEnd(t *testing.T) {
 	require.Equal(t, "image/png", asset.ContentType)
 	require.Equal(t, []byte("png"), asset.Data)
 
-	// 再启动一次：表非空 → 磁盘被忽略并列在报告里
+	// 再启动一次：持久标记已落，连目录都不扫（扫描会把所有附件字节读进内存，
+	// 且发生在监听端口之前）。
 	report, err = svc.ImportFromDisk(ctx, dir)
 	require.NoError(t, err)
+	require.True(t, report.AlreadyImported)
 	require.Zero(t, report.InsertedPages)
-	require.Contains(t, report.IgnoredFiles, slug+".md")
+	require.Empty(t, report.IgnoredFiles, "标记已存在时不扫描目录")
+
+	// 删光页面之后再启动：撤下的内容不得从磁盘复活。
+	require.NoError(t, svc.DeletePage(ctx, slug))
+	count, err := repo.CountPages(ctx)
+	require.NoError(t, err)
+	require.Zero(t, count)
+	report, err = svc.ImportFromDisk(ctx, dir)
+	require.NoError(t, err)
+	require.True(t, report.AlreadyImported)
+	require.Zero(t, report.InsertedPages)
+	_, err = svc.GetPage(ctx, slug)
+	require.ErrorIs(t, err, service.ErrCustomPageNotFound, "删掉的页面不能被磁盘导入复活")
 }
