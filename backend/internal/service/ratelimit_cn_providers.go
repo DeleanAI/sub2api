@@ -341,6 +341,18 @@ func qwenTokenPlanTransientRateLimit(message string) bool {
 // 也只是晚 15 分钟停调，相对它们平均 28 小时的枯竭期可以忽略。
 const qwenTokenPlanExhaustionConfirmWindow = 15 * time.Minute
 
+// qwenTokenPlanExhaustionRetryInterval 是观察期内每次冷却多久，与"多久算确认耗尽"是
+// 两件事，必须分开。
+//
+// 早先这两者是同一个值：第一次 429 就冷却到 since+15min。后果是那 25 个平均 48 秒
+// 就自愈的账号被白晾满 15 分钟——比改动之前（不冷却、直接 failover）还差。
+// 判定要慢（避免误杀），重试要快（避免白白损失容量），这是两个相反的诉求。
+//
+// 90 秒：高于实测平均恢复 48 秒，于是在观察窗内会重试约 90s/180s/…/840s 共 9 次，
+// 实测最长恢复 367 秒也能在它发生后 90 秒内被抓到；同时不会把已枯竭的账号
+// 每几秒打一次。
+const qwenTokenPlanExhaustionRetryInterval = 90 * time.Second
+
 // handleQwenTokenPlanExhausted 处理 Token Plan 账号的额度耗尽 429。
 //
 // 关键：**第一次看到不下永久结论**。先记下时刻并临时冷却到观察窗结束；只有当这个
@@ -369,7 +381,13 @@ func (s *RateLimitService) handleQwenTokenPlanExhausted(ctx context.Context, acc
 				slog.Warn("qwen_token_plan_exhaustion_mark_failed", "account_id", account.ID, "error", err)
 			}
 		}
-		until := since.Add(qwenTokenPlanExhaustionConfirmWindow)
+		// 只冷却一个重试间隔，不是冷却到观察窗结束：临时限流的账号要能尽快回到调度池。
+		// 不越过确认时刻，避免最后一次重试落在窗口之外白等。
+		deadline := since.Add(qwenTokenPlanExhaustionConfirmWindow)
+		until := now.Add(qwenTokenPlanExhaustionRetryInterval)
+		if until.After(deadline) {
+			until = deadline
+		}
 		s.notifyAccountSchedulingBlocked(account, until, "qwen_token_plan_exhausted_observing")
 		if err := s.accountRepo.SetRateLimited(ctx, account.ID, until); err != nil {
 			slog.Warn("rate_limit_set_failed", "account_id", account.ID, "error", err)
@@ -378,7 +396,8 @@ func (s *RateLimitService) handleQwenTokenPlanExhausted(ctx context.Context, acc
 			"account_id", account.ID,
 			"since", since,
 			"retry_at", until,
-			"note", "多数临时窗口在 6 分钟内自行恢复；熬过观察窗才判定为真耗尽")
+			"confirm_at", deadline,
+			"note", "多数临时窗口在 6 分钟内自行恢复；熬过观察窗仍在报才判定为真耗尽")
 		return
 	}
 

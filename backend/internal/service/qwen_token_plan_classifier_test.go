@@ -284,3 +284,31 @@ func TestProdShapedTokenPlanAccountReachesTheExhaustionPath(t *testing.T) {
 		require.Empty(t, repo.extraWrites)
 	})
 }
+
+// TestObservationCooldownIsShortNotTheWholeWindow 钉死"重试要快、判定要慢"这两件事是分开的。
+//
+// 早先它们是同一个值：第一次 429 就冷却到 since+15min。后果是那 25 个平均 48 秒就
+// 自愈的账号（实测最长 367 秒）被白晾满 15 分钟——比改动之前不冷却直接 failover 还差。
+// 一个为了"别误杀"而加的机制，反而把可用性做低了。
+func TestObservationCooldownIsShortNotTheWholeWindow(t *testing.T) {
+	require.Less(t, qwenTokenPlanExhaustionRetryInterval, qwenTokenPlanExhaustionConfirmWindow,
+		"重试间隔必须远小于确认时长，否则临时限流的账号会被晾满整个观察窗")
+	require.Greater(t, qwenTokenPlanExhaustionRetryInterval, 48*time.Second,
+		"重试间隔应高于实测平均恢复时间（48 秒），避免对已枯竭的账号高频重试")
+
+	// 观察窗内至少要重试到能覆盖实测最长恢复时间（367 秒）。
+	require.Greater(t,
+		int(qwenTokenPlanExhaustionConfirmWindow/qwenTokenPlanExhaustionRetryInterval), 4,
+		"观察窗内的重试次数太少，最长 367 秒才恢复的账号会等到判定之后")
+
+	repo := &qwenTokenPlanRepo{}
+	svc := NewRateLimitService(repo, nil, nil, nil, nil)
+	body := []byte(`{"code":"Throttling.AllocationQuota","message":"Your token-plan quota has been exhausted."}`)
+
+	before := time.Now()
+	require.True(t, svc.applyCNProviderReactive429(context.Background(), newProdShapedTokenPlanAccount(), http.Header{}, body))
+	require.Equal(t, 1, repo.rateLimitCalls)
+	require.Empty(t, repo.schedulableCalls, "首次命中不得停调")
+	require.LessOrEqual(t, repo.lastRateLimitUntil.Sub(before), qwenTokenPlanExhaustionRetryInterval+2*time.Second,
+		"冷却时长应是一个重试间隔，而不是整个观察窗")
+}

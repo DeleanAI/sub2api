@@ -21,6 +21,8 @@ type qwenTokenPlanRepo struct {
 	schedulableCalls []bool
 	setScheduleErr   error
 	rateLimitCalls   int
+	// lastRateLimitUntil 记录最后一次冷却的截止时刻，用于断言冷却时长。
+	lastRateLimitUntil time.Time
 }
 
 func (r *qwenTokenPlanRepo) UpdateExtra(_ context.Context, _ int64, updates map[string]any) error {
@@ -37,8 +39,9 @@ func (r *qwenTokenPlanRepo) SetSchedulable(_ context.Context, _ int64, schedulab
 	return r.setScheduleErr
 }
 
-func (r *qwenTokenPlanRepo) SetRateLimited(_ context.Context, _ int64, _ time.Time) error {
+func (r *qwenTokenPlanRepo) SetRateLimited(_ context.Context, _ int64, until time.Time) error {
 	r.rateLimitCalls++
+	r.lastRateLimitUntil = until
 	return nil
 }
 
