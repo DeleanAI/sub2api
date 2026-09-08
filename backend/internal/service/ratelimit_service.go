@@ -1912,6 +1912,14 @@ func (s *RateLimitService) ClearRateLimit(ctx context.Context, accountID int64) 
 	if err := s.accountRepo.ClearTempUnschedulable(ctx, accountID); err != nil {
 		return err
 	}
+	// Token Plan 的耗尽观察起点也要清掉：这个账号刚刚成功过一次，说明上一轮 429 是
+	// 临时窗口而不是额度枯竭。不清的话观察起点会一直停在很久以前，下一次偶发 429
+	// 会被当成"已经熬过 15 分钟"而直接永久停调。
+	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
+		qwenTokenPlanExhaustedSinceExtraKey: nil,
+	}); err != nil {
+		slog.Warn("qwen_token_plan_exhaustion_reset_failed", "account_id", accountID, "error", err)
+	}
 	if s.tempUnschedCache != nil {
 		if err := s.tempUnschedCache.DeleteTempUnsched(ctx, accountID); err != nil {
 			slog.Warn("temp_unsched_cache_delete_failed", "account_id", accountID, "error", err)

@@ -117,7 +117,7 @@ export default {
           coding: 'Coding Plan',
           codingDesc: 'Subscription coding package, rate-limited by 5-hour / weekly rolling usage windows.',
           tokenPlan: 'Token Plan',
-          tokenPlanDesc: 'One-time Qwen token allocation. When exhausted, scheduling is permanently disabled until manually re-enabled.',
+          tokenPlanDesc: 'One-time Qwen token allocation. Scheduling is disabled only after exhaustion persists for 15 minutes (short throttling windows recover on their own); re-enable manually once you have more quota.',
         },
         apiProtocol: {
           title: 'API Protocol',
@@ -143,7 +143,7 @@ export default {
         balanceLow: 'Insufficient balance',
         noBalanceEndpoint: 'This platform has no balance query endpoint',
         resetSoon: 'reset soon',
-        tokenPlanExhausted: 'Token Plan exhausted. Scheduling has been permanently disabled; manually re-enable this account after obtaining more quota.',
+        tokenPlanExhausted: 'Token Plan exhausted (confirmed after 15 minutes of continuous exhaustion). Scheduling is disabled; re-enable this account manually once you have more quota.',
       },
       types: {
         oauth: 'OAuth',

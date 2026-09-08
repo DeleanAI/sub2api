@@ -320,7 +320,7 @@ export default {
           coding: 'Coding Plan',
           codingDesc: '订阅制编程套餐，按 5 小时 / 每周滚动用量窗口限流。',
           tokenPlan: 'Token Plan',
-          tokenPlanDesc: 'Qwen 一次性 Token 额度。额度耗尽后会永久关闭调度，获得新额度后需手动重新启用。',
+          tokenPlanDesc: 'Qwen 一次性 Token 额度。额度耗尽持续 15 分钟后关闭调度（短时的窗口限流会自行恢复，不会关闭），获得新额度后需手动重新启用。',
         },
         apiProtocol: {
           title: 'API 协议',
@@ -346,7 +346,7 @@ export default {
         balanceLow: '余额不足',
         noBalanceEndpoint: '该平台暂无余额查询接口',
         resetSoon: '即将重置',
-        tokenPlanExhausted: 'Token Plan 额度已耗尽。调度已永久关闭；获得新额度后请手动重新启用此账号。',
+        tokenPlanExhausted: 'Token Plan 额度已耗尽（持续 15 分钟以上确认）。调度已关闭；获得新额度后请手动重新启用此账号。',
       },
       types: {
         oauth: 'OAuth',
