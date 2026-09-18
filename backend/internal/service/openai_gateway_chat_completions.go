@@ -367,15 +367,29 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 			}
 			return s.forwardAsChatCompletions(markAgentIdentityTaskRecoveryTried(ctx), c, account, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
 		}
+		// 上游 404/405 才可能意味着「这个上游没有 /v1/responses」。但状态码本身分不清
+		// 404 指向端点还是指向模型：聚合型上游对不在模型表里的模型同样回 404
+		// （body 里 type=model_not_found），此时端点是活的，只是这次的模型它不提供。
+		// 据此降级会把「换个模型就能用」误当成「上游没有 Responses」，并让后续请求
+		// 长期走 CC 直转。判据与探测落标共用 responsesEndpointVerdictFromResponse。
 		if account.Type == AccountTypeAPIKey &&
-			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
-			!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
-			logger.L().Info("openai chat_completions: /responses unsupported, falling back to raw chat completions",
-				zap.Int64("account_id", account.ID),
-				zap.Int("upstream_status", resp.StatusCode),
-				zap.String("upstream_message", upstreamMsg),
-			)
-			return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown {
+			endpointAbsent, modelScoped := responsesEndpointVerdictFromResponse(resp.StatusCode, respBody)
+			if modelScoped {
+				logger.L().Info("openai chat_completions: upstream 404 is model-scoped, keeping /responses path",
+					zap.Int64("account_id", account.ID),
+					zap.Int("upstream_status", resp.StatusCode),
+					zap.String("upstream_message", upstreamMsg),
+				)
+			}
+			if endpointAbsent {
+				logger.L().Info("openai chat_completions: /responses unsupported, falling back to raw chat completions",
+					zap.Int64("account_id", account.ID),
+					zap.Int("upstream_status", resp.StatusCode),
+					zap.String("upstream_message", upstreamMsg),
+				)
+				return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+			}
 		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr
