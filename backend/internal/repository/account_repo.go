@@ -2577,6 +2577,62 @@ func (r *accountRepository) AutoPauseExpiredAccounts(ctx context.Context, now ti
 	return int64(len(accountIDs)), nil
 }
 
+// listAccountsWithExpiredCooldownQuery 是「冷却已到期但仍不可调度」的判据。
+//
+// 提成常量是为了让护栏测试能直接校验它覆盖了全部冷却列——测试遍历列清单这份声明，
+// 而不是点名今天这三列，因此新增一种带到期时间的冷却会当场暴露漏覆盖。
+const listAccountsWithExpiredCooldownQuery = `
+		SELECT id
+		FROM accounts
+		WHERE deleted_at IS NULL
+			AND (status = 'error' OR schedulable = FALSE)
+			AND (
+				(rate_limit_reset_at IS NOT NULL AND rate_limit_reset_at <= $1)
+				OR (temp_unschedulable_until IS NOT NULL AND temp_unschedulable_until <= $1)
+				OR (overload_until IS NOT NULL AND overload_until <= $1)
+			)
+		ORDER BY id
+		LIMIT $2
+	`
+
+// ListAccountsWithExpiredCooldown 返回「冷却时间已过期，但仍处于不可调度状态」的账号 ID。
+//
+// 判据是**冷却字段本身已到期**这个声明，而不是枚举错误原因——新增的冷却类型只要
+// 写在那几列上，当天就被这条查询覆盖，无需再改代码。
+//
+// 为什么需要它：暂时性故障（限流 / 过载 / 并发上限 / 余额不足）会同时写两处状态——
+// 带到期时间的冷却列，以及不带到期时间的 status=error。后者会盖住前者，于是冷却到期
+// 后没有任何代码回头看它，账号被永久钉死，只能靠人工点 recover。实测 2026-09-18：
+// 生产 252 个 error 账号里有 120 个的 rate_limit_reset_at 早已过期。
+//
+// 只挑「实际不可调度」的（status=error 或 schedulable=false）：状态已经正常的账号
+// 即使残留过期时间戳也无需恢复，避免每轮扫描重复清理健康账号。
+func (r *accountRepository) ListAccountsWithExpiredCooldown(ctx context.Context, now time.Time, limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := r.sql.QueryContext(ctx, listAccountsWithExpiredCooldownQuery, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	accountIDs := make([]int64, 0, limit)
+	for rows.Next() {
+		var accountID int64
+		if err := rows.Scan(&accountID); err != nil {
+			return nil, err
+		}
+		accountIDs = append(accountIDs, accountID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return accountIDs, nil
+}
+
 func (r *accountRepository) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	updates = stripCodexFingerprintSeedFromExtraUpdate(updates)
 	if len(updates) == 0 {

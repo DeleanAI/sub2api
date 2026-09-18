@@ -48,6 +48,9 @@ func (m *sessionWindowMockRepo) ClearRateLimit(_ context.Context, id int64) erro
 	m.clearRateLimitIDs = append(m.clearRateLimitIDs, id)
 	return nil
 }
+func (m *sessionWindowMockRepo) ListAccountsWithExpiredCooldown(_ context.Context, _ time.Time, _ int) ([]int64, error) {
+	return nil, nil
+}
 func (m *sessionWindowMockRepo) ClearAntigravityQuotaScopes(_ context.Context, _ int64) error {
 	return nil
 }

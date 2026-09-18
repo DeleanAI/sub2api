@@ -105,6 +105,10 @@ type AccountRepository interface {
 	SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error
 	ClearTempUnschedulable(ctx context.Context, id int64) error
 	ClearRateLimit(ctx context.Context, id int64) error
+	// ListAccountsWithExpiredCooldown 返回冷却时间已过期但仍不可调度的账号 ID。
+	// 判据是冷却列已到期这个声明本身，不枚举错误原因，因此新增的冷却类型自动被覆盖。
+	// 供 AccountCooldownRecoveryService 把「到期即恢复」补成时间驱动的入口。
+	ListAccountsWithExpiredCooldown(ctx context.Context, now time.Time, limit int) ([]int64, error)
 	ClearAntigravityQuotaScopes(ctx context.Context, id int64) error
 	ClearModelRateLimits(ctx context.Context, id int64) error
 	UpdateSessionWindow(ctx context.Context, id int64, start, end *time.Time, status string) error

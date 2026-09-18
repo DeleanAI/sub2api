@@ -224,6 +224,19 @@ func ProvideOpenAIQuotaAutoResetService(
 	return service
 }
 
+// ProvideAccountCooldownRecoveryService 启动「冷却到期即恢复」的周期扫描。
+// 恢复能力本身早已存在（RateLimitService.RecoverAccountState），此前只有人工入口；
+// 这里补上时间驱动的那一个。
+func ProvideAccountCooldownRecoveryService(
+	accountRepo AccountRepository,
+	rateLimitService *RateLimitService,
+	leaderLock LeaderLockCache,
+) *AccountCooldownRecoveryService {
+	service := NewAccountCooldownRecoveryService(accountRepo, rateLimitService, leaderLock)
+	service.Start()
+	return service
+}
+
 func ProvideAccountUsageService(
 	accountRepo AccountRepository,
 	usageLogRepo UsageLogRepository,
@@ -899,6 +912,7 @@ var ProviderSet = wire.NewSet(
 	ProvideOpenAITokenProvider,
 	ProvideOpenAIQuotaService,
 	ProvideOpenAIQuotaAutoResetService,
+	ProvideAccountCooldownRecoveryService,
 	ProvideGrokQuotaService,
 	ProvideCNProviderQuotaService,
 	ProvideCNProviderBalanceService,
