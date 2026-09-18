@@ -609,7 +609,7 @@ func (s *SchedulerSnapshotService) handleBulkAccountEvent(ctx context.Context, p
 		}
 		accountGroupIDs := s.normalizeGroupIDs(account.GroupIDs)
 		switch account.Platform {
-		case PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformQwen:
+		case PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformQwen, PlatformMiniMax, PlatformOpenCodeGo:
 			addPlatformGroups(account.Platform, accountGroupIDs)
 		case PlatformAntigravity:
 			// 批量更新可能刚关闭 mixed_scheduling，仍需清理两个兼容平台的旧快照。
@@ -824,8 +824,8 @@ func (s *SchedulerSnapshotService) rebuildByAccount(ctx context.Context, account
 	return s.rebuildBuckets(ctx, buckets, reason)
 }
 
-func schedulerSnapshotPlatforms() [9]string {
-	return [9]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformQwen}
+func schedulerSnapshotPlatforms() [11]string {
+	return [11]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformQwen, PlatformMiniMax, PlatformOpenCodeGo}
 }
 
 // 生命周期辅助函数有意排除 group0；full rebuild 构造 group0 canonical 集时必须显式调用 canonical helper。
@@ -836,6 +836,8 @@ func schedulerBucketsForGroup(groupID int64) []SchedulerBucket {
 	return schedulerCanonicalBuckets(groupID)
 }
 
+// schedulerCanonicalBucketCount 直接数真实构造出来的桶，不另写一份「平台数 × 2 +
+// 混合模式补 1」的计数规则——那等于把同一条规则写两处，加平台或改模式时必然分叉。
 func schedulerCanonicalBucketCount() int {
 	return len(schedulerCanonicalBuckets(1))
 }

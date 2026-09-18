@@ -126,8 +126,12 @@ func (s *CNProviderBalanceCheckService) runOnce() {
 				quotaTargets = append(quotaTargets, quotaTarget{id: account.ID, platform: account.Platform})
 				continue
 			}
-			// payg 余额探测仅 kimi/deepseek（智谱与 Qwen 无公开余额端点，payg
-			// 账号依赖响应式 402/429 处理）。
+			// payg 余额探测仅 kimi/deepseek：智谱 / MiniMax / Qwen 都没有公开余额
+			// 端点，payg 账号依赖响应式 402/429 处理。
+			//
+			// 判据刻意写成白名单而不是「排除 zhipu 与 minimax」的黑名单：新接一个
+			// 没有余额端点的供应商时，黑名单会默认把它纳入探测并每周期白跑 + 报警，
+			// 白名单则默认不探、fail closed。Qwen 就是这样一个供应商。
 			if (platform == PlatformKimi || platform == PlatformDeepseek) && account.Schedulable {
 				paygTargets = append(paygTargets, account)
 			}
@@ -142,12 +146,15 @@ func (s *CNProviderBalanceCheckService) runOnce() {
 		collect(platform, accounts)
 	}
 	// 智谱无余额端点，仅进 Coding Plan 额度探测。
+	// 智谱 / MiniMax 无余额端点，仅进额度探测。
 	if s.quotaService != nil {
-		accounts, err := s.accountRepo.ListByPlatform(context.Background(), PlatformZhipu)
-		if err != nil {
-			log.Printf("[CNBalance] list %s accounts failed: %v", PlatformZhipu, err)
-		} else {
-			collect(PlatformZhipu, accounts)
+		for _, platform := range []string{PlatformZhipu, PlatformMiniMax} {
+			accounts, err := s.accountRepo.ListByPlatform(context.Background(), platform)
+			if err != nil {
+				log.Printf("[CNBalance] list %s accounts failed: %v", platform, err)
+				continue
+			}
+			collect(platform, accounts)
 		}
 	}
 

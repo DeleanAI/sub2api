@@ -134,6 +134,7 @@
           :utilization="usageInfo.seven_day.utilization"
           :resets-at="usageInfo.seven_day.resets_at"
           :window-stats="usageInfo.seven_day.window_stats"
+          :estimated-total-cost="openAISevenDayEstimatedTotalCost"
           :show-now-when-idle="true"
           color="emerald"
         />
@@ -429,10 +430,10 @@
       </div>
     </template>
 
-    <!-- CN providers: Coding Plan 额度、Qwen Token Plan 状态，或 payg 余额。
-         平台判定走 isCnProviderPlatform（PR #14 引入）而不是写死三个平台名，
-         否则新接的 qwen 不会走到这个分支。 -->
-    <template v-else-if="isCnProviderPlatform(account.platform)">
+    <!-- CN providers 与 OpenCode：Coding Plan 额度、Qwen Token Plan 状态，或 payg 余额。
+         平台判定走 isCnFormPlatform（名单只在 @/constants/cnProviders 声明）而不是
+         写死平台名，否则新接的平台不会走到这个分支。 -->
+    <template v-else-if="isCnFormPlatform(account.platform)">
       <!-- 挂在 CN 平台下的 Ollama Cloud 账号（资格由后端下发 eligible）：用量由
            Ollama 用量窗口负责。这类账号不是国产厂商订阅，CN 的额度/余额探测端点由
            base_url 衍生，对 ollama.com 会被后端出站 URL 白名单拒绝，渲染出来只会
@@ -664,7 +665,7 @@ import CNProviderQuotaCell from './CNProviderQuotaCell.vue'
 import CNProviderBalanceCell from './CNProviderBalanceCell.vue'
 import OllamaCloudUsageCell from './OllamaCloudUsageCell.vue'
 import { cnQuotaCellVisible as cnQuotaCellVisibleFn, cnBalanceCellVisible as cnBalanceCellVisibleFn } from './credentialsBuilder'
-import { isCnProviderPlatform } from '@/constants/cnProviders'
+import { isCnFormPlatform } from '@/constants/cnProviders'
 
 // Module-level cache shared across all AccountUsageCell instances
 const _usageCache = new Map<number, { data: AccountUsageInfo; ts: number }>()
@@ -726,9 +727,10 @@ let visibilityObserver: IntersectionObserver | null = null
 const showUsageWindows = computed(() => {
   // Gemini: we can always compute local usage windows from DB logs (simulated quotas).
   if (props.account.platform === 'gemini') return true
-  // CN providers: apikey 账号有 Coding Plan 用量、Token Plan 耗尽状态或 payg 余额，
-  // 由 CNProviderQuotaCell / CNProviderBalanceCell 自行展示。
-  if (isCnProviderPlatform(props.account.platform)) {
+  // CN providers 与 OpenCode：apikey 账号有 Coding Plan 用量、Token Plan 耗尽状态
+  // 或 payg 余额，由 CNProviderQuotaCell / CNProviderBalanceCell 自行探测与展示。
+  // 平台名单只在 @/constants/cnProviders 声明一处。
+  if (isCnFormPlatform(props.account.platform)) {
     return true
   }
   return props.account.type === 'oauth' || props.account.type === 'setup-token'
@@ -782,6 +784,25 @@ const geminiUsageAvailable = computed(() => {
 const hasOpenAIUsageFallback = computed(() => {
   if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return false
   return !!usageInfo.value?.five_hour || !!usageInfo.value?.seven_day
+})
+
+const openAISevenDayEstimatedTotalCost = computed(() => {
+  const sevenDay = usageInfo.value?.seven_day
+  const utilization = sevenDay?.utilization
+  const currentCost = sevenDay?.window_stats?.cost
+  if (
+    typeof utilization !== 'number' ||
+    typeof currentCost !== 'number' ||
+    !Number.isFinite(utilization) ||
+    !Number.isFinite(currentCost) ||
+    utilization <= 0 ||
+    currentCost <= 0
+  ) {
+    return null
+  }
+
+  const estimate = (currentCost * 100) / utilization
+  return Number.isFinite(estimate) && estimate > 0 ? estimate : null
 })
 
 const openAIUsageRefreshKey = computed(() => buildOpenAIUsageRefreshKey(props.account))

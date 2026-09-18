@@ -54,6 +54,7 @@ func TestValidateCodingPlanAccount_Matrix(t *testing.T) {
 		{name: "qwen token plan has no quota endpoint", account: tokenPlanAccount(PlatformQwen), wantReason: "CN_QUOTA_NOT_SUPPORTED"},
 		{name: "kimi coding ok", account: codingAccount(PlatformKimi)},
 		{name: "zhipu coding ok", account: codingAccount(PlatformZhipu)},
+		{name: "minimax coding ok", account: codingAccount(PlatformMiniMax)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

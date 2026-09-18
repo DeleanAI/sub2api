@@ -217,7 +217,7 @@ func (f *ChannelMonitorQuotaFetcher) fetchUncached(ctx context.Context, accountI
 	// （GetUsageForAccount / QueryUsageForAccount / QueryBalanceForAccount），
 	// 下游服务不再各自 GetByID（每次含 proxies/groups 联查）。
 	switch account.Platform {
-	case domain.PlatformKimi, domain.PlatformZhipu, domain.PlatformDeepseek:
+	case domain.PlatformKimi, domain.PlatformZhipu, domain.PlatformDeepseek, domain.PlatformMiniMax:
 		if account.IsCodingPlan() {
 			return f.fetchCNQuota(ctx, account, now)
 		}
@@ -226,6 +226,8 @@ func (f *ChannelMonitorQuotaFetcher) fetchUncached(ctx context.Context, accountI
 		// Qwen (payg and Token Plan) has no public usage/balance endpoint.
 		// Do not fall through to the overseas usage probe.
 		return quotaErrorSnapshot("cn_quota", "Qwen Token Plan does not support usage queries", now)
+	case domain.PlatformOpenCodeGo:
+		return f.fetchCNQuota(ctx, account, now)
 	default:
 		return f.fetchUsage(ctx, account, now)
 	}

@@ -147,15 +147,21 @@ const snapshotExhaustedReason = computed(() =>
 const snapshotData = computed<CNProviderQuotaProbeResult | null>(() => {
   if (isQwenTokenPlan.value) return null
 
+  // 统一走 readSnapshot* 封装（前缀由 snapshotPrefix 解析），不要在这里重新拼
+  // `${platform}_...`——两份拼接实现迟早分叉。monthly 是上游为 MiniMax 引入的档位。
   const used5h = readSnapshotNumber('5h_used_percent')
   const usedWeekly = readSnapshotNumber('weekly_used_percent')
-  if (used5h == null && usedWeekly == null) return null
+  const usedMonthly = readSnapshotNumber('monthly_used_percent')
+  if (used5h == null && usedWeekly == null && usedMonthly == null) return null
   const tiers: CNProviderQuotaProbeResult['tiers'] = []
   if (used5h != null) {
     tiers.push({ window: '5h', used_percent: used5h, reset_at: readSnapshotString('5h_reset_at') || undefined })
   }
   if (usedWeekly != null) {
     tiers.push({ window: 'weekly', used_percent: usedWeekly, reset_at: readSnapshotString('weekly_reset_at') || undefined })
+  }
+  if (usedMonthly != null) {
+    tiers.push({ window: 'monthly', used_percent: usedMonthly, reset_at: readSnapshotString('monthly_reset_at') || undefined })
   }
   return { success: true, tiers } as CNProviderQuotaProbeResult
 })
@@ -204,10 +210,11 @@ const truncatedError = computed(() => {
   return error.value.length > 80 ? `${error.value.slice(0, 80)}...` : error.value
 })
 
-const windowLabel = (window: string) =>
-  window === 'weekly'
-    ? t('admin.accounts.cnProviders.windowWeekly')
-    : t('admin.accounts.cnProviders.window5h')
+const windowLabel = (window: string) => {
+  if (window === 'weekly') return t('admin.accounts.cnProviders.windowWeekly')
+  if (window === 'monthly') return t('admin.accounts.cnProviders.windowMonthly')
+  return t('admin.accounts.cnProviders.window5h')
+}
 
 const isTokenPlanExhausted = computed(() =>
   isQwenTokenPlan.value && snapshotExhausted.value

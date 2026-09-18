@@ -1,10 +1,13 @@
 import {
   isCnCodingPlanPlatform,
+  isCnFormPlatform,
   isCnProviderPlatform,
   isQwenPlatform,
   normalizeCnProviderPlatform,
-  type CanonicalCnProviderPlatform
+  type CanonicalCnProviderPlatform,
+  type CnFormPlatform
 } from '@/constants/cnProviders'
+import { openAIPlanTypeLabel } from '@/utils/planType'
 
 export function applyInterceptWarmup(
   credentials: Record<string, unknown>,
@@ -48,7 +51,9 @@ export function isHeaderOverrideCapable(platform: string, type: string): boolean
   if (
     platform === 'anthropic' ||
     platform === 'openai' ||
-    isCnProviderPlatform(platform)
+    // CN 供应商（kimi/zhipu/deepseek/qwen/minimax，名单只在 cnProviders 声明）
+    // 加上复用同一表单的 OpenCode。
+    isCnFormPlatform(platform)
   ) {
     return type === 'apikey'
   }
@@ -261,14 +266,123 @@ export const GROK_BASE_URL_PRESETS: GrokBaseUrlPreset[] = [
 // 两者正交。同协议请求零转换直通，跨协议组合才走转换链。
 
 export type CnAccountMode = 'payg' | 'coding' | 'token_plan'
+export type OpenCodeAccountMode = 'zen' | 'go'
 
-/** deepseek / kimi 支持原生 responses；adaptive 会按入站协议选择原生端点。 */
+/**
+ * CnProviderPlatform 是 @/constants/cnProviders 里 canonical 平台集的别名。
+ * 平台名单只在那一处声明——这里曾经各写一份（一份含 qwen、一份含 minimax），
+ * 结果两边都漏了对方的平台。新增供应商只改 cnProviders.ts。
+ */
+export type CnProviderPlatform = CanonicalCnProviderPlatform
+
+/** deepseek / kimi / minimax 支持原生 responses；adaptive 会按入站协议选择原生端点。 */
 export type CnApiProtocol = 'adaptive' | 'chat_completions' | 'anthropic' | 'responses'
 export type CnNativeApiProtocol = Exclude<CnApiProtocol, 'adaptive'>
 
-/** DeepSeek 与 Kimi（按量付费 / Coding Plan）提供原生 Responses 端点。 */
-export function cnSupportsNativeResponses(platform: string): boolean {
-  return platform === 'deepseek' || platform === 'kimi'
+/** 委托给唯一的归一化入口，别在这里重复平台名单。 */
+export function isCNProviderPlatform(platform: string): platform is CnProviderPlatform {
+  return isCnProviderPlatform(platform)
+}
+
+/**
+ * DeepSeek、Kimi、MiniMax 与 OpenCode 提供原生 Responses 端点。
+ *
+ * 归一化在**函数内部**做，调用方一律传原始 platform。此前 5 个调用点各写一遍
+ * `cnSupportsNativeResponses(normalizeCnProviderPlatform(p) ?? '')`，而归一化只认
+ * CN 供应商——opencode_go 归一化后是 null，空串会让它的 responses 档位整个消失
+ * （实测：EditAccountModal 的 OpenCode Zen 用例提交时丢掉 responses 端点）。
+ */
+export function cnSupportsNativeResponses(platform: string | null | undefined): boolean {
+  const raw = (platform ?? '').trim()
+  if (!raw) return false
+  const p = normalizeCnProviderPlatform(raw) ?? raw
+  return p === 'deepseek' || p === 'kimi' || p === 'minimax' || p === 'opencode_go'
+}
+
+export const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1'
+export const OPENCODE_GO_ANTHROPIC_BASE_URL = 'https://opencode.ai/zen/go'
+export const OPENCODE_ZEN_BASE_URL = 'https://opencode.ai/zen/v1'
+export const OPENCODE_ZEN_ANTHROPIC_BASE_URL = 'https://opencode.ai/zen'
+
+export function isOpenCodeGoPlatform(platform: string): boolean {
+  return platform === 'opencode_go'
+}
+
+export const OPENCODE_GO_PROTOCOL_RULES_KEY = 'protocol_rules'
+
+export interface OpenCodeGoProtocolRule {
+  pattern: string
+  protocol: CnNativeApiProtocol
+}
+
+export const DEFAULT_OPENCODE_GO_PROTOCOL_RULES: OpenCodeGoProtocolRule[] = [
+  { pattern: 'grok-*', protocol: 'responses' },
+  { pattern: 'gpt-*', protocol: 'responses' },
+  { pattern: 'muse-spark-*', protocol: 'responses' },
+  { pattern: 'minimax-*', protocol: 'anthropic' },
+  { pattern: 'qwen*', protocol: 'anthropic' }
+]
+
+export const DEFAULT_OPENCODE_ZEN_PROTOCOL_RULES: OpenCodeGoProtocolRule[] = [
+  { pattern: 'grok-*', protocol: 'responses' },
+  { pattern: 'gpt-*', protocol: 'responses' },
+  { pattern: 'muse-spark-*', protocol: 'responses' },
+  { pattern: 'claude-*', protocol: 'anthropic' },
+  { pattern: 'qwen*', protocol: 'anthropic' }
+]
+
+export function resolveOpenCodeAccountMode(value: unknown): OpenCodeAccountMode {
+  return value === 'zen' ? 'zen' : 'go'
+}
+
+export function defaultOpenCodeProtocolRules(mode: OpenCodeAccountMode = 'go'): OpenCodeGoProtocolRule[] {
+  return mode === 'zen' ? DEFAULT_OPENCODE_ZEN_PROTOCOL_RULES : DEFAULT_OPENCODE_GO_PROTOCOL_RULES
+}
+
+export function cloneOpenCodeGoProtocolRules(
+  rules: OpenCodeGoProtocolRule[] = DEFAULT_OPENCODE_GO_PROTOCOL_RULES
+): OpenCodeGoProtocolRule[] {
+  return rules.map(rule => ({ pattern: rule.pattern, protocol: rule.protocol }))
+}
+
+function isNativeOpenCodeGoProtocol(value: unknown): value is CnNativeApiProtocol {
+  return value === 'chat_completions' || value === 'anthropic' || value === 'responses'
+}
+
+export function parseOpenCodeGoProtocolRules(raw: unknown): OpenCodeGoProtocolRule[] | null {
+  if (raw == null) return null
+  if (!Array.isArray(raw)) return cloneOpenCodeGoProtocolRules()
+  const rules: OpenCodeGoProtocolRule[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const pattern = typeof (item as { pattern?: unknown }).pattern === 'string'
+      ? (item as { pattern: string }).pattern.trim()
+      : ''
+    const protocol = (item as { protocol?: unknown }).protocol
+    if (!pattern || !isNativeOpenCodeGoProtocol(protocol)) continue
+    rules.push({ pattern, protocol })
+  }
+  return rules
+}
+
+export function applyOpenCodeGoProtocolRules(
+  credentials: Record<string, unknown>,
+  rules: OpenCodeGoProtocolRule[],
+  mode: 'create' | 'edit'
+): void {
+  const serialized = rules
+    .map(rule => ({
+      pattern: rule.pattern.trim().toLowerCase(),
+      protocol: rule.protocol
+    }))
+    .filter(rule => rule.pattern.length > 0 && isNativeOpenCodeGoProtocol(rule.protocol))
+  if (serialized.length > 0 || mode === 'edit') {
+    credentials[OPENCODE_GO_PROTOCOL_RULES_KEY] = serialized
+  }
+}
+
+export function isMultiProtocolApiKeyPlatform(platform: string): boolean {
+  return platform === 'kimi' || platform === 'zhipu' || platform === 'deepseek' || platform === 'minimax' || platform === 'opencode_go'
 }
 
 export interface CnBaseUrlPreset {
@@ -280,7 +394,7 @@ export interface CnBaseUrlPreset {
 }
 
 /** 各供应商按账号类型 × API 协议分档的快捷端点（点击快速填充，输入框仍可自由填写）。 */
-export const CN_BASE_URL_PRESETS: Record<CanonicalCnProviderPlatform, CnBaseUrlPreset[]> = {
+export const CN_BASE_URL_PRESETS: Record<CanonicalCnProviderPlatform | CnProviderPlatform, CnBaseUrlPreset[]> = {
   kimi: [
     { mode: 'payg', protocol: 'chat_completions', label: 'Moonshot', url: 'https://api.moonshot.cn/v1' },
     { mode: 'payg', protocol: 'anthropic', label: 'Moonshot Anthropic', url: 'https://api.moonshot.cn/anthropic' },
@@ -305,16 +419,32 @@ export const CN_BASE_URL_PRESETS: Record<CanonicalCnProviderPlatform, CnBaseUrlP
     { mode: 'payg', protocol: 'anthropic', label: 'DashScope Anthropic', url: 'https://dashscope.aliyuncs.com/apps/anthropic' },
     { mode: 'token_plan', protocol: 'chat_completions', label: 'Qwen Token Plan', url: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1' },
     { mode: 'token_plan', protocol: 'anthropic', label: 'Qwen Token Plan Anthropic', url: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic' }
+  ],
+  minimax: [
+    { mode: 'payg', protocol: 'chat_completions', label: 'MiniMax CN', url: 'https://api.minimaxi.com/v1' },
+    { mode: 'payg', protocol: 'anthropic', label: 'MiniMax CN Anthropic', url: 'https://api.minimaxi.com/anthropic' },
+    { mode: 'payg', protocol: 'responses', label: 'MiniMax CN Responses', url: 'https://api.minimaxi.com/v1' },
+    { mode: 'payg', protocol: 'chat_completions', label: 'MiniMax Intl', url: 'https://api.minimax.io/v1' },
+    { mode: 'payg', protocol: 'anthropic', label: 'MiniMax Intl Anthropic', url: 'https://api.minimax.io/anthropic' },
+    { mode: 'payg', protocol: 'responses', label: 'MiniMax Intl Responses', url: 'https://api.minimax.io/v1' },
+    { mode: 'coding', protocol: 'chat_completions', label: 'MiniMax Coding CN', url: 'https://api.minimaxi.com/v1' },
+    { mode: 'coding', protocol: 'anthropic', label: 'MiniMax Coding CN Anthropic', url: 'https://api.minimaxi.com/anthropic' },
+    { mode: 'coding', protocol: 'responses', label: 'MiniMax Coding CN Responses', url: 'https://api.minimaxi.com/v1' },
+    { mode: 'coding', protocol: 'chat_completions', label: 'MiniMax Coding Intl', url: 'https://api.minimax.io/v1' },
+    { mode: 'coding', protocol: 'anthropic', label: 'MiniMax Coding Intl Anthropic', url: 'https://api.minimax.io/anthropic' },
+    { mode: 'coding', protocol: 'responses', label: 'MiniMax Coding Intl Responses', url: 'https://api.minimax.io/v1' }
   ]
 }
 
 /** 返回指定供应商 + 账号类型 + API 协议的默认 base url。 */
 export function defaultCNBaseUrl(
   platform: string,
-  mode: CnAccountMode,
+  mode: CnAccountMode | OpenCodeAccountMode,
   protocol: CnApiProtocol = 'chat_completions'
 ): string {
-  const normalizedPlatform = normalizeCnProviderPlatform(platform)
+  // 归一化认 CN 供应商（含别名）；不认的平台（opencode_go）回退原值，
+  // 类型用 CnFormPlatform 以容纳它。
+  const normalizedPlatform = (normalizeCnProviderPlatform(platform) ?? platform) as CnFormPlatform
   if (protocol === 'anthropic') {
     switch (normalizedPlatform) {
       case 'kimi':
@@ -327,12 +457,17 @@ export function defaultCNBaseUrl(
         return mode === 'token_plan'
           ? 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic'
           : 'https://dashscope.aliyuncs.com/apps/anthropic'
+      case 'minimax':
+        return 'https://api.minimaxi.com/anthropic'
+      case 'opencode_go':
+        return mode === 'zen' ? OPENCODE_ZEN_ANTHROPIC_BASE_URL : OPENCODE_GO_ANTHROPIC_BASE_URL
       default:
         return ''
     }
   }
-  // responses：Kimi / DeepSeek 的 base 与 chat_completions 相同（端点路径差异由后端处理）。
-  // 用归一化后的平台名：qwen 有 dashscope 等别名，未归一化会漏判。
+  // responses：Kimi / DeepSeek / MiniMax 的 base 与 chat_completions 相同（端点路径差异由后端处理）。
+  // 用归一化后的平台名：qwen 有 dashscope 等别名，未归一化会漏判；归一化不认的
+  // 平台（minimax / opencode_go）回退原值继续匹配下面的分支。
   switch (normalizedPlatform) {
     case 'kimi':
       return mode === 'coding' ? 'https://api.kimi.com/coding/v1' : 'https://api.moonshot.cn/v1'
@@ -346,6 +481,10 @@ export function defaultCNBaseUrl(
       return mode === 'token_plan'
         ? 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1'
         : 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+    case 'minimax':
+      return 'https://api.minimaxi.com/v1'
+    case 'opencode_go':
+      return mode === 'zen' ? OPENCODE_ZEN_BASE_URL : OPENCODE_GO_BASE_URL
     default:
       return ''
   }
@@ -354,15 +493,14 @@ export function defaultCNBaseUrl(
 /** 返回自适应模式下需要配置的原生协议及其默认端点。 */
 export function defaultCNAdaptiveBaseUrls(
   platform: string,
-  mode: CnAccountMode
+  mode: CnAccountMode | OpenCodeAccountMode
 ): Record<CnNativeApiProtocol, string> {
-  const normalizedPlatform = normalizeCnProviderPlatform(platform)
   return {
     chat_completions: defaultCNBaseUrl(platform, mode, 'chat_completions'),
     anthropic: defaultCNBaseUrl(platform, mode, 'anthropic'),
-    // 走 cnSupportsNativeResponses 而不是写死 deepseek：上游已把 Kimi 也纳入，
-    // 而 qwen 的 preset 里没有 responses 协议，这个判据天然把它排除掉。
-    responses: cnSupportsNativeResponses(normalizedPlatform ?? '') ? defaultCNBaseUrl(platform, mode, 'responses') : ''
+    // 走 cnSupportsNativeResponses 而不是写死 deepseek：上游已把 Kimi / MiniMax /
+    // OpenCode 也纳入，而 qwen 的 preset 里没有 responses 协议，这个判据天然排除它。
+    responses: cnSupportsNativeResponses(platform) ? defaultCNBaseUrl(platform, mode, 'responses') : ''
   }
 }
 
@@ -371,8 +509,12 @@ export function defaultCNAdaptiveBaseUrls(
 // 共用，避免多处复制条件后一处改另一处漏改。
 
 export function cnQuotaCellVisible(platform: string, accountMode: string): boolean {
+  // OpenCode：Go 订阅有额度窗口，Zen 是按量付费没有。
+  if (platform === 'opencode_go') return accountMode !== 'zen'
   return (
+    // Coding Plan（kimi / zhipu / minimax）有滚动用量窗口。
     (isCnCodingPlanPlatform(platform) && accountMode === 'coding') ||
+    // Qwen Token Plan 是一次性额度，始终展示状态（耗尽标记也在这个单元格里）。
     (isQwenPlatform(platform) && accountMode === 'token_plan')
   )
 }
@@ -411,23 +553,12 @@ export interface PlanTypeOption {
 }
 
 /**
- * plan_type 值的友好显示标签，镜像 PlatformTypeBadge 的映射
- * （canonical 值 chatgptpro 显示为 Pro，team 显示为 Team）。未知值原样返回。
+ * plan_type 值的友好显示标签（ChatGPT 档位命名）。
+ * 与 PlatformTypeBadge 共用 openAIPlanTypeLabel，避免两处映射漂移；
+ * canonical 值 chatgptpro 显示为 Pro 20x，team 显示为 Business Standard。未知值原样返回。
  */
 export function planTypeDisplayLabel(value: string): string {
-  switch (value.trim().toLowerCase()) {
-    case 'plus':
-      return 'Plus'
-    case 'pro':
-    case 'chatgptpro':
-      return 'Pro'
-    case 'free':
-      return 'Free'
-    case 'team':
-      return 'Team'
-    default:
-      return value
-  }
+  return openAIPlanTypeLabel(value) || value
 }
 
 /**
@@ -440,8 +571,8 @@ export function readPlanType(credentials: Record<string, unknown> | undefined | 
 }
 
 /**
- * 构建 plan_type 下拉选项：清空 + Plus/Pro/Free 预设。
- * 若当前值是某预设的别名（如 chatgptpro↔Pro），用当前的 canonical 值占据该
+ * 构建 plan_type 下拉选项：清空 + Plus/Pro 20x/Pro 5x/Business Premium/Free 预设。
+ * 若当前值是某预设的别名（如 chatgptpro↔Pro 20x），用当前的 canonical 值占据该
  * 标签位（保留 canonical，显示友好标签，避免重复项）；若是完全预设外的值
  * （如 team 或异常值），追加为一项，避免编辑时下拉丢失原值。
  */
@@ -450,7 +581,9 @@ export function buildPlanTypeOptions(current: string, clearLabel: string): PlanT
   const curLabel = cur ? planTypeDisplayLabel(cur) : ''
   const presets: PlanTypeOption[] = [
     { value: 'plus', label: 'Plus' },
-    { value: 'pro', label: 'Pro' },
+    { value: 'pro', label: 'Pro 20x' },
+    { value: 'prolite', label: 'Pro 5x' },
+    { value: 'self_serve_business_prolite', label: 'Business Premium' },
     { value: 'free', label: 'Free' }
   ]
   const opts: PlanTypeOption[] = [{ value: '', label: clearLabel }]

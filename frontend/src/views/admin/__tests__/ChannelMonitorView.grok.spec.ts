@@ -101,7 +101,9 @@ describe('channel monitor Grok provider', () => {
 
     expect(PROVIDERS).toContain(PROVIDER_GROK)
     const providerButtons = wrapper.findAll('[data-testid^="monitor-provider-"]')
-    expect(providerButtons).toHaveLength(8)
+    // 按 PROVIDERS 声明断言，不写死数量：新增平台（qwen / minimax / opencode_go
+    // 都曾这样加进来）当天就被覆盖，而硬编码的数字每次加平台都要手改。
+    expect(providerButtons).toHaveLength(PROVIDERS.length)
     expect(providerButtons[0].element.parentElement?.className).toContain('grid-cols-2')
     expect(providerButtons[0].element.parentElement?.className).toContain('sm:grid-cols-4')
 

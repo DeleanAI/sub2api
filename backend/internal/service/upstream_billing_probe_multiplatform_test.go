@@ -17,6 +17,7 @@ func TestUpstreamBillingProbeIdentityCoversAllAPIKeyPlatforms(t *testing.T) {
 	for _, platform := range []string{
 		PlatformOpenAI, PlatformGrok, PlatformAnthropic, PlatformGemini, PlatformAntigravity,
 		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformQwen,
+		PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformOpenCodeGo,
 	} {
 		require.True(t, IsUpstreamBillingProbeIdentity(platform, AccountTypeAPIKey), platform)
 		require.True(t, isUpstreamBillingProbeAccount(&Account{Platform: platform, Type: AccountTypeAPIKey}), platform)
@@ -176,6 +177,8 @@ func TestUpstreamBillingProbeOfficialAPIBaseURLIsUnsupportedWithoutRequest(t *te
 		{PlatformQwen, "https://dashscope.aliyuncs.com/apps/anthropic"},
 		{PlatformQwen, "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"},
 		{PlatformQwen, "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic"},
+		{PlatformOpenCodeGo, "https://opencode.ai/zen/go/v1"},
+		{PlatformOpenCodeGo, "https://opencode.ai/zen/go"},
 	}
 	for i, tc := range cases {
 		account := &Account{
@@ -219,6 +222,8 @@ func TestUpstreamBillingProbeOfficialAPIHostMatchingIsNormalized(t *testing.T) {
 	require.True(t, upstreamBillingProbeTargetIsOfficialAPI("https://api.deepseek.com/anthropic"))
 	require.True(t, upstreamBillingProbeTargetIsOfficialAPI("https://dashscope.aliyuncs.com/compatible-mode/v1"))
 	require.True(t, upstreamBillingProbeTargetIsOfficialAPI("https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"))
+	require.True(t, upstreamBillingProbeTargetIsOfficialAPI("https://opencode.ai/zen/go/v1"))
+	require.True(t, upstreamBillingProbeTargetIsOfficialAPI("https://opencode.ai/zen/go"))
 	// 相似但不同的注册域不拦：中转完全可能叫 *-x.ai 之外的任何名字。
 	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://relay.example/v1"))
 	require.False(t, upstreamBillingProbeTargetIsOfficialAPI("https://notx.ai"))

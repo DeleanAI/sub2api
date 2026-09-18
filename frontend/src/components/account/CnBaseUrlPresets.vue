@@ -27,7 +27,7 @@ import type { CanonicalCnProviderPlatform } from '@/constants/cnProviders'
 // 与 Grok 预设一致，仅作快速填充，输入框仍接受任意第三方转发地址。
 // 传入 protocol 时只显示该协议档的预设（协议 × 账号类型正交分档）。
 const props = defineProps<{
-  platform: CanonicalCnProviderPlatform
+  platform: CanonicalCnProviderPlatform | 'minimax'
   /** 当前已选账号类型，用于过滤和高亮匹配的预设 */
   mode?: 'payg' | 'coding' | 'token_plan'
   /** 当前已选 API 协议，用于过滤和高亮匹配的预设 */

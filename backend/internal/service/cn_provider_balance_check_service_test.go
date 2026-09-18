@@ -51,10 +51,14 @@ func TestCNProviderBalanceCheckRunOnceProbesCodingPlanQuota(t *testing.T) {
 		Credentials: map[string]any{"account_mode": "coding"}}
 	qwenTokenPlan := Account{ID: 5, Platform: PlatformQwen, Type: AccountTypeAPIKey, Status: StatusActive,
 		Credentials: map[string]any{"account_mode": AccountModeTokenPlan}}
+	minimaxCoding := Account{ID: 6, Platform: PlatformMiniMax, Type: AccountTypeAPIKey, Status: StatusActive,
+		Credentials: map[string]any{"account_mode": "coding"}}
+
 	repo := &fakeCNCheckRepo{byPlatform: map[string][]Account{
-		PlatformKimi:  {kimiActive, kimiPaused, kimiInactive},
-		PlatformZhipu: {zhipuCoding},
-		PlatformQwen:  {qwenTokenPlan},
+		PlatformKimi:    {kimiActive, kimiPaused, kimiInactive},
+		PlatformZhipu:   {zhipuCoding},
+		PlatformQwen:    {qwenTokenPlan},
+		PlatformMiniMax: {minimaxCoding},
 	}}
 	prober := &fakeCNQuotaProber{}
 	svc := &CNProviderBalanceCheckService{
@@ -65,7 +69,10 @@ func TestCNProviderBalanceCheckRunOnceProbesCodingPlanQuota(t *testing.T) {
 
 	svc.runOnce()
 
-	require.ElementsMatch(t, []int64{1, 2, 4}, prober.probed)
+	// 1/2 kimi coding（含已停调的，仍需刷新快照）、4 zhipu coding、6 minimax coding。
+	// 5 是 qwen Token Plan：一次性额度不是滚动窗口 coding plan，绝不能进 quota 探测，
+	// 它的缺席就是这条不变式的断言。
+	require.ElementsMatch(t, []int64{1, 2, 4, 6}, prober.probed)
 }
 
 // runOnceZhipuQuota 在 quotaService 缺失时安全跳过（Start 门控不启动的老部署路径）。
