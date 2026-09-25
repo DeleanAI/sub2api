@@ -41,14 +41,14 @@ func NewFrontendServer(settingsProvider PublicSettingsProvider, overrideDir, var
 func (s *FrontendServer) InvalidateCache() {}
 
 // Middleware returns a handler that returns 404 for non-embed builds
-func (s *FrontendServer) Middleware() gin.HandlerFunc {
+func (s *FrontendServer) Middleware(table RouteTable) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.String(http.StatusNotFound, "Frontend not embedded. Build with -tags embed to include frontend.")
 		c.Abort()
 	}
 }
 
-func ServeEmbeddedFrontend(overrideDir, variant string) (gin.HandlerFunc, error) {
+func ServeEmbeddedFrontend(table RouteTable, overrideDir, variant string) (gin.HandlerFunc, error) {
 	return nil, errNotEmbedded
 }
 

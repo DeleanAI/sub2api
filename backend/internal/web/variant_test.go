@@ -63,7 +63,7 @@ func TestEveryEmbeddedVariantServesInjectableIndexHTML(t *testing.T) {
 				c.Set(middleware.CSPNonceKey, "test-nonce-value")
 				c.Next()
 			})
-			router.Use(server.Middleware())
+			router.Use(server.Middleware(router))
 
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -105,7 +105,7 @@ func TestBothServingPathsRejectTheSameUnknownVariant(t *testing.T) {
 	assert.Nil(t, server)
 	require.ErrorIs(t, err, ErrVariantNotFound)
 
-	handler, err := ServeEmbeddedFrontend("", "no-such-variant")
+	handler, err := ServeEmbeddedFrontend(gin.New(), "", "no-such-variant")
 	assert.Nil(t, handler)
 	require.ErrorIs(t, err, ErrVariantNotFound)
 }

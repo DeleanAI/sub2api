@@ -390,7 +390,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			c.Set(middleware.CSPNonceKey, "test-nonce")
 			c.Next()
 		})
-		router.Use(server.Middleware())
+		router.Use(server.Middleware(router))
 
 		// First request to populate cache and get ETag
 		w1 := httptest.NewRecorder()
@@ -558,7 +558,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		for _, path := range apiPaths {
 			t.Run(path, func(t *testing.T) {
 				router := gin.New()
-				router.Use(server.Middleware())
+				router.Use(server.Middleware(router))
 				nextCalled := false
 				router.GET(path, func(c *gin.Context) {
 					nextCalled = true
@@ -583,7 +583,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		require.NoError(t, err)
 
 		router := gin.New()
-		router.Use(server.Middleware())
+		router.Use(server.Middleware(router))
 		nextCalled := false
 		router.POST("/responses/compact", func(c *gin.Context) {
 			nextCalled = true
@@ -609,7 +609,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		require.NoError(t, err)
 
 		router := gin.New()
-		router.Use(server.Middleware())
+		router.Use(server.Middleware(router))
 		nextCalled := false
 		router.POST("/alpha/search", func(c *gin.Context) {
 			nextCalled = true
@@ -639,7 +639,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			c.Set(middleware.CSPNonceKey, "test-nonce")
 			c.Next()
 		})
-		router.Use(server.Middleware())
+		router.Use(server.Middleware(router))
 
 		spaPaths := []string{
 			"/",
@@ -669,7 +669,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		require.NoError(t, err)
 
 		router := gin.New()
-		router.Use(server.Middleware())
+		router.Use(server.Middleware(router))
 
 		// Request for existing static file
 		assetName, assetContentType := firstRootStaticAsset(t, server.distFS)
@@ -702,21 +702,57 @@ func TestFrontendServer_Middleware(t *testing.T) {
 	})
 }
 
-// 探针路径被 SPA 兜底吞掉的话，编排器拿到的是 200 + HTML，故障实例永远摘不掉。
-func TestEmbeddedFrontendBypassesEveryProbePath(t *testing.T) {
-	for _, path := range probe.Paths() {
-		require.True(t, shouldBypassEmbeddedFrontend(path), "probe path=%s", path)
-	}
-}
+// 两个前端入口都建立在 SPAFallback 上，并且读的是自己所在的那张路由表：路由表认领的请求——哪怕不在保留
+// 名单里——必须到达自己的处理器；路径属于路由表而方法不对的得到 404；页面路径仍由前端应答。
+// 整张生产路由表的遍历在 internal/server（unit 构建）里，这里只证明两处接线。
+func TestBothServingPathsYieldRoutedPathsToTheRouter(t *testing.T) {
+	server, err := NewFrontendServer(&mockSettingsProvider{settings: map[string]string{"test": "value"}}, "", frontendvariant.Default)
+	require.NoError(t, err)
 
-func TestEmbeddedFrontendBypassesBareVideoAPIRoutes(t *testing.T) {
-	for _, path := range []string{
-		"/videos/generations",
-		"/videos/edits",
-		"/videos/extensions",
-		"/videos/request-123",
-	} {
-		require.True(t, shouldBypassEmbeddedFrontend(path), "path=%s", path)
+	claimed := []struct{ method, pattern, path string }{
+		{http.MethodPost, "/chat/completions", "/chat/completions"},
+		{http.MethodPost, "/contents/generations/tasks", "/contents/generations/tasks"},
+		{http.MethodGet, "/contents/generations/tasks/:task_id", "/contents/generations/tasks/cgt-1"},
+		{http.MethodPost, "/videos", "/videos"},
+	}
+	entryPoints := map[string]func(RouteTable) (gin.HandlerFunc, error){
+		"FrontendServer.Middleware": func(table RouteTable) (gin.HandlerFunc, error) { return server.Middleware(table), nil },
+		"ServeEmbeddedFrontend": func(table RouteTable) (gin.HandlerFunc, error) {
+			return ServeEmbeddedFrontend(table, "", frontendvariant.Default)
+		},
+	}
+	for name, build := range entryPoints {
+		t.Run(name, func(t *testing.T) {
+			router := gin.New()
+			frontend, err := build(router)
+			require.NoError(t, err)
+			router.Use(frontend)
+			reached := ""
+			for _, route := range claimed {
+				router.Handle(route.method, route.pattern, func(c *gin.Context) {
+					reached = c.FullPath()
+					c.JSON(http.StatusOK, gin.H{"ok": true})
+				})
+			}
+			for _, route := range claimed {
+				reached = ""
+				w := httptest.NewRecorder()
+				router.ServeHTTP(w, httptest.NewRequest(route.method, route.path, strings.NewReader(`{}`)))
+				require.Equal(t, route.pattern, reached, "%s %s", route.method, route.path)
+				require.Contains(t, w.Header().Get("Content-Type"), "application/json")
+			}
+
+			// 方舟 SDK 的任务列表（GET）没有开放：路径属于路由表，要的是 404，不是页面。
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/contents/generations/tasks", nil))
+			require.Equal(t, http.StatusNotFound, w.Code)
+			require.NotContains(t, w.Header().Get("Content-Type"), "text/html")
+
+			w = httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/dashboard", nil))
+			require.Equal(t, http.StatusOK, w.Code)
+			require.Contains(t, w.Header().Get("Content-Type"), "text/html")
+		})
 	}
 }
 
@@ -760,14 +796,14 @@ func TestHasEmbeddedFrontend(t *testing.T) {
 // Tests for legacy ServeEmbeddedFrontend function
 func TestServeEmbeddedFrontend(t *testing.T) {
 	t.Run("serves_static_files", func(t *testing.T) {
-		middleware, err := ServeEmbeddedFrontend("", frontendvariant.Default)
+		router := gin.New()
+		middleware, err := ServeEmbeddedFrontend(router, "", frontendvariant.Default)
 		require.NoError(t, err)
 
 		distFS, err := VariantFS(frontendvariant.Default)
 		require.NoError(t, err)
 		assetName, assetContentType := firstRootStaticAsset(t, distFS)
 
-		router := gin.New()
 		router.Use(middleware)
 
 		w := httptest.NewRecorder()
@@ -779,10 +815,9 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 	})
 
 	t.Run("serves_index_html_for_root", func(t *testing.T) {
-		middleware, err := ServeEmbeddedFrontend("", frontendvariant.Default)
-		require.NoError(t, err)
-
 		router := gin.New()
+		middleware, err := ServeEmbeddedFrontend(router, "", frontendvariant.Default)
+		require.NoError(t, err)
 		router.Use(middleware)
 
 		w := httptest.NewRecorder()
@@ -795,10 +830,9 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 	})
 
 	t.Run("serves_index_html_for_spa_routes", func(t *testing.T) {
-		middleware, err := ServeEmbeddedFrontend("", frontendvariant.Default)
-		require.NoError(t, err)
-
 		router := gin.New()
+		middleware, err := ServeEmbeddedFrontend(router, "", frontendvariant.Default)
+		require.NoError(t, err)
 		router.Use(middleware)
 
 		spaPaths := []string{"/dashboard", "/users/123", "/settings"}
@@ -816,9 +850,6 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 	})
 
 	t.Run("skips_api_routes", func(t *testing.T) {
-		middleware, err := ServeEmbeddedFrontend("", frontendvariant.Default)
-		require.NoError(t, err)
-
 		apiPaths := append(probe.Paths(),
 			"/api/users",
 			"/models",
@@ -836,6 +867,8 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 			t.Run(path, func(t *testing.T) {
 				nextCalled := false
 				router := gin.New()
+				middleware, err := ServeEmbeddedFrontend(router, "", frontendvariant.Default)
+				require.NoError(t, err)
 				router.Use(middleware)
 				router.GET(path, func(c *gin.Context) {
 					nextCalled = true

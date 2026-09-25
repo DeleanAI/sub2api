@@ -93,7 +93,7 @@ func newKeyBillingRouteTestRouter(t *testing.T, runMode string) (*gin.Engine, *k
 	router := gin.New()
 	if web.HasEmbeddedFrontend() {
 		// 这里只是复现"前端兜底中间件在场"的路由现场，用默认变体即可。
-		frontend, err := web.ServeEmbeddedFrontend("", frontendvariant.Default)
+		frontend, err := web.ServeEmbeddedFrontend(router, "", frontendvariant.Default)
 		require.NoError(t, err)
 		router.Use(frontend)
 	}

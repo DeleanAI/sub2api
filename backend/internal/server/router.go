@@ -97,7 +97,7 @@ func SetupRouter(
 			frontendServer.InvalidateCache()
 			refreshFrameOrigins()
 		})
-		r.Use(frontendServer.Middleware())
+		r.Use(frontendServer.Middleware(r))
 	} else {
 		settingService.SetOnUpdateCallback(refreshFrameOrigins)
 	}

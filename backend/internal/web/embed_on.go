@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/frontendvariant"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/probe"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 )
@@ -153,18 +152,11 @@ func (s *FrontendServer) InvalidateCache() {
 	}
 }
 
-// Middleware returns the Gin middleware handler
-func (s *FrontendServer) Middleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		path := c.Request.URL.Path
-
-		// Skip API routes
-		if shouldBypassEmbeddedFrontend(path) {
-			c.Next()
-			return
-		}
-
-		cleanPath := strings.TrimPrefix(path, "/")
+// Middleware returns the Gin middleware handler.
+// table 是这个中间件所在的路由表（*gin.Engine）：属于路由表的路径与 API 命名空间一律放行，见 SPAFallback。
+func (s *FrontendServer) Middleware(table RouteTable) gin.HandlerFunc {
+	return SPAFallback(table, func(c *gin.Context) {
+		cleanPath := strings.TrimPrefix(c.Request.URL.Path, "/")
 		if cleanPath == "" {
 			cleanPath = "index.html"
 		}
@@ -184,7 +176,7 @@ func (s *FrontendServer) Middleware() gin.HandlerFunc {
 		applyStaticAssetCacheHeaders(c.Writer.Header(), cleanPath)
 		s.fileServer.ServeHTTP(c.Writer, c.Request)
 		c.Abort()
-	}
+	})
 }
 
 func (s *FrontendServer) fileExists(path string) bool {
@@ -373,22 +365,16 @@ func replaceNoncePlaceholder(html []byte, nonce string) []byte {
 // (安装向导阶段还没有 SettingService)。
 // overrideDir 同 NewFrontendServer：由调用方从数据目录解析，传空关闭覆盖。
 // variant 与 NewFrontendServer 共用 VariantFS 这一个裁决点，两条服务路径不可能选出不同的前端。
-func ServeEmbeddedFrontend(overrideDir, variant string) (gin.HandlerFunc, error) {
+// table 同 FrontendServer.Middleware。
+func ServeEmbeddedFrontend(table RouteTable, overrideDir, variant string) (gin.HandlerFunc, error) {
 	distFS, err := VariantFS(variant)
 	if err != nil {
 		return nil, err
 	}
 	fileServer := http.FileServer(http.FS(distFS))
 
-	return func(c *gin.Context) {
-		path := c.Request.URL.Path
-
-		if shouldBypassEmbeddedFrontend(path) {
-			c.Next()
-			return
-		}
-
-		cleanPath := strings.TrimPrefix(path, "/")
+	return SPAFallback(table, func(c *gin.Context) {
+		cleanPath := strings.TrimPrefix(c.Request.URL.Path, "/")
 		if cleanPath == "" {
 			cleanPath = "index.html"
 		}
@@ -406,7 +392,7 @@ func ServeEmbeddedFrontend(overrideDir, variant string) (gin.HandlerFunc, error)
 		}
 
 		serveIndexHTML(c, distFS)
-	}, nil
+	}), nil
 }
 
 // tryServeOverrideFile is a standalone version of tryServeOverride for legacy usage.
@@ -422,24 +408,6 @@ func tryServeOverrideFile(c *gin.Context, overrideDir, cleanPath string) bool {
 	c.File(filePath)
 	c.Abort()
 	return true
-}
-
-func shouldBypassEmbeddedFrontend(path string) bool {
-	trimmed := strings.TrimSpace(path)
-	// 探针路径（/health、/readyz）必须绕过 SPA 兜底：编排器要的是状态码，不是 index.html。
-	return probe.IsPath(trimmed) ||
-		strings.HasPrefix(trimmed, "/api/") ||
-		strings.HasPrefix(trimmed, "/v1/") ||
-		strings.HasPrefix(trimmed, "/v1beta/") ||
-		strings.HasPrefix(trimmed, "/backend-api/") ||
-		strings.HasPrefix(trimmed, "/antigravity/") ||
-		strings.HasPrefix(trimmed, "/setup/") ||
-		trimmed == "/models" ||
-		trimmed == "/responses" ||
-		strings.HasPrefix(trimmed, "/responses/") ||
-		trimmed == "/alpha/search" ||
-		strings.HasPrefix(trimmed, "/images/") ||
-		strings.HasPrefix(trimmed, "/videos/")
 }
 
 func serveIndexHTML(c *gin.Context, fsys fs.FS) {
