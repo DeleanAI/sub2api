@@ -36,9 +36,11 @@ import (
 type EncryptedStore struct {
 	// Name 是报告里的显示名：table.column[.json_path]。
 	Name string
-	// SourceFiles 是把密文写到这里的源文件，相对 backend/。带行号时形如
-	// "path/file.go:123"，用于同一个文件里既有落库密文、又有不落库密文的情况
-	// （如插件管理器：配置要轮换，UI 会话令牌不落库）。
+	// SourceFiles 是把密文写到这里的源文件，相对 backend/。带函数名时形如
+	// "path/file.go:Type.Method"（调用 Encrypt 的那个顶层函数或方法），用于同一个
+	// 文件里既有落库密文、又有不落库密文的情况（如插件管理器：配置要轮换，UI 会话
+	// 令牌不落库）。不用行号：行号随无关改动漂移，每次合并上游都会误报，误报多了
+	// 大家只会机械地改数字；函数名只在调用点真正搬家时才变。
 	SourceFiles []string
 
 	table    string
@@ -85,13 +87,13 @@ var EncryptedStores = []EncryptedStore{
 	},
 	{
 		Name: "channel_monitors.api_key_encrypted",
-		// 逐调用点登记而不是整个文件：这个文件有三处 Encrypt（新建、复制、改 key），
+		// 逐函数登记而不是整个文件：这个文件有三处 Encrypt（新建、复制、改 key），
 		// 三处都写 channel_monitors.api_key_encrypted。整文件登记会把"以后再加一处
 		// 写别的列的 Encrypt"一并遮住，而被遮住的那一处不参与轮换，换钥匙后就读不出来了。
 		SourceFiles: []string{
-			"internal/service/channel_monitor_service.go:162",
-			"internal/service/channel_monitor_service.go:224",
-			"internal/service/channel_monitor_service.go:562",
+			"internal/service/channel_monitor_service.go:ChannelMonitorService.Create",
+			"internal/service/channel_monitor_service.go:ChannelMonitorService.Duplicate",
+			"internal/service/channel_monitor_service.go:ChannelMonitorService.applyAPIKeyUpdate",
 		},
 		table: channelmonitor.Table, idColumn: channelmonitor.FieldID, column: channelmonitor.FieldAPIKeyEncrypted, idKind: idInt,
 		where: func() *entsql.Predicate { return entsql.NEQ(channelmonitor.FieldAPIKeyEncrypted, "") },
@@ -100,7 +102,7 @@ var EncryptedStores = []EncryptedStore{
 		jsonKey(service.BackupS3Config{}, "SecretAccessKey")),
 	settingStore(service.SettingKeyImageStorageConfig, "internal/service/image_storage_settings.go",
 		jsonKey(service.ImageStorageSettings{}, "SecretAccessKey")),
-	settingStore(securityaudit.SettingKeyPromptAuditConfig, "internal/securityaudit/prompt_config_store.go:378",
+	settingStore(securityaudit.SettingKeyPromptAuditConfig, "internal/securityaudit/prompt_config_store.go:ConfigManager.buildNextStorage",
 		jsonKey(securityaudit.DefaultStorageConfig(), "Endpoints"), "[]", jsonKey(securityaudit.StorageEndpoint{}, "TokenCiphertext")),
 	{
 		Name:        "accounts.extra." + service.OllamaCloudUsageSessionExtraKey,
@@ -113,11 +115,11 @@ var EncryptedStores = []EncryptedStore{
 	},
 	{
 		// 上游 0.2.x 的插件配置：明文 JSON 用同一把密钥加密后写进
-		// sub2api_plugin_installations.config_encrypted（internal/repository/plugin_repo.go:211）。
+		// sub2api_plugin_installations.config_encrypted（internal/repository/plugin_repo.go 的 UpdateConfig）。
 		// 这张表只由 SQL 迁移 229_plugins.sql 创建，没有 ent schema，所以这里直接写表名。
 		// 漏登记的后果与 issue #4 完全一致：轮换后插件配置解不开，而插件加载时才会发现。
 		Name:        "sub2api_plugin_installations.config_encrypted",
-		SourceFiles: []string{"internal/service/plugin_manager.go:749"},
+		SourceFiles: []string{"internal/service/plugin_manager.go:PluginManager.SaveConfig"},
 		table:       "sub2api_plugin_installations", idColumn: "id", column: "config_encrypted", idKind: idInt,
 		where: func() *entsql.Predicate { return entsql.NEQ("config_encrypted", "") },
 	},
@@ -139,9 +141,9 @@ var NonRotatableEncryptSites = map[string]string{
 	"internal/securityaudit/prompt_service.go": "删除确认 token：5 分钟有效，只在请求之间往返，从不落库",
 	// ConfigManager.Encrypt 是个转发方法，本身不决定密文去向；去向由调用方决定，
 	// 目前唯一的调用方是上面那个不落库的删除确认 token。
-	"internal/securityaudit/prompt_config_store.go:414": "ConfigManager.Encrypt 转发方法：密文去向由调用方登记（当前唯一调用方是删除确认 token）",
-	"internal/service/plugin_manager.go:862":            "插件 UI 会话令牌：带用途前缀、TTL 内有效、只在请求之间往返，不落库",
-	"internal/service/openai_live_attestation.go":       "Live attestation 用 JWT secret 派生的独立密钥加密，不在落库密文密钥环上",
+	"internal/securityaudit/prompt_config_store.go:ConfigManager.Encrypt": "ConfigManager.Encrypt 转发方法：密文去向由调用方登记（当前唯一调用方是删除确认 token）",
+	"internal/service/plugin_manager.go:PluginManager.CreateUIAssetToken": "插件 UI 会话令牌：带用途前缀、TTL 内有效、只在请求之间往返，不落库",
+	"internal/service/openai_live_attestation.go":                         "Live attestation 用 JWT secret 派生的独立密钥加密，不在落库密文密钥环上",
 }
 
 func settingStore(key, sourceFile string, jsonPath ...string) EncryptedStore {
