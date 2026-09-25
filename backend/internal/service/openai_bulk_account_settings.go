@@ -2,7 +2,9 @@ package service
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
@@ -91,33 +93,47 @@ func normalizeBulkOpenAIEndpointCapabilities(raw any) (any, bool, error) {
 		return nil, false, invalidBulkOpenAIEndpointCapabilities()
 	}
 
-	selected := make(map[string]bool, 2)
+	selected := make(map[OpenAIEndpointCapability]bool, len(values))
 	for _, value := range values {
-		switch OpenAIEndpointCapability(value) {
-		case OpenAIEndpointCapabilityChatCompletions, OpenAIEndpointCapabilityEmbeddings:
-			selected[value] = true
-		default:
+		capability := OpenAIEndpointCapability(value)
+		if !slices.Contains(ConfigurableOpenAIEndpointCapabilities, capability) {
 			return nil, false, invalidBulkOpenAIEndpointCapabilities()
 		}
+		selected[capability] = true
 	}
 	if len(selected) == 0 {
 		return nil, false, invalidBulkOpenAIEndpointCapabilities()
 	}
 
-	includeChat := selected[string(OpenAIEndpointCapabilityChatCompletions)]
-	if includeChat && selected[string(OpenAIEndpointCapabilityEmbeddings)] {
-		return nil, true, nil
+	includeChat := selected[OpenAIEndpointCapabilityChatCompletions]
+	// 与「未配置」等价的集合写回 nil（清掉键），其余按声明顺序显式存储。原先这里只认
+	// chat_completions / embeddings，批量勾选 Seedance 一律 400，与前端提供的选项不一致。
+	if len(selected) == len(DefaultOpenAIEndpointCapabilities) {
+		isDefault := true
+		for _, capability := range DefaultOpenAIEndpointCapabilities {
+			isDefault = isDefault && selected[capability]
+		}
+		if isDefault {
+			return nil, includeChat, nil
+		}
 	}
-	if includeChat {
-		return []string{string(OpenAIEndpointCapabilityChatCompletions)}, true, nil
+	ordered := make([]string, 0, len(selected))
+	for _, capability := range ConfigurableOpenAIEndpointCapabilities {
+		if selected[capability] {
+			ordered = append(ordered, string(capability))
+		}
 	}
-	return []string{string(OpenAIEndpointCapabilityEmbeddings)}, false, nil
+	return ordered, includeChat, nil
 }
 
 func invalidBulkOpenAIEndpointCapabilities() error {
+	names := make([]string, 0, len(ConfigurableOpenAIEndpointCapabilities))
+	for _, capability := range ConfigurableOpenAIEndpointCapabilities {
+		names = append(names, string(capability))
+	}
 	return infraerrors.BadRequest(
 		"OPENAI_ENDPOINT_CAPABILITIES_INVALID",
-		"openai_capabilities must contain chat_completions, embeddings, or both",
+		"openai_capabilities must be a non-empty subset of: "+strings.Join(names, ", "),
 	)
 }
 

@@ -1473,6 +1473,11 @@
 </template>
 
 <script setup lang="ts">
+import {
+  DEFAULT_OPENAI_ENDPOINT_CAPABILITIES,
+  isDefaultOpenAIEndpointCapabilitySet,
+  normalizeOpenAIEndpointCapabilities
+} from '@/constants/openaiEndpointCapabilities'
 import { ref, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
@@ -1696,10 +1701,7 @@ const openaiPassthroughEnabled = ref(false)
 // Codex namespace 工具摊平兼容开关（仅 OAuth），缺省关闭即原样保留
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
-const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>([
-  'chat_completions',
-  'embeddings'
-])
+const openAIEndpointCapabilities = ref<OpenAIEndpointCapability[]>([...DEFAULT_OPENAI_ENDPOINT_CAPABILITIES])
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 const openaiOAuthResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
 const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OFF)
@@ -1795,12 +1797,6 @@ const openAITextGenerationCapabilityEnabled = computed(() =>
 const openAIResponsesModeApplicable = computed(
   () => !enableOpenAIEndpointCapabilities.value || openAITextGenerationCapabilityEnabled.value
 )
-
-const normalizeOpenAIEndpointCapabilities = (values: OpenAIEndpointCapability[]) => {
-  const allowed: OpenAIEndpointCapability[] = ['chat_completions', 'embeddings', 'seedance']
-  const selected = allowed.filter((value) => values.includes(value))
-  return selected.length > 0 ? selected : ['chat_completions', 'embeddings'] as OpenAIEndpointCapability[]
-}
 
 const toggleOpenAIEndpointCapability = (
   capability: OpenAIEndpointCapability,
@@ -1996,10 +1992,9 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
   }
 
   if (applyOpenAIEndpointCapabilities) {
-    credentials.openai_capabilities =
-      openAIEndpointCapabilities.value.length === 2 && !openAIEndpointCapabilities.value.includes('seedance')
-        ? null
-        : [...openAIEndpointCapabilities.value]
+    credentials.openai_capabilities = isDefaultOpenAIEndpointCapabilitySet(openAIEndpointCapabilities.value)
+      ? null
+      : [...openAIEndpointCapabilities.value]
     credentialsChanged = true
   }
 
@@ -2385,7 +2380,7 @@ watch(
       openaiPassthroughEnabled.value = false
       openaiFlattenNamespacesEnabled.value = false
       openAILongContextBillingEnabled.value = false
-      openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
+      openAIEndpointCapabilities.value = [...DEFAULT_OPENAI_ENDPOINT_CAPABILITIES]
       openAIResponsesMode.value = 'auto'
       modelRestrictionMode.value = 'whitelist'
       allowedModels.value = []

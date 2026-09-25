@@ -70,6 +70,10 @@ type GrokMediaRequestInfo struct {
 	MaskImageURL    string
 	Uploads         []OpenAIImagesUpload
 	MaskUpload      *OpenAIImagesUpload
+	// ReferencedTaskKeys 是本次请求所基于的既有上游任务（网关任务键，如
+	// SeedanceTaskKey(样片任务 ID)）。这类任务只存在于创建它的账号上，且只能引用调用方
+	// 自己的任务：处理层据此把请求绑定到那个账号，引用不到就拒绝。
+	ReferencedTaskKeys []string
 }
 
 func (r GrokMediaRequestInfo) ModerationBody() []byte {

@@ -108,6 +108,23 @@ const (
 
 const openAIEndpointCapabilitiesCredentialKey = "openai_capabilities"
 
+// ConfigurableOpenAIEndpointCapabilities 是账号可以在 credentials.openai_capabilities 里声明的
+// 端点能力，顺序即存储顺序。其余能力（responses / alpha_search / live / grok_media_generation）
+// 由别的账号属性推导，不接受手工配置。批量编辑校验、调度快照的一致性测试都遍历这张表；
+// 前端复选框的那份由 TestFrontendOpenAIEndpointCapabilitiesMatchBackend 对齐。
+var ConfigurableOpenAIEndpointCapabilities = []OpenAIEndpointCapability{
+	OpenAIEndpointCapabilityChatCompletions,
+	OpenAIEndpointCapabilityEmbeddings,
+	OpenAIEndpointCapabilitySeedance,
+}
+
+// DefaultOpenAIEndpointCapabilities 是未配置 openai_capabilities 时等价的能力集。不含 Seedance：
+// 它必须显式开启，文本请求才不会被调度到只接方舟任务接口的账号上。
+var DefaultOpenAIEndpointCapabilities = []OpenAIEndpointCapability{
+	OpenAIEndpointCapabilityChatCompletions,
+	OpenAIEndpointCapabilityEmbeddings,
+}
+
 // GrokMediaEligibleExtraKey is an optional per-account override stored in
 // accounts.extra. true forces media routing on, false disables it, and an
 // absent/null value uses provider observations.
