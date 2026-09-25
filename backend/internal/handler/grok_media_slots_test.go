@@ -125,6 +125,9 @@ type grokMediaSlotBindings struct {
 	key     string
 	billed  map[string]bool
 	pending map[string][]byte
+	// others 是 key 之外的其他归属绑定（多个任务分属不同账号的场景）；claimErr 模拟抢计费标记失败。
+	others   map[string]int64
+	claimErr error
 }
 
 func (s *grokMediaSlotBindings) SetGrokVideoPendingBilling(_ context.Context, key string, body []byte, _ time.Duration) error {
@@ -139,10 +142,16 @@ func (s *grokMediaSlotBindings) GetGrokVideoPendingBilling(_ context.Context, ke
 }
 
 func (s *grokMediaSlotBindings) GetSessionAccountID(_ context.Context, groupID int64, key string) (int64, error) {
-	if groupID != 24 || key != s.key {
+	if groupID != 24 {
 		return 0, service.ErrStickySessionNotFound
 	}
-	return s.owner, nil
+	if key == s.key {
+		return s.owner, nil
+	}
+	if owner, ok := s.others[key]; ok {
+		return owner, nil
+	}
+	return 0, service.ErrStickySessionNotFound
 }
 func (s *grokMediaSlotBindings) SetSessionAccountID(_ context.Context, _ int64, key string, owner int64, _ time.Duration) error {
 	s.key, s.owner = key, owner
@@ -159,6 +168,9 @@ func (s *grokMediaSlotBindings) DeleteSessionAccountID(context.Context, int64, s
 }
 
 func (s *grokMediaSlotBindings) ClaimGrokVideoBilled(_ context.Context, key string, _ time.Duration) (bool, error) {
+	if s.claimErr != nil {
+		return false, s.claimErr
+	}
 	if s.billed == nil {
 		s.billed = make(map[string]bool)
 	}

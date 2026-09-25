@@ -29,7 +29,7 @@ const (
 	EndpointVideosEdits          = "/v1/videos/edits"
 	EndpointVideosExtensions     = "/v1/videos/extensions"
 	EndpointVideos               = "/v1/videos"
-	EndpointSeedanceTasks        = "/api/v3/contents/generations/tasks"
+	EndpointSeedanceTasks        = service.SeedanceTasksPath
 	EndpointGeminiModels         = "/v1beta/models"
 )
 

@@ -50,12 +50,6 @@ func seedanceUpstreamTaskID(key string) string {
 	return strings.TrimPrefix(strings.TrimSpace(key), seedanceTaskKeyPrefix)
 }
 
-// errSeedanceCallbackUnsupported：方舟会把任务结果（与查询接口返回体一致，含 content.video_url
-// 与 usage）直接 POST 给 callback_url。调用方因此不必再经网关查询，而网关只在查询看到
-// succeeded 时按 usage.completion_tokens 计费——放行 callback_url 等于放行不计费的视频。
-// 明确拒绝，而不是悄悄删掉字段：删掉的话调用方会一直等一个永远不来的回调。
-var errSeedanceCallbackUnsupported = fmt.Errorf("callback_url is not supported by this gateway: poll GET /api/v3/contents/generations/tasks/{id} for the result instead")
-
 func ParseSeedanceRequest(body []byte) (GrokMediaRequestInfo, error) {
 	var info GrokMediaRequestInfo
 	if !gjson.ValidBytes(body) || !gjson.ParseBytes(body).IsObject() {
@@ -68,10 +62,6 @@ func ParseSeedanceRequest(body []byte) (GrokMediaRequestInfo, error) {
 	content := gjson.GetBytes(body, "content")
 	if !content.IsArray() || len(content.Array()) == 0 {
 		return info, fmt.Errorf("content must be a non-empty array")
-	}
-	if callback := gjson.GetBytes(body, "callback_url"); callback.Exists() && callback.Type != gjson.Null &&
-		strings.TrimSpace(callback.String()) != "" {
-		return info, errSeedanceCallbackUnsupported
 	}
 	info.Model = strings.TrimSpace(model.String())
 	var texts []string
@@ -110,46 +100,35 @@ func buildSeedanceURL(base string, endpoint GrokMediaEndpoint, taskID string) (s
 	return base, nil
 }
 
-// ForwardSeedance preserves the Ark protocol, including multimodal content and
-// future fields. Only model is rewritten using the account's configured mapping.
-func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint, taskID string, body []byte) (*OpenAIForwardResult, error) {
+// seedanceUpstreamCall 执行一次方舟任务接口调用。地址、鉴权、代理与读响应体只写这一处，
+// 请求路径（ForwardSeedance）与后台结算（querySeedanceTask）共用；c 为 nil 时不记 ops 指标。
+func (s *OpenAIGatewayService) seedanceUpstreamCall(ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint, taskKey string, body []byte) (*http.Response, []byte, time.Duration, error) {
 	if !account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilitySeedance) || !endpoint.IsSeedance() {
-		return nil, fmt.Errorf("seedance requires an OpenAI API key account with a custom base URL")
+		return nil, nil, 0, fmt.Errorf("seedance requires an OpenAI API key account with a custom base URL")
 	}
 	base, err := s.validateUpstreamBaseURL(account.GetCredential("base_url"))
 	if err != nil {
-		return nil, err
+		return nil, nil, 0, err
 	}
-	target, err := buildSeedanceURL(base, endpoint, seedanceUpstreamTaskID(taskID))
+	target, err := buildSeedanceURL(base, endpoint, seedanceUpstreamTaskID(taskKey))
 	if err != nil {
-		return nil, err
+		return nil, nil, 0, err
 	}
-	model, upstreamModel := "", ""
 	method := http.MethodGet
 	switch endpoint {
 	case SeedanceEndpointCreate:
-		info, parseErr := ParseSeedanceRequest(body)
-		if parseErr != nil {
-			return nil, parseErr
-		}
-		model = info.Model
-		upstreamModel = account.GetMappedModel(model)
-		body, err = sjson.SetBytes(body, "model", upstreamModel)
-		if err != nil {
-			return nil, err
-		}
 		method = http.MethodPost
 	case SeedanceEndpointDelete:
 		method = http.MethodDelete
 	}
 	token := strings.TrimSpace(account.GetCredential("api_key"))
 	if token == "" {
-		return nil, fmt.Errorf("seedance account missing api_key")
+		return nil, nil, 0, fmt.Errorf("seedance account missing api_key")
 	}
 	started := time.Now()
 	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, nil, 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
@@ -160,12 +139,65 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 		proxy = account.Proxy.URL()
 	}
 	resp, err := s.httpUpstream.Do(req, proxy, account.ID, account.Concurrency)
-	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(started).Milliseconds())
+	elapsed := time.Since(started)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, elapsed.Milliseconds())
 	if err != nil {
-		return nil, err
+		return nil, nil, elapsed, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	responseBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
+	var onTooLarge TooLargeWriter
+	if c != nil {
+		onTooLarge = openAITooLargeError
+	}
+	responseBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, onTooLarge)
+	if err != nil {
+		return nil, nil, elapsed, err
+	}
+	return resp, responseBody, elapsed, nil
+}
+
+// seedanceTaskStatus 是一次状态查询里网关计费关心的部分；响应本身原样透传给调用方。
+type seedanceTaskStatus struct {
+	Status           string
+	Model            string
+	CompletionTokens int
+}
+
+func parseSeedanceTaskStatus(body []byte) seedanceTaskStatus {
+	return seedanceTaskStatus{
+		Status:           gjson.GetBytes(body, "status").String(),
+		Model:            gjson.GetBytes(body, "model").String(),
+		CompletionTokens: max(0, int(gjson.GetBytes(body, "usage.completion_tokens").Int())),
+	}
+}
+
+// seedanceTaskTerminal：方舟任务的终态（官方：succeeded / failed / cancelled / expired），此后状态不再变化。
+func seedanceTaskTerminal(status string) bool {
+	switch status {
+	case "succeeded", "failed", "cancelled", "expired":
+		return true
+	}
+	return false
+}
+
+// ForwardSeedance preserves the Ark protocol, including multimodal content and
+// future fields. Only model is rewritten using the account's configured mapping.
+func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint, taskID string, body []byte) (*OpenAIForwardResult, error) {
+	model, upstreamModel := "", ""
+	if endpoint == SeedanceEndpointCreate {
+		info, parseErr := ParseSeedanceRequest(body)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		model = info.Model
+		upstreamModel = account.GetMappedModel(model)
+		var err error
+		body, err = sjson.SetBytes(body, "model", upstreamModel)
+		if err != nil {
+			return nil, err
+		}
+	}
+	resp, responseBody, elapsed, err := s.seedanceUpstreamCall(ctx, c, account, endpoint, taskID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +207,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 		writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
 		return nil, fmt.Errorf("seedance upstream status %d", resp.StatusCode)
 	}
-	result := &OpenAIForwardResult{Model: model, BillingModel: model, UpstreamModel: upstreamModel, Duration: time.Since(started), ResponseHeaders: resp.Header.Clone()}
+	result := &OpenAIForwardResult{Model: model, BillingModel: model, UpstreamModel: upstreamModel, Duration: elapsed, ResponseHeaders: resp.Header.Clone()}
 	if endpoint == SeedanceEndpointCreate {
 		id := strings.TrimSpace(gjson.GetBytes(responseBody, "id").String())
 		if id == "" {
@@ -184,15 +216,23 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 		result.ResponseID = SeedanceTaskKey(id)
 	}
 	if endpoint == SeedanceEndpointStatus {
+		status := parseSeedanceTaskStatus(responseBody)
 		result.ResponseID = taskID
-		result.UpstreamModel = gjson.GetBytes(responseBody, "model").String()
-		if gjson.GetBytes(responseBody, "status").String() == "succeeded" {
-			result.Usage.OutputTokens = max(0, int(gjson.GetBytes(responseBody, "usage.completion_tokens").Int()))
-			// 开了 tools: web_search 的任务，实际联网搜索次数在 usage.tool_usage.web_search
-			// （0 = 没搜）。与 Grok 原生搜索同口径：按分组的千次搜索单价叠加在 token 费用之上。
-			result.SearchCount = max(0, int(gjson.GetBytes(responseBody, "usage.tool_usage.web_search").Int()))
+		result.UpstreamModel = status.Model
+		result.UpstreamTaskStatus = status.Status
+		if status.Status == "succeeded" {
+			result.Usage.OutputTokens = status.CompletionTokens
 		}
 	}
 	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)
 	return result, nil
+}
+
+// querySeedanceTask 供后台结算查询任务状态：与 ForwardSeedance 同一次上游调用，但不写任何 HTTP 响应。
+func (s *OpenAIGatewayService) querySeedanceTask(ctx context.Context, account *Account, taskKey string) (int, seedanceTaskStatus, error) {
+	resp, body, _, err := s.seedanceUpstreamCall(ctx, nil, account, SeedanceEndpointStatus, taskKey, nil)
+	if err != nil {
+		return 0, seedanceTaskStatus{}, err
+	}
+	return resp.StatusCode, parseSeedanceTaskStatus(body), nil
 }

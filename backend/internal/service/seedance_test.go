@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -109,4 +110,84 @@ func TestSeedancePreservesUpstreamErrorsWithoutRetry(t *testing.T) {
 	require.Equal(t, 429, w.Code)
 	require.Contains(t, w.Body.String(), "QuotaExceeded")
 	require.Len(t, upstream.requests, 1)
+}
+
+// Seedance 走原生透传：请求体除 model 按账号映射改写外原样转发，callback_url 也不例外
+// （回调直达调用方时的计费由网关的后台结算兜底，不靠改写或拒绝请求）。
+func TestSeedanceForwardsCallbackURLUntouched(t *testing.T) {
+	body := []byte(`{"model":"video","content":[{"type":"text","text":"waves"}],"callback_url":"https://client.example/hook","execution_expires_after":3600}`)
+	_, err := ParseSeedanceRequest(body)
+	require.NoError(t, err)
+	upstream := &grokMediaContentUpstreamStub{response: grokMediaContentStatusResponse(`{"id":"task-1"}`)}
+	svc := &OpenAIGatewayService{httpUpstream: upstream}
+	c, _ := grokMediaContentTestContext(http.MethodPost, "/api/v3/contents/generations/tasks", nil)
+	_, err = svc.ForwardSeedance(context.Background(), c, seedanceTestAccount(), SeedanceEndpointCreate, "", body)
+	require.NoError(t, err)
+	forwarded, err := io.ReadAll(upstream.request.Body)
+	require.NoError(t, err)
+	for _, field := range []string{"content", "callback_url", "execution_expires_after"} {
+		require.Equal(t, gjson.GetBytes(body, field).Raw, gjson.GetBytes(forwarded, field).Raw, field)
+	}
+}
+
+func TestSeedanceDraftTaskReferences(t *testing.T) {
+	info, err := ParseSeedanceRequest([]byte(`{"model":"x","content":[{"type":"draft_task","draft_task":{"id":"cgt-draft-1"}}]}`))
+	require.NoError(t, err)
+	require.Equal(t, []string{SeedanceTaskKey("cgt-draft-1")}, info.ReferencedTaskKeys)
+	require.True(t, IsSeedanceTaskKey(info.ReferencedTaskKeys[0]))
+	require.Equal(t, "cgt-draft-1", seedanceUpstreamTaskID(info.ReferencedTaskKeys[0]))
+	for _, body := range []string{
+		`{"model":"x","content":[{"type":"draft_task","draft_task":{}}]}`,
+		`{"model":"x","content":[{"type":"draft_task","draft_task":{"id":""}}]}`,
+		`{"model":"x","content":[{"type":"draft_task","draft_task":{"id":7}}]}`,
+	} {
+		_, err := ParseSeedanceRequest([]byte(body))
+		require.Error(t, err, body)
+	}
+}
+
+type ttlRecordingCache struct {
+	GatewayCache
+	ttls map[string]time.Duration
+}
+
+func (c *ttlRecordingCache) SetSessionAccountID(_ context.Context, _ int64, _ string, _ int64, ttl time.Duration) error {
+	c.ttls["binding"] = ttl
+	return nil
+}
+
+func (c *ttlRecordingCache) SetGrokVideoPendingBilling(_ context.Context, _ string, _ []byte, ttl time.Duration) error {
+	c.ttls["pending"] = ttl
+	return nil
+}
+
+func (c *ttlRecordingCache) ClaimGrokVideoBilled(_ context.Context, _ string, ttl time.Duration) (bool, error) {
+	c.ttls["claim"] = ttl
+	return true, nil
+}
+
+// 归属绑定与计费快照必须活得不短于上游还能回答查询的时长：方舟任务最长排队/运行
+// execution_expires_after 上限 259200s，成功后 video_url 有效 24h，任务记录保存 7 天。
+func TestAsyncVideoTaskRetentionFollowsProvider(t *testing.T) {
+	require.GreaterOrEqual(t, seedanceTaskRetention, 259200*time.Second+24*time.Hour)
+	for _, tc := range []struct {
+		key                     string
+		binding, pending, claim time.Duration
+	}{
+		{SeedanceTaskKey("cgt-1"), 7 * 24 * time.Hour, 7 * 24 * time.Hour, 14 * 24 * time.Hour},
+		{"grok-request-1", 24 * time.Hour, 24 * time.Hour, 48 * time.Hour}, // Grok 保持原值
+	} {
+		cache := &ttlRecordingCache{ttls: map[string]time.Duration{}}
+		svc := &OpenAIGatewayService{cache: cache}
+		groupID := int64(24)
+		require.NoError(t, svc.BindGrokMediaVideoRequestAccount(context.Background(), &groupID, tc.key, 10, 20, 1))
+		require.NoError(t, svc.StoreGrokVideoPendingBilling(context.Background(), tc.key, 10, 20, GrokVideoPendingBilling{Model: "m"}))
+		claimed, err := svc.ClaimGrokVideoBilling(context.Background(), tc.key, 10, 20)
+		require.NoError(t, err)
+		require.True(t, claimed)
+		require.Equal(t, tc.binding, cache.ttls["binding"], tc.key)
+		require.Equal(t, tc.pending, cache.ttls["pending"], tc.key)
+		require.Equal(t, tc.claim, cache.ttls["claim"], tc.key)
+		require.Greater(t, cache.ttls["claim"], cache.ttls["binding"], "已计费标记必须比归属绑定活得久，否则绑定还在时标记先过期会重复计费")
+	}
 }

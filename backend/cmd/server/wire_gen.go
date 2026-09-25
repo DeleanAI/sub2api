@@ -370,7 +370,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	userPlatformQuotaUsageFlusher := service.ProvideUserPlatformQuotaUsageFlusher(configConfig, billingCache, serviceUserPlatformQuotaRepository, timingWheelService)
 	expiredCooldownAccountLister := repository.NewExpiredCooldownAccountLister(client, db, schedulerCache)
 	accountCooldownRecoveryService := service.ProvideAccountCooldownRecoveryService(expiredCooldownAccountLister, rateLimitService, leaderLockCache)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, requestPayloadAuditService, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, auditLogService, openAIQuotaAutoResetService, accountCooldownRecoveryService, promptService, instanceRegistry, pluginManager)
+	seedanceSettlementStore := repository.NewSeedanceSettlementStore(redisClient)
+	seedanceSettlementService := service.ProvideSeedanceSettlementService(seedanceSettlementStore, openAIGatewayService, accountRepository, apiKeyService, subscriptionService, leaderLockCache)
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, opsService, opsIngressRejectAggregator, apiKeyService, authCacheInvalidationWorker, schedulerSnapshotService, tokenRefreshService, accountExpiryService, cnProviderBalanceCheckService, openAICodexVersionSyncService, claudeCodeVersionSyncService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, batchImageCleanupService, batchImageWorkerRuntime, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, requestPayloadAuditService, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, grokOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService, channelMonitorRunner, channelMonitorV2Aggregator, userPlatformQuotaUsageFlusher, upstreamBillingProbeService, ollamaCloudUsageService, openCodeGoUsageService, auditLogService, openAIQuotaAutoResetService, accountCooldownRecoveryService, seedanceSettlementService, promptService, instanceRegistry, pluginManager)
 	application := &Application{
 		Server:        httpServer,
 		PromptAudit:   promptService,
@@ -456,6 +458,7 @@ func provideCleanup(
 	auditLog *service.AuditLogService,
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	accountCooldownRecovery *service.AccountCooldownRecoveryService,
+	seedanceSettlement *service.SeedanceSettlementService,
 	promptAudit *securityaudit.PromptService,
 	instanceRegistry *service.InstanceRegistry,
 	pluginManager *service.PluginManager,
@@ -490,6 +493,12 @@ func provideCleanup(
 			{"AccountCooldownRecoveryService", func() error {
 				if accountCooldownRecovery != nil {
 					accountCooldownRecovery.Stop()
+				}
+				return nil
+			}},
+			{"SeedanceSettlementService", func() error {
+				if seedanceSettlement != nil {
+					seedanceSettlement.Stop()
 				}
 				return nil
 			}},

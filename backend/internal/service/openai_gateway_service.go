@@ -287,6 +287,9 @@ type OpenAIForwardResult struct {
 	VideoResolution       string
 	// VideoDurationSeconds 是提交时请求的生成时长（xAI 按输出秒数计费），已归一化到 1-15 秒。
 	VideoDurationSeconds int
+	// UpstreamTaskStatus 是异步任务状态查询看到的上游状态（Seedance：queued / running /
+	// succeeded / failed / cancelled / expired），供结算索引判断任务是否已进入终态。
+	UpstreamTaskStatus string
 	// WebSearchCalls 是 Codex alpha/search 网页搜索调用次数（每次成功请求为 1）。
 	// 上游不返回 usage 字段，>0 时走按次计费（分组单价 × 次数 × 倍率）。
 	WebSearchCalls int
@@ -441,6 +444,9 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
+	// seedanceSettlement 由 ProvideSeedanceSettlementService 装配（为 nil 时不做后台结算，如单测）。
+	seedanceSettlement *SeedanceSettlementService
+
 	accountRepo           AccountRepository
 	usageLogRepo          UsageLogRepository
 	usageBillingRepo      UsageBillingRepository

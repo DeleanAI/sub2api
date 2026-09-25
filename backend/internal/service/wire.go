@@ -233,6 +233,22 @@ func ProvideOpenAIQuotaAutoResetService(
 	return service
 }
 
+// ProvideSeedanceSettlementService 装配 Seedance 后台结算，并挂到网关服务上：网关创建任务时登记、
+// 查询与删除时结清都经由它。
+func ProvideSeedanceSettlementService(
+	store SeedanceSettlementStore,
+	gateway *OpenAIGatewayService,
+	accountRepo AccountRepository,
+	apiKeyService *APIKeyService,
+	subscriptionService *SubscriptionService,
+	leaderLock LeaderLockCache,
+) *SeedanceSettlementService {
+	service := NewSeedanceSettlementService(store, gateway, accountRepo, apiKeyService, subscriptionService, leaderLock)
+	gateway.AttachSeedanceSettlement(service)
+	service.Start()
+	return service
+}
+
 // ProvideAccountCooldownRecoveryService 启动「冷却到期即恢复」的周期扫描。
 // 恢复能力本身早已存在（RateLimitService.RecoverAccountState），此前只有人工入口；
 // 这里补上时间驱动的那一个。
@@ -942,6 +958,7 @@ var ProviderSet = wire.NewSet(
 	ProvideOpenAIQuotaService,
 	ProvideOpenAIQuotaAutoResetService,
 	ProvideAccountCooldownRecoveryService,
+	ProvideSeedanceSettlementService,
 	ProvideGrokQuotaService,
 	ProvideCNProviderQuotaService,
 	ProvideCNProviderBalanceService,

@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -312,15 +311,7 @@ func (s *OpenAIGatewayService) BindGrokMediaVideoRequestAccount(
 	if cacheKey == "" || accountID <= 0 {
 		return fmt.Errorf("grok video request binding is invalid")
 	}
-	// Video jobs may complete well after WS sticky TTL (default 1h). Bind at least
-	// as long as the pending-billing snapshot so late status/content polls resolve.
-	ttl := grokVideoPendingBillingTTL(s.cfg)
-	if s.cfg != nil && s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds > 0 {
-		if sticky := time.Duration(s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds) * time.Second; sticky > ttl {
-			ttl = sticky
-		}
-	}
-	return s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), cacheKey, accountID, ttl)
+	return s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), cacheKey, accountID, s.asyncVideoTaskTTL(requestID))
 }
 
 func (s *OpenAIGatewayService) ResolveGrokMediaVideoRequestAccount(
@@ -385,6 +376,10 @@ type GrokVideoPendingBilling struct {
 	VideoResolution      string `json:"video_resolution,omitempty"`
 	VideoDurationSeconds int    `json:"video_duration_seconds,omitempty"`
 	OriginalModel        string `json:"original_model,omitempty"`
+	// AccountID / QuotaPlatform 是创建时的计费上下文：后台结算没有请求上下文，额度归属平台
+	// （组合分组会解析成具体平台）只能在创建时记下；账号即持有任务的那个上游账号。
+	AccountID     int64  `json:"account_id,omitempty"`
+	QuotaPlatform string `json:"quota_platform,omitempty"`
 	// CreatedAt is when the gateway accepted the async create (RFC3339Nano UTC).
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),
@@ -432,15 +427,37 @@ func grokVideoPendingBillingKey(requestID string, userID, apiKeyID int64) string
 	return fmt.Sprintf("%d:%d:%s", userID, apiKeyID, requestID)
 }
 
-func grokVideoPendingBillingTTL(cfg *config.Config) time.Duration {
-	// Video generation can take several minutes; keep create-time pricing for a day.
-	_ = cfg
-	return 24 * time.Hour
+// grokVideoTaskRetention: Grok video generation takes minutes; keep ownership and
+// create-time pricing for a day.
+const grokVideoTaskRetention = 24 * time.Hour
+
+// asyncVideoTaskRetention 是网关为一个异步视频任务保留归属绑定与创建时计费快照的时长，
+// 按任务所属的提供方取上游文档声明的保留期（规则只在这里）。它不能短于上游仍能回答查询的
+// 时长：绑定先过期的话，调用方在上游还查得到任务时先在网关拿到 404，任务也永远不会被计费。
+func asyncVideoTaskRetention(requestID string) time.Duration {
+	if IsSeedanceTaskKey(requestID) {
+		return seedanceTaskRetention
+	}
+	return grokVideoTaskRetention
 }
 
-func grokVideoBilledClaimTTL(cfg *config.Config) time.Duration {
-	_ = cfg
-	return 48 * time.Hour
+// asyncVideoTaskTTL 是归属绑定、计费快照共用的 TTL：取任务保留期，且不短于 WS 粘性会话 TTL
+// （视频任务可能在默认 1h 的粘性 TTL 之后才完成）。
+func (s *OpenAIGatewayService) asyncVideoTaskTTL(requestID string) time.Duration {
+	ttl := asyncVideoTaskRetention(requestID)
+	if s.cfg != nil && s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds > 0 {
+		if sticky := time.Duration(s.cfg.Gateway.OpenAIWS.StickySessionTTLSeconds) * time.Second; sticky > ttl {
+			ttl = sticky
+		}
+	}
+	return ttl
+}
+
+// asyncVideoBilledClaimTTL：「已计费」标记必须比归属绑定活得久。计费只发生在经绑定放行的
+// 查询里，而标记在任务完成时（晚于创建时写入的绑定）才写，取绑定 TTL 的两倍即覆盖任意完成时刻；
+// Grok 的数值与原先一致（24h 绑定、48h 标记）。
+func (s *OpenAIGatewayService) asyncVideoBilledClaimTTL(requestID string) time.Duration {
+	return 2 * s.asyncVideoTaskTTL(requestID)
 }
 
 // StoreGrokVideoPendingBilling persists create-time billing params for deferred status billing.
@@ -477,7 +494,7 @@ func (s *OpenAIGatewayService) StoreGrokVideoPendingBilling(
 	if err != nil {
 		return err
 	}
-	return s.cache.SetGrokVideoPendingBilling(ctx, key, payload, grokVideoPendingBillingTTL(s.cfg))
+	return s.cache.SetGrokVideoPendingBilling(ctx, key, payload, s.asyncVideoTaskTTL(requestID))
 }
 
 // LoadGrokVideoPendingBilling returns the create-time snapshot (may be nil on miss).
@@ -518,7 +535,7 @@ func (s *OpenAIGatewayService) ClaimGrokVideoBilling(
 	if key == "" {
 		return false, fmt.Errorf("grok video billing claim key is invalid")
 	}
-	return s.cache.ClaimGrokVideoBilled(ctx, key, grokVideoBilledClaimTTL(s.cfg))
+	return s.cache.ClaimGrokVideoBilled(ctx, key, s.asyncVideoBilledClaimTTL(requestID))
 }
 
 // ReleaseGrokVideoBilling clears a claim after a failed durable RecordUsage so a

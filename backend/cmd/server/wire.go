@@ -130,6 +130,7 @@ func provideCleanup(
 	auditLog *service.AuditLogService,
 	openAIAutoReset *service.OpenAIQuotaAutoResetService,
 	accountCooldownRecovery *service.AccountCooldownRecoveryService,
+	seedanceSettlement *service.SeedanceSettlementService,
 	promptAudit *securityaudit.PromptService,
 	instanceRegistry *service.InstanceRegistry,
 	pluginManager *service.PluginManager,
@@ -165,6 +166,12 @@ func provideCleanup(
 			{"AccountCooldownRecoveryService", func() error {
 				if accountCooldownRecovery != nil {
 					accountCooldownRecovery.Stop()
+				}
+				return nil
+			}},
+			{"SeedanceSettlementService", func() error {
+				if seedanceSettlement != nil {
+					seedanceSettlement.Stop()
 				}
 				return nil
 			}},

@@ -179,6 +179,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 	}
 	sessionHash := h.gatewayService.GenerateExplicitSessionHash(c, sessionSeed)
 	boundLookupAccountID := int64(0)
+	// 绑定账号不可用时的回应：查询类沿用 404（不暴露任务是否存在）；引用既有任务创建时回 503
+	// ——调用方自己的任务确实存在，只是持有它的账号此刻选不上。
+	boundUnavailableStatus, boundUnavailableCode, boundUnavailableMessage := http.StatusNotFound, "not_found_error", "Video request not found"
 	if endpoint.IsVideoLookupRequest() {
 		sessionHash = service.GrokMediaVideoRequestSessionHash(requestID, subject.UserID, apiKey.ID)
 		boundLookupAccountID, err = h.gatewayService.ResolveGrokMediaVideoRequestAccount(
@@ -189,6 +192,22 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
 			return
 		}
+	} else if len(requestInfo.ReferencedTaskKeys) > 0 {
+		// 基于既有任务创建（如 Seedance 样片生成正式视频）：被引用的任务只存在于创建它的账号上，
+		// 必须发回那个账号；且只能引用调用方自己的任务。
+		var status int
+		var message string
+		sessionHash, boundLookupAccountID, status, message = h.resolveReferencedMediaTaskAccount(c.Request.Context(), apiKey, subject, requestInfo.ReferencedTaskKeys)
+		if status != 0 {
+			reqLog.Info("grok_media.referenced_task_unresolved", zap.Int("status", status), zap.Int("referenced", len(requestInfo.ReferencedTaskKeys)))
+			errType := "not_found_error"
+			if status == http.StatusBadRequest {
+				errType = "invalid_request_error"
+			}
+			h.errorResponse(c, status, errType, message)
+			return
+		}
+		boundUnavailableStatus, boundUnavailableCode, boundUnavailableMessage = http.StatusServiceUnavailable, noAccountCode, "The upstream account that holds the referenced task is unavailable"
 	}
 	// Grok 媒体（图片/视频生成与视频查询）按媒体倍率计费，不在 token 利润门
 	// 范围内：显式豁免，防止 service 层防御性装门按文本 D 误过滤媒体请求，
@@ -259,7 +278,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				return
 			}
 			if boundLookupAccountID > 0 && errors.Is(err, service.ErrNoAvailableAccounts) {
-				h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
+				h.errorResponse(c, boundUnavailableStatus, boundUnavailableCode, boundUnavailableMessage)
 				return
 			}
 			reqLog.Warn("grok_media.account_select_failed",
@@ -308,7 +327,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				zap.Int64("bound_account_id", boundLookupAccountID),
 				zap.Int64("selected_account_id", selection.Account.ID),
 			)
-			h.errorResponse(c, http.StatusNotFound, "not_found_error", "Video request not found")
+			h.errorResponse(c, boundUnavailableStatus, boundUnavailableCode, boundUnavailableMessage)
 			return
 		}
 
@@ -374,6 +393,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		result, err := func() (*service.OpenAIForwardResult, error) {
 			defer releaseAccount()
 			if endpoint.IsSeedance() {
+				if endpoint == service.SeedanceEndpointDelete {
+					h.gatewayService.SettleSeedanceTaskBeforeDelete(requestCtx, seedanceSettlementEntry(apiKey, subject, requestID), account)
+				}
 				return h.gatewayService.ForwardSeedance(requestCtx, c, account, endpoint, requestID, body)
 			}
 			return h.gatewayService.ForwardGrokMedia(requestCtx, c, account, endpoint, requestID, body, contentType)
@@ -484,6 +506,8 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				VideoResolution:      result.VideoResolution,
 				VideoDurationSeconds: result.VideoDurationSeconds,
 				OriginalModel:        clientRequestedModel(c, requestModel),
+				AccountID:            account.ID,
+				QuotaPlatform:        service.QuotaPlatform(c.Request.Context(), apiKey),
 				// Wall-clock start for usage duration_ms: create accepted → first done discovery.
 				CreatedAt: videoCreateStartedAt,
 			}
@@ -503,12 +527,22 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 					)
 				}
 			}
+			if endpoint == service.SeedanceEndpointCreate {
+				// 请求原样透传（含 callback_url）：结果可能直接推给调用方而不再经网关查询，
+				// 登记到结算索引，由后台补查保证成功的任务恰好计费一次。
+				h.gatewayService.TrackSeedanceTask(requestCtx, seedanceSettlementEntry(apiKey, subject, result.ResponseID))
+			}
 		}
 		// Status poll OR content download can observe official done+video.url.
 		// Both paths share the same claim key so the customer is charged once.
 		if endpoint == service.SeedanceEndpointStatus {
-			if billResult := prepareSeedanceCompletionBilling(requestCtx, h, apiKey, subject, requestID, result); billResult != nil {
+			billResult, _, outcome := h.gatewayService.PrepareSeedanceCompletionBilling(requestCtx, reqLog, subject.UserID, apiKey.ID, requestID, result)
+			if billResult != nil {
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, requestID)
+			}
+			if outcome.Done() {
+				// 落账是异步的：失败时 recordGrokMediaUsage 会释放计费标记并把任务放回索引。
+				h.gatewayService.ForgetSeedanceTask(requestCtx, seedanceSettlementEntry(apiKey, subject, requestID))
 			}
 		} else if endpoint == service.GrokMediaEndpointVideoStatus || endpoint == service.GrokMediaEndpointVideoContent {
 			taskID := strings.TrimSpace(requestID)
@@ -614,10 +648,7 @@ func prepareGrokVideoCompletionBilling(
 	}
 	// Load create-time snapshot before claim so we can fail-closed without burning the claim
 	// when Redis lost pending and status cannot price the job.
-	pending, loadErr := h.gatewayService.LoadGrokVideoPendingBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
-	if loadErr != nil {
-		reqLog.Warn("grok_media.video_pending_billing_load_failed", zap.String("request_id", taskRequestID), zap.Error(loadErr))
-	}
+	pending := h.gatewayService.LoadAsyncVideoPendingBilling(ctx, reqLog, taskRequestID, subject.UserID, apiKey.ID)
 	if pending == nil {
 		// Status omits resolution; without pending we would silently default to 480p and underbill.
 		// Allow billing only when official status carries duration (still may default resolution).
@@ -634,13 +665,7 @@ func prepareGrokVideoCompletionBilling(
 			zap.String("note", "resolution falls back to default 480p; investigate pending store failures"),
 		)
 	}
-	claimed, err := h.gatewayService.ClaimGrokVideoBilling(ctx, taskRequestID, subject.UserID, apiKey.ID)
-	if err != nil {
-		reqLog.Warn("grok_media.video_billing_claim_failed", zap.String("request_id", taskRequestID), zap.Error(err))
-		return nil
-	}
-	if !claimed {
-		reqLog.Debug("grok_media.video_billing_already_claimed", zap.String("request_id", taskRequestID))
+	if claimed, err := h.gatewayService.ClaimAsyncVideoBilling(ctx, reqLog, taskRequestID, subject.UserID, apiKey.ID); err != nil || !claimed {
 		return nil
 	}
 	// Re-merge with pending: resolution is request-only; model/duration fill gaps.
@@ -694,6 +719,25 @@ func prepareGrokVideoCompletionBilling(
 	return &merged
 }
 
+// resolveReferencedMediaTaskAccount 把请求引用的既有任务解析到创建它们的账号：用的是与查询/删除
+// 同一份归属绑定（键含 user 与 API key），所以引用不到别人的任务。返回的 status 非 0 表示拒绝。
+func (h *OpenAIGatewayHandler) resolveReferencedMediaTaskAccount(ctx context.Context, apiKey *service.APIKey, subject middleware2.AuthSubject, keys []string) (sessionHash string, accountID int64, status int, message string) {
+	for _, key := range keys {
+		owner, err := h.gatewayService.ResolveGrokMediaVideoRequestAccount(ctx, apiKey.GroupID, key, subject.UserID, apiKey.ID)
+		if err != nil || owner <= 0 {
+			return "", 0, http.StatusNotFound, "Referenced task not found"
+		}
+		if accountID != 0 && owner != accountID {
+			return "", 0, http.StatusBadRequest, "Referenced tasks were created on different upstream accounts and cannot be combined"
+		}
+		if accountID == 0 {
+			accountID = owner
+			sessionHash = service.GrokMediaVideoRequestSessionHash(key, subject.UserID, apiKey.ID)
+		}
+	}
+	return sessionHash, accountID, 0, ""
+}
+
 func firstNonEmptyString(values ...string) string {
 	for _, v := range values {
 		if s := strings.TrimSpace(v); s != "" {
@@ -735,7 +779,7 @@ func recordGrokMediaUsage(
 	}
 	// Async video: force durable task request id and release claim if billing fails.
 	videoTaskID := ""
-	if result != nil && (result.VideoCount > 0 || strings.HasPrefix(result.ResponseID, "seedance:")) {
+	if result != nil && (result.VideoCount > 0 || service.IsSeedanceTaskKey(result.ResponseID)) {
 		videoTaskID = strings.TrimSpace(firstNonEmptyString(requestID, result.ResponseID))
 		if stable := service.StableGrokVideoBillingRequestID(firstNonEmptyString(result.ResponseID, requestID)); stable != "" {
 			result.RequestID = stable
@@ -768,6 +812,9 @@ func recordGrokMediaUsage(
 						zap.String("request_id", videoTaskID),
 						zap.Error(releaseErr),
 					)
+				}
+				if service.IsSeedanceTaskKey(videoTaskID) {
+					h.gatewayService.TrackSeedanceTask(ctx, seedanceSettlementEntry(apiKey, subject, videoTaskID))
 				}
 			}
 			logger.L().With(

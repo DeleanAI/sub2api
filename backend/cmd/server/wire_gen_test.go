@@ -100,6 +100,7 @@ func TestProvideCleanup_WithMinimalDependencies_NoPanic(t *testing.T) {
 		nil, // auditLog
 		nil, // openAIAutoReset
 		nil, // accountCooldownRecovery
+		nil, // seedanceSettlement
 		nil, // promptAudit
 		nil, // instanceRegistry
 		nil, // pluginManager
