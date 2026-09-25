@@ -41,8 +41,20 @@ type accountCooldownRecoverer interface {
 // 会再次 401 并被重新置回 error。代价是每个账号一发失败请求，且不会反复刷——因为
 // 重新置 error 时不带新的到期时间，本服务的判据下次就不再命中它。用这一发请求换掉
 // 「靠错误文案猜测哪些能恢复」的一整套特例判定，是刻意的取舍。
+// ExpiredCooldownAccountLister 是本服务对账号仓储的全部依赖。
+//
+// 刻意不加进 AccountRepository：那个接口在上游测试里有几十个手写 mock，fork 往里加一个
+// 方法，这些 mock 就全部编译不过（带 unit 标签的测试因此整包失效过，而默认的 go test
+// 不带标签、看不出来），上游以后每新增一个 mock 还会再撞一次。与 AdminAccountRepository
+// 同一个做法：同一个仓储实例，以使用方需要的那一个能力暴露。
+type ExpiredCooldownAccountLister interface {
+	// ListAccountsWithExpiredCooldown 返回冷却时间已过期但仍不可调度的账号 ID。
+	// 判据是冷却列已到期这个声明本身，不枚举错误原因，因此新增的冷却类型自动被覆盖。
+	ListAccountsWithExpiredCooldown(ctx context.Context, now time.Time, limit int) ([]int64, error)
+}
+
 type AccountCooldownRecoveryService struct {
-	accountRepo AccountRepository
+	accountRepo ExpiredCooldownAccountLister
 	recoverer   accountCooldownRecoverer
 	leaderLock  LeaderLockCache
 
@@ -55,7 +67,7 @@ type AccountCooldownRecoveryService struct {
 }
 
 func NewAccountCooldownRecoveryService(
-	accountRepo AccountRepository,
+	accountRepo ExpiredCooldownAccountLister,
 	recoverer accountCooldownRecoverer,
 	leaderLock LeaderLockCache,
 ) *AccountCooldownRecoveryService {

@@ -27,7 +27,6 @@ func (s *stubCooldownRecoverer) RecoverAccountState(_ context.Context, accountID
 }
 
 type stubExpiredCooldownRepo struct {
-	AccountRepository
 	ids      []int64
 	lastNow  time.Time
 	lastLim  int

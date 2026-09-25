@@ -237,7 +237,7 @@ func ProvideOpenAIQuotaAutoResetService(
 // 恢复能力本身早已存在（RateLimitService.RecoverAccountState），此前只有人工入口；
 // 这里补上时间驱动的那一个。
 func ProvideAccountCooldownRecoveryService(
-	accountRepo AccountRepository,
+	accountRepo ExpiredCooldownAccountLister,
 	rateLimitService *RateLimitService,
 	leaderLock LeaderLockCache,
 ) *AccountCooldownRecoveryService {

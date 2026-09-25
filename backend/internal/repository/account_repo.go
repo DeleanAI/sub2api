@@ -118,6 +118,12 @@ func NewAdminAccountRepository(client *dbent.Client, sqlDB *sql.DB, schedulerCac
 	return newAccountRepositoryWithSQL(client, sqlDB, schedulerCache)
 }
 
+// NewExpiredCooldownAccountLister exposes the expired-cooldown scan as the only
+// dependency of the cooldown recovery service (see service.ExpiredCooldownAccountLister).
+func NewExpiredCooldownAccountLister(client *dbent.Client, sqlDB *sql.DB, schedulerCache service.SchedulerCache) service.ExpiredCooldownAccountLister {
+	return newAccountRepositoryWithSQL(client, sqlDB, schedulerCache)
+}
+
 // newAccountRepositoryWithSQL 是内部构造函数，支持依赖注入 SQL 执行器。
 // 这种设计便于单元测试时注入 mock 对象。
 func newAccountRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor, schedulerCache service.SchedulerCache) *accountRepository {
