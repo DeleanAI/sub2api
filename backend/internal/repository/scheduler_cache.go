@@ -3,11 +3,14 @@ package repository
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -292,22 +295,74 @@ func (c *schedulerCache) GetSnapshot(ctx context.Context, bucket service.Schedul
 	}
 
 	accounts := make([]*service.Account, 0, len(values))
+	var stale []int
 	for i, val := range values {
 		if val == nil {
 			return nil, false, nil
 		}
-		account, err := decodeCachedAccount(val)
+		account, current, err := decodeSchedulerMetaAccount(val)
 		if err != nil {
 			return nil, false, err
+		}
+		if !current {
+			stale = append(stale, i)
 		}
 		if err := applySchedulerLastUsed(account, lastUsedValues[i]); err != nil {
 			return nil, false, err
 		}
 		accounts = append(accounts, account)
 	}
+	if len(stale) > 0 {
+		reprojected, err := c.reprojectStaleSchedulerMeta(ctx, bucket, ids, stale, accounts, lastUsedValues)
+		if err != nil || !reprojected {
+			return nil, false, err
+		}
+	}
 
 	return accounts, true, nil
 }
+
+// reprojectStaleSchedulerMeta 处理按旧投影规则写下的 meta：滚动更新时旧版本进程还在写、或者新版本的
+// 重建还没轮到（全量重建默认 300s 一次；启动重建会被旧进程持有的锁跳过）。旧投影可能缺新规则要保留的
+// 字段，预筛选拿它判就会静默判错——toooooken 部署后 Seedance 账号因此多 503 了几分钟。这里改读同批
+// 写入的完整账号、按当前规则重新投影；完整账号也缺时按缓存未命中处理（回退数据库，与 meta 缺失同义）。
+func (c *schedulerCache) reprojectStaleSchedulerMeta(ctx context.Context, bucket service.SchedulerBucket, ids []string, stale []int, accounts []*service.Account, lastUsedValues []any) (bool, error) {
+	fullKeys := make([]string, 0, len(stale))
+	for _, i := range stale {
+		fullKeys = append(fullKeys, schedulerAccountKey(ids[i]))
+	}
+	fullValues, err := c.mgetChunked(ctx, fullKeys)
+	if err != nil {
+		return false, err
+	}
+	for n, i := range stale {
+		if fullValues[n] == nil {
+			return false, nil
+		}
+		full, err := decodeCachedAccount(fullValues[n])
+		if err != nil {
+			return false, err
+		}
+		meta := buildSchedulerMetadataAccount(*full)
+		if err := applySchedulerLastUsed(&meta, lastUsedValues[i]); err != nil {
+			return false, err
+		}
+		accounts[i] = &meta
+	}
+	level := slog.LevelDebug
+	if schedulerStaleMetaLogged.CompareAndSwap(false, true) {
+		level = slog.LevelInfo // 每个进程首次出现时留一条 Info，之后降为 Debug，避免滚动窗口里刷屏
+	}
+	slog.Log(ctx, level, "scheduler_meta_projection_stale_reprojected",
+		"bucket", bucket.String(),
+		"stale", len(stale),
+		"total", len(accounts),
+		"projection_version", schedulerMetaProjectionVersion,
+	)
+	return true, nil
+}
+
+var schedulerStaleMetaLogged atomic.Bool
 
 func (c *schedulerCache) CaptureBucketWriteToken(ctx context.Context, bucket service.SchedulerBucket) (service.SchedulerBucketWriteToken, error) {
 	result, err := captureBucketWriteTokenScript.Run(ctx, c.rdb, []string{
@@ -759,6 +814,103 @@ func applySchedulerLastUsed(account *service.Account, value any) error {
 	return nil
 }
 
+// schedulerMetaPayload 是 sched:meta:<id> 的存储格式：投影后的账号，附带写下它的代码所用的投影版本。
+// 版本字段是新增键，旧版本进程解码时会忽略它，滚动更新期间两边互相可读。
+type schedulerMetaPayload struct {
+	service.Account
+	ProjectionVersion string `json:"scheduler_projection_version,omitempty"`
+}
+
+// schedulerMetaProjectionVersion 标识「这份 meta 是按哪一套投影规则裁出来的」。由投影函数对一个探针
+// 账号的输出算出：保留的顶层字段、凭据键、extra 键任一变化，版本自动跟着变，不靠人记得手动递增。
+// 盲区：同一个键内部的二次裁剪（如 upstream_billing_probe 的子字段）不影响版本。
+var schedulerMetaProjectionVersion = computeSchedulerMetaProjectionVersion()
+
+func computeSchedulerMetaProjectionVersion() string {
+	var probe service.Account
+	fillSchedulerProjectionProbe(reflect.ValueOf(&probe).Elem())
+	probe.Credentials = make(map[string]any, len(schedulerCredentialKeys))
+	for _, key := range schedulerCredentialKeys {
+		probe.Credentials[key] = "probe"
+	}
+	probe.Extra = make(map[string]any, len(schedulerExtraKeys))
+	for _, key := range schedulerExtraKeys {
+		probe.Extra[key] = "probe"
+	}
+	payload, err := json.Marshal(buildSchedulerMetadataAccount(probe))
+	if err != nil {
+		panic(fmt.Sprintf("scheduler meta projection probe: %v", err))
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:8])
+}
+
+// fillSchedulerProjectionProbe 给每个可导出字段填一个确定的非零值，使投影保留的每个顶层字段都出现在输出里。
+func fillSchedulerProjectionProbe(v reflect.Value) {
+	for i := 0; i < v.NumField(); i++ {
+		if !v.Type().Field(i).IsExported() {
+			continue
+		}
+		field := v.Field(i)
+		switch field.Kind() {
+		case reflect.Pointer:
+			elem := reflect.New(field.Type().Elem())
+			setSchedulerProbeScalar(elem.Elem())
+			field.Set(elem)
+		case reflect.Slice:
+			field.Set(reflect.MakeSlice(field.Type(), 1, 1))
+		case reflect.Map:
+			key := reflect.New(field.Type().Key()).Elem()
+			setSchedulerProbeScalar(key)
+			value := reflect.New(field.Type().Elem()).Elem()
+			setSchedulerProbeScalar(value)
+			m := reflect.MakeMapWithSize(field.Type(), 1)
+			m.SetMapIndex(key, value)
+			field.Set(m)
+		default:
+			setSchedulerProbeScalar(field)
+		}
+	}
+}
+
+func setSchedulerProbeScalar(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.String:
+		v.SetString("probe")
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(1)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		v.SetUint(1)
+	case reflect.Float32, reflect.Float64:
+		v.SetFloat(1)
+	case reflect.Interface:
+		v.Set(reflect.ValueOf("probe"))
+	case reflect.Struct:
+		if v.Type() == reflect.TypeOf(time.Time{}) {
+			v.Set(reflect.ValueOf(time.Unix(1, 0).UTC()))
+		}
+	}
+}
+
+func decodeSchedulerMetaAccount(val any) (*service.Account, bool, error) {
+	var payload []byte
+	switch raw := val.(type) {
+	case string:
+		payload = []byte(raw)
+	case []byte:
+		payload = raw
+	default:
+		return nil, false, fmt.Errorf("unexpected account cache type: %T", val)
+	}
+	var meta schedulerMetaPayload
+	if err := json.Unmarshal(payload, &meta); err != nil {
+		return nil, false, err
+	}
+	return &meta.Account, meta.ProjectionVersion == schedulerMetaProjectionVersion, nil
+}
+
 func decodeCachedAccount(val any) (*service.Account, error) {
 	var payload []byte
 	switch raw := val.(type) {
@@ -831,7 +983,10 @@ func marshalSchedulerCacheAccount(account service.Account) ([]byte, []byte, erro
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal account: %w", err)
 	}
-	metaPayload, err := json.Marshal(buildSchedulerMetadataAccount(account))
+	metaPayload, err := json.Marshal(schedulerMetaPayload{
+		Account:           buildSchedulerMetadataAccount(account),
+		ProjectionVersion: schedulerMetaProjectionVersion,
+	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("marshal account metadata: %w", err)
 	}
@@ -950,21 +1105,25 @@ func filterSchedulerGroupIDs(groupIDs []int64, accountGroups []service.AccountGr
 	return filtered
 }
 
+// schedulerCredentialKeys 是调度快照投影保留的凭据键。候选预筛选按投影判，漏掉判定要读的键，
+// 判定就会像「没配置」一样静默出错。
+//
+// Candidate-list admission evaluates the account override before hydrating
+// the full account. Dropping it silently falls back to the platform threshold.
+//
+// openai_capabilities / base_url：候选预筛选里的 SupportsOpenAIEndpointCapability 读这两个键。
+// 缺了 openai_capabilities，账号配置的端点能力限制在预筛选里全部失效；Seedance 分支还要求
+// base_url 非空——两个都缺时 Seedance 账号在快照里永远判为 capability_mismatch，所有
+// /api/v3/contents/generations/tasks 请求都回 503 "No eligible Seedance accounts"
+// （toooooken 2026-09-25 实测：pool=1, filtered: capability_mismatch=1）。
+var schedulerCredentialKeys = []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold", "openai_capabilities", "base_url"}
+
 func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	if len(credentials) == 0 {
 		return nil
 	}
-	// Candidate-list admission evaluates the account override before hydrating
-	// the full account. Dropping it silently falls back to the platform threshold.
-	//
-	// openai_capabilities / base_url：候选预筛选里的 SupportsOpenAIEndpointCapability 读这两个键。
-	// 缺了 openai_capabilities，账号配置的端点能力限制在预筛选里全部失效；Seedance 分支还要求
-	// base_url 非空——两个都缺时 Seedance 账号在快照里永远判为 capability_mismatch，所有
-	// /api/v3/contents/generations/tasks 请求都回 503 "No eligible Seedance accounts"
-	// （toooooken 2026-09-25 实测：pool=1, filtered: capability_mismatch=1）。
-	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold", "openai_capabilities", "base_url"}
 	filtered := make(map[string]any)
-	for _, key := range keys {
+	for _, key := range schedulerCredentialKeys {
 		if value, ok := credentials[key]; ok && value != nil {
 			filtered[key] = value
 		}
@@ -975,78 +1134,80 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	return filtered
 }
 
+// schedulerExtraKeys 是调度快照投影保留的 extra 键（道理同 schedulerCredentialKeys）。
+var schedulerExtraKeys = []string{
+	// Anthropic shared-window and Fable-only threshold checks run on this
+	// projection. UpdateExtra refreshes both payloads without a bucket rebuild.
+	"session_window_utilization",
+	"passive_usage_7d_utilization",
+	"passive_usage_7d_reset",
+	"passive_usage_7d_oi_utilization",
+	"passive_usage_7d_oi_reset",
+	"quota_limit",
+	"quota_used",
+	"quota_daily_limit",
+	"quota_daily_used",
+	"quota_daily_start",
+	"quota_daily_reset_mode",
+	"quota_daily_reset_hour",
+	"quota_weekly_limit",
+	"quota_weekly_used",
+	"quota_weekly_start",
+	"quota_weekly_reset_mode",
+	"quota_weekly_reset_day",
+	"quota_weekly_reset_hour",
+	"quota_reset_timezone",
+	"mixed_scheduling",
+	"window_cost_limit",
+	"window_cost_sticky_reserve",
+	// RPM 门与窗口费用门一样跑在本投影上：isAccountSchedulableForRPM 读 base_rpm，
+	// 缺失时 GetBaseRPM() 返回 0 并直接放行，已配置限流的账号会被超额调度。
+	"base_rpm",
+	"rpm_strategy",
+	"rpm_sticky_buffer",
+	"max_sessions",
+	"session_idle_timeout_minutes",
+	"openai_oauth_responses_websockets_v2_enabled",
+	"openai_oauth_responses_websockets_v2_mode",
+	"openai_apikey_responses_websockets_v2_enabled",
+	"openai_apikey_responses_websockets_v2_mode",
+	"responses_websockets_v2_enabled",
+	"openai_ws_enabled",
+	"openai_ws_force_http",
+	"openai_responses_mode",
+	"openai_responses_supported",
+	// 透传开关必须进投影：候选过滤(ListSchedulableAccounts)读的是本投影，
+	// 而 Account.IsModelSupported 靠 extra 上的这两个键短路 model_mapping 白名单。
+	// 裁掉它们，透传账号在选号阶段会退回按(常为过期的)白名单判定并被误判为
+	// model_not_supported —— 转发阶段却仍按透传工作，表现为"单独测账号能通、
+	// 走网关报 no available accounts"。
+	"openai_passthrough",
+	"openai_oauth_passthrough",
+	"codex_fingerprint_mode",
+	"codex_fingerprint_seed",
+	"codex_5h_used_percent",
+	"codex_7d_used_percent",
+	"codex_5h_reset_at",
+	"codex_7d_reset_at",
+	"codex_5h_reset_after_seconds",
+	"codex_7d_reset_after_seconds",
+	"codex_usage_updated_at",
+	"auto_pause_5h_threshold",
+	"auto_pause_7d_threshold",
+	"auto_pause_5h_disabled",
+	"auto_pause_7d_disabled",
+	"model_rate_limits",
+	service.UpstreamBillingProbeExtraKey,
+	service.GrokMediaEligibleExtraKey,
+	"grok_billing_snapshot",
+}
+
 func filterSchedulerExtra(extra map[string]any) map[string]any {
 	if len(extra) == 0 {
 		return nil
 	}
-	keys := []string{
-		// Anthropic shared-window and Fable-only threshold checks run on this
-		// projection. UpdateExtra refreshes both payloads without a bucket rebuild.
-		"session_window_utilization",
-		"passive_usage_7d_utilization",
-		"passive_usage_7d_reset",
-		"passive_usage_7d_oi_utilization",
-		"passive_usage_7d_oi_reset",
-		"quota_limit",
-		"quota_used",
-		"quota_daily_limit",
-		"quota_daily_used",
-		"quota_daily_start",
-		"quota_daily_reset_mode",
-		"quota_daily_reset_hour",
-		"quota_weekly_limit",
-		"quota_weekly_used",
-		"quota_weekly_start",
-		"quota_weekly_reset_mode",
-		"quota_weekly_reset_day",
-		"quota_weekly_reset_hour",
-		"quota_reset_timezone",
-		"mixed_scheduling",
-		"window_cost_limit",
-		"window_cost_sticky_reserve",
-		// RPM 门与窗口费用门一样跑在本投影上：isAccountSchedulableForRPM 读 base_rpm，
-		// 缺失时 GetBaseRPM() 返回 0 并直接放行，已配置限流的账号会被超额调度。
-		"base_rpm",
-		"rpm_strategy",
-		"rpm_sticky_buffer",
-		"max_sessions",
-		"session_idle_timeout_minutes",
-		"openai_oauth_responses_websockets_v2_enabled",
-		"openai_oauth_responses_websockets_v2_mode",
-		"openai_apikey_responses_websockets_v2_enabled",
-		"openai_apikey_responses_websockets_v2_mode",
-		"responses_websockets_v2_enabled",
-		"openai_ws_enabled",
-		"openai_ws_force_http",
-		"openai_responses_mode",
-		"openai_responses_supported",
-		// 透传开关必须进投影：候选过滤(ListSchedulableAccounts)读的是本投影，
-		// 而 Account.IsModelSupported 靠 extra 上的这两个键短路 model_mapping 白名单。
-		// 裁掉它们，透传账号在选号阶段会退回按(常为过期的)白名单判定并被误判为
-		// model_not_supported —— 转发阶段却仍按透传工作，表现为"单独测账号能通、
-		// 走网关报 no available accounts"。
-		"openai_passthrough",
-		"openai_oauth_passthrough",
-		"codex_fingerprint_mode",
-		"codex_fingerprint_seed",
-		"codex_5h_used_percent",
-		"codex_7d_used_percent",
-		"codex_5h_reset_at",
-		"codex_7d_reset_at",
-		"codex_5h_reset_after_seconds",
-		"codex_7d_reset_after_seconds",
-		"codex_usage_updated_at",
-		"auto_pause_5h_threshold",
-		"auto_pause_7d_threshold",
-		"auto_pause_5h_disabled",
-		"auto_pause_7d_disabled",
-		"model_rate_limits",
-		service.UpstreamBillingProbeExtraKey,
-		service.GrokMediaEligibleExtraKey,
-		"grok_billing_snapshot",
-	}
 	filtered := make(map[string]any)
-	for _, key := range keys {
+	for _, key := range schedulerExtraKeys {
 		if value, ok := extra[key]; ok && value != nil {
 			if key == service.UpstreamBillingProbeExtraKey {
 				filteredProbe := filterSchedulerUpstreamBillingProbe(value)

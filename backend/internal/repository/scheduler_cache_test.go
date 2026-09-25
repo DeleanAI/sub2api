@@ -37,35 +37,42 @@ func TestSchedulerMetadataAccountKeepsOpenAISubscriptionIdentity(t *testing.T) {
 	require.Empty(t, metadata.GetCredential("access_token"))
 }
 
-// 调度快照里的账号要和完整账号对端点能力给出同样的判定：预筛选按快照判，判错了就进不了
-// 后面按完整账号的那一步。Seedance 账号曾因快照丢了 openai_capabilities 与 base_url 而永远
-// 选不上（503 No eligible Seedance accounts）。
-func TestSchedulerMetadataAccountKeepsEndpointCapabilities(t *testing.T) {
-	account := service.Account{
-		ID:       31,
-		Platform: service.PlatformOpenAI,
-		Type:     service.AccountTypeAPIKey,
-		Credentials: map[string]any{
-			"api_key":             "sk-test",
-			"base_url":            "https://ai-gateway.baidubce.com",
-			"openai_capabilities": []any{"seedance"},
-			"model_mapping":       map[string]any{"doubao-seedance-2-0-260128": "doubao-seedance-2-0-260128"},
-			"access_token":        "secret-access-token",
-		},
+// 调度快照的投影必须保留端点能力判定要读的一切：预筛选按投影判，判错了就进不了后面按完整账号的那一步。
+// 遍历声明——会进快照的每个平台 × API Key / OAuth × 能力配置（未配置、每种可配置能力单独开启、全部
+// 开启）——比较投影前后对每种可配置能力的判定。新增平台或可配置能力当天就被覆盖。Seedance 账号曾因
+// 投影丢了 openai_capabilities 与 base_url 而永远选不上（503 No eligible Seedance accounts）。
+func TestSchedulerMetadataProjectionPreservesEndpointCapabilityDecisions(t *testing.T) {
+	configs := [][]any{nil}
+	all := make([]any, 0, len(service.ConfigurableOpenAIEndpointCapabilities))
+	for _, capability := range service.ConfigurableOpenAIEndpointCapabilities {
+		configs = append(configs, []any{string(capability)})
+		all = append(all, string(capability))
 	}
+	configs = append(configs, all)
 
-	metadata := buildSchedulerMetadataAccount(account)
-
-	for _, capability := range []service.OpenAIEndpointCapability{
-		service.OpenAIEndpointCapabilitySeedance,
-		service.OpenAIEndpointCapabilityChatCompletions,
-		service.OpenAIEndpointCapabilityEmbeddings,
-	} {
-		require.Equal(t, account.SupportsOpenAIEndpointCapability(capability), metadata.SupportsOpenAIEndpointCapability(capability), capability)
+	for _, platform := range service.SchedulerSnapshotPlatforms() {
+		for _, accountType := range []string{service.AccountTypeAPIKey, service.AccountTypeOAuth} {
+			for _, config := range configs {
+				account := service.Account{ID: 31, Platform: platform, Type: accountType, Status: service.StatusActive, Schedulable: true,
+					Credentials: map[string]any{
+						"api_key":       "sk-test",
+						"access_token":  "at-test",
+						"base_url":      "https://upstream.example.com/api/v3",
+						"model_mapping": map[string]any{"m": "m"},
+					}}
+				if config != nil {
+					account.Credentials["openai_capabilities"] = config
+				}
+				meta := buildSchedulerMetadataAccount(account)
+				for _, capability := range service.ConfigurableOpenAIEndpointCapabilities {
+					require.Equal(t, account.SupportsOpenAIEndpointCapability(capability), meta.SupportsOpenAIEndpointCapability(capability),
+						"%s/%s openai_capabilities=%v capability=%s", platform, accountType, config, capability)
+				}
+				require.Equal(t, account.IsModelSupported("m"), meta.IsModelSupported("m"))
+				require.Empty(t, meta.GetCredential("access_token"), "密钥类凭据不进快照投影")
+			}
+		}
 	}
-	require.True(t, metadata.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilitySeedance))
-	require.False(t, metadata.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilityChatCompletions), "只勾了 Seedance 的账号不能被文本流量选中")
-	require.Empty(t, metadata.GetCredential("access_token"))
 }
 
 func TestSchedulerMetadataAccountProjectsUpstreamBillingProbe(t *testing.T) {

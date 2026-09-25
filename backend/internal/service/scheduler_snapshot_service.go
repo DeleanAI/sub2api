@@ -824,6 +824,12 @@ func (s *SchedulerSnapshotService) rebuildByAccount(ctx context.Context, account
 	return s.rebuildBuckets(ctx, buckets, reason)
 }
 
+// SchedulerSnapshotPlatforms 是账号会进入调度快照的平台（快照投影的一致性测试按它遍历）。
+func SchedulerSnapshotPlatforms() []string {
+	platforms := schedulerSnapshotPlatforms()
+	return platforms[:]
+}
+
 func schedulerSnapshotPlatforms() [11]string {
 	return [11]string{PlatformAnthropic, PlatformGemini, PlatformOpenAI, PlatformAntigravity, PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformQwen, PlatformMiniMax, PlatformOpenCodeGo}
 }

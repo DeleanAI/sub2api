@@ -110,7 +110,7 @@ func TestSchedulerCacheSnapshotAccountIDReusePreservesPayloadAndMembers(t *testi
 
 	wantFull, err := json.Marshal(validOne)
 	require.NoError(t, err)
-	wantMeta, err := json.Marshal(buildSchedulerMetadataAccount(validOne))
+	wantMeta, err := json.Marshal(schedulerMetaPayload{Account: buildSchedulerMetadataAccount(validOne), ProjectionVersion: schedulerMetaProjectionVersion})
 	require.NoError(t, err)
 	fullBefore, err := cache.rdb.Get(ctx, schedulerAccountKey("701")).Bytes()
 	require.NoError(t, err)
@@ -290,7 +290,7 @@ func TestMarshalSchedulerCacheAccountKeepsEncodingJSONWireFormat(t *testing.T) {
 			require.NoError(t, err)
 			wantFull, err := json.Marshal(tc.account)
 			require.NoError(t, err)
-			wantMeta, err := json.Marshal(buildSchedulerMetadataAccount(tc.account))
+			wantMeta, err := json.Marshal(schedulerMetaPayload{Account: buildSchedulerMetadataAccount(tc.account), ProjectionVersion: schedulerMetaProjectionVersion})
 			require.NoError(t, err)
 			require.Equal(t, wantFull, full)
 			require.Equal(t, wantMeta, meta)
@@ -1181,4 +1181,56 @@ func TestBuildSchedulerMetadataAccount_KeepsRPMFieldsForRPMGate(t *testing.T) {
 		require.Equal(t, service.WindowCostStickyOnly, restored.CheckRPMSchedulability(100),
 			"投影裁掉 rpm_strategy 会让粘性豁免账号退回三区判定")
 	})
+}
+
+// 滚动更新时旧版本进程写下的 meta（不带投影版本、缺新规则要保留的字段）不能再被预筛选直接采信：
+// 改用同批写入的完整账号按当前规则重新投影；完整账号也没有时按缓存未命中处理（回退数据库）。
+func TestSchedulerCacheReprojectsMetaWrittenByOlderProjection(t *testing.T) {
+	ctx := context.Background()
+	cache := newSchedulerCacheUnit(t)
+	bucket := service.SchedulerBucket{GroupID: 31, Platform: service.PlatformOpenAI, Mode: service.SchedulerModeSingle}
+	account := service.Account{ID: 931, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Status: service.StatusActive, Schedulable: true,
+		Credentials: map[string]any{"api_key": "sk-test", "access_token": "at-test", "base_url": "https://ark.example.com", "openai_capabilities": []any{"seedance"}}}
+	token, err := cache.CaptureBucketWriteToken(ctx, bucket)
+	require.NoError(t, err)
+	require.NoError(t, cache.SetSnapshot(ctx, bucket, token, []service.Account{account}))
+
+	raw, err := cache.rdb.Get(ctx, schedulerAccountMetaKey("931")).Bytes()
+	require.NoError(t, err)
+	require.Contains(t, string(raw), schedulerMetaProjectionVersion, "当前代码写的 meta 必须带投影版本")
+
+	// 旧版本进程：同一账号按旧规则投影（丢了 openai_capabilities / base_url），且不带版本戳。
+	old := account
+	old.Credentials = map[string]any{"api_key": "sk-test"}
+	oldMeta, err := json.Marshal(old)
+	require.NoError(t, err)
+	require.NoError(t, cache.rdb.Set(ctx, schedulerAccountMetaKey("931"), oldMeta, 0).Err())
+
+	snapshot, hit, err := cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.True(t, hit)
+	require.Len(t, snapshot, 1)
+	require.True(t, snapshot[0].SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilitySeedance), "旧投影必须按当前规则从完整账号重新投影")
+	require.Empty(t, snapshot[0].GetCredential("access_token"), "重新投影后仍按投影规则裁掉密钥")
+
+	require.NoError(t, cache.rdb.Del(ctx, schedulerAccountKey("931")).Err())
+	snapshot, hit, err = cache.GetSnapshot(ctx, bucket)
+	require.NoError(t, err)
+	require.False(t, hit, "完整账号也没有时按缓存未命中处理，而不是拿旧投影凑合")
+	require.Nil(t, snapshot)
+}
+
+// 投影版本由规则本身算出：增删一个保留的键，版本必须随之改变，不靠人手动递增。
+func TestSchedulerMetaProjectionVersionFollowsProjectionRules(t *testing.T) {
+	base := computeSchedulerMetaProjectionVersion()
+	require.Equal(t, base, computeSchedulerMetaProjectionVersion(), "同一套规则必须得到同一个版本")
+	for _, keys := range []*[]string{&schedulerCredentialKeys, &schedulerExtraKeys} {
+		saved := *keys
+		*keys = append(append([]string(nil), saved...), "probe_only_key")
+		require.NotEqual(t, base, computeSchedulerMetaProjectionVersion(), "新增保留键")
+		*keys = saved[:len(saved)-1]
+		require.NotEqual(t, base, computeSchedulerMetaProjectionVersion(), "去掉保留键")
+		*keys = saved
+	}
+	require.Equal(t, base, computeSchedulerMetaProjectionVersion())
 }
