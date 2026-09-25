@@ -117,7 +117,7 @@ var EncryptedStores = []EncryptedStore{
 		// 这张表只由 SQL 迁移 229_plugins.sql 创建，没有 ent schema，所以这里直接写表名。
 		// 漏登记的后果与 issue #4 完全一致：轮换后插件配置解不开，而插件加载时才会发现。
 		Name:        "sub2api_plugin_installations.config_encrypted",
-		SourceFiles: []string{"internal/service/plugin_manager.go:743"},
+		SourceFiles: []string{"internal/service/plugin_manager.go:749"},
 		table:       "sub2api_plugin_installations", idColumn: "id", column: "config_encrypted", idKind: idInt,
 		where: func() *entsql.Predicate { return entsql.NEQ("config_encrypted", "") },
 	},
@@ -140,7 +140,7 @@ var NonRotatableEncryptSites = map[string]string{
 	// ConfigManager.Encrypt 是个转发方法，本身不决定密文去向；去向由调用方决定，
 	// 目前唯一的调用方是上面那个不落库的删除确认 token。
 	"internal/securityaudit/prompt_config_store.go:414": "ConfigManager.Encrypt 转发方法：密文去向由调用方登记（当前唯一调用方是删除确认 token）",
-	"internal/service/plugin_manager.go:836":            "插件 UI 会话令牌：带用途前缀、TTL 内有效、只在请求之间往返，不落库",
+	"internal/service/plugin_manager.go:862":            "插件 UI 会话令牌：带用途前缀、TTL 内有效、只在请求之间往返，不落库",
 	"internal/service/openai_live_attestation.go":       "Live attestation 用 JWT secret 派生的独立密钥加密，不在落库密文密钥环上",
 }
 
