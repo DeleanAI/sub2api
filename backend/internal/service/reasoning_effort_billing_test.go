@@ -203,6 +203,14 @@ func TestReasoningEffortBillingNoResolverPreservesCatalogPolicies(t *testing.T) 
 					ServiceTier: serviceTier, LongContextBillingEnabled: &applyLongContext, ReasoningEffort: "max",
 				})
 				require.NoError(t, err)
+				// fork：统一入口还会在结果上记下计费模式与实际施加的两个倍率（落账不变式
+				// ActualCost = TotalCost × RateMultiplier × ModelRateMultiplier 要用），金额口径不变。
+				want.BillingMode = string(BillingModeToken)
+				want.RateMultiplier = rateMultiplier
+				if want.RateMultiplier < 0 {
+					want.RateMultiplier = 0 // 统一入口把负倍率按 0 处理
+				}
+				want.ModelRateMultiplier = 1
 				require.Equal(t, want, got)
 			}
 		}

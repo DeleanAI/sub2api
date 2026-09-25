@@ -387,7 +387,7 @@ func TestBackupService_S3ConfigStaysEncryptedAfterSecondSave(t *testing.T) {
 	require.NoError(t, err)
 
 	storedSecret := func() string {
-		raw, _ := repo.GetValue(context.Background(), settingKeyBackupS3Config)
+		raw, _ := repo.GetValue(context.Background(), SettingKeyBackupS3Config)
 		var stored BackupS3Config
 		require.NoError(t, json.Unmarshal([]byte(raw), &stored))
 		return stored.SecretAccessKey

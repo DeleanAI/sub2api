@@ -482,6 +482,9 @@ func TestMonitorAccountQuotaCapability_Matrix(t *testing.T) {
 		{
 			name:    "qwen payg has no usage endpoint",
 			account: &Account{ID: 17, Platform: domain.PlatformQwen, Type: AccountTypeAPIKey},
+			wantErr: ErrChannelMonitorAccountNotSupportable,
+		},
+		{
 			name:    "minimax payg has no balance endpoint",
 			account: &Account{ID: 15, Platform: domain.PlatformMiniMax},
 			wantErr: ErrChannelMonitorAccountNotSupportable,

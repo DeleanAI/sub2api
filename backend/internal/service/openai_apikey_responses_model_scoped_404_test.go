@@ -23,13 +23,13 @@ func TestModelScopedMarkersAreAllRecognized(t *testing.T) {
 				name string
 				body []byte
 			}{
-				{"error.type", mustJSON(map[string]any{"error": map[string]any{"type": marker}})},
-				{"error.code", mustJSON(map[string]any{"error": map[string]any{"code": marker}})},
-				{"error.message", mustJSON(map[string]any{"error": map[string]any{"message": "Model \"gpt-x\" " + marker}})},
-				{"top-level code", mustJSON(map[string]any{"code": marker})},
-				{"top-level message", mustJSON(map[string]any{"message": marker})},
+				{"error.type", mustMarshalJSON(map[string]any{"error": map[string]any{"type": marker}})},
+				{"error.code", mustMarshalJSON(map[string]any{"error": map[string]any{"code": marker}})},
+				{"error.message", mustMarshalJSON(map[string]any{"error": map[string]any{"message": "Model \"gpt-x\" " + marker}})},
+				{"top-level code", mustMarshalJSON(map[string]any{"code": marker})},
+				{"top-level message", mustMarshalJSON(map[string]any{"message": marker})},
 				{"non-json body", []byte("upstream says: " + marker)},
-				{"uppercased", mustJSON(map[string]any{"error": map[string]any{"type": strings.ToUpper(marker)}})},
+				{"uppercased", mustMarshalJSON(map[string]any{"error": map[string]any{"type": strings.ToUpper(marker)}})},
 			}
 			for _, carrier := range carriers {
 				require.Truef(t, isOpenAIUpstreamModelScoped404(carrier.body),
@@ -61,9 +61,9 @@ func TestEndpointScoped404StillMarksUnsupported(t *testing.T) {
 		[]byte(``),
 		[]byte(`Not Found`),
 		[]byte(`<html><head><title>404 Not Found</title></head></html>`),
-		mustJSON(map[string]any{"error": map[string]any{"message": "Unrecognized request URL"}}),
-		mustJSON(map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": "Unknown endpoint"}}),
-		mustJSON(map[string]any{"detail": "Not Found"}),
+		mustMarshalJSON(map[string]any{"error": map[string]any{"message": "Unrecognized request URL"}}),
+		mustMarshalJSON(map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": "Unknown endpoint"}}),
+		mustMarshalJSON(map[string]any{"detail": "Not Found"}),
 	}
 	for i, body := range endpointBodies {
 		t.Run(fmt.Sprintf("body_%d", i), func(t *testing.T) {
@@ -80,7 +80,7 @@ func TestEndpointScoped404StillMarksUnsupported(t *testing.T) {
 
 // 非 404/405 一律不进模型级判定：它们的处置由既有分支决定（保守 true / 看 function_call）。
 func TestNonNotFoundStatusesNeverModelScoped(t *testing.T) {
-	modelScopedBody := mustJSON(map[string]any{"error": map[string]any{"type": "model_not_found"}})
+	modelScopedBody := mustMarshalJSON(map[string]any{"error": map[string]any{"type": "model_not_found"}})
 	for _, status := range []int{200, 400, 401, 403, 422, 429, 500, 503} {
 		endpointAbsent, modelScoped := responsesEndpointVerdictFromResponse(status, modelScopedBody)
 		require.Falsef(t, endpointAbsent, "status=%d 不应判为端点缺失", status)
@@ -130,7 +130,7 @@ func TestSelectResponsesProbeModelsOrderAndCap(t *testing.T) {
 	require.Equal(t, selectResponsesProbeModels(acct)[0], selectResponsesProbeModel(acct))
 }
 
-func mustJSON(v any) []byte {
+func mustMarshalJSON(v any) []byte {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		panic(err)

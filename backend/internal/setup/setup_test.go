@@ -1,8 +1,8 @@
 package setup
 
 import (
-	"encoding/hex"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"

@@ -325,13 +325,6 @@ func newGroupLifecycleTestService(cache SchedulerCache, accounts AccountReposito
 }
 
 func expectedGroupLifecycleBuckets(groupID int64) []SchedulerBucket {
-	platforms := schedulerSnapshotPlatforms()
-	buckets := make([]SchedulerBucket, 0, schedulerCanonicalBucketCount())
-	for _, platform := range platforms {
-		buckets = append(buckets,
-			SchedulerBucket{GroupID: groupID, Platform: platform, Mode: SchedulerModeSingle},
-			SchedulerBucket{GroupID: groupID, Platform: platform, Mode: SchedulerModeForced},
-		)
 	return schedulerCanonicalBuckets(groupID)
 }
 
@@ -448,7 +441,6 @@ func TestSchedulerGroupLifecycleActiveReopensAndRebuildsAllCurrentBuckets(t *tes
 	accounts.beforeLoad = func() {
 		held, tokenCount := cache.leaseHeldAndTokenCount()
 		require.False(t, held, "the group lifecycle lease must be released before the first account query")
-		require.Equal(t, schedulerCanonicalBucketCount(), tokenCount, "all reopen tokens must be prepared before the first account query")
 		require.Equal(t, len(current), tokenCount, "all reopen tokens must be prepared before the first account query")
 	}
 	svc := newGroupLifecycleTestService(cache, accounts, groups, config.RunModeStandard)
@@ -461,8 +453,6 @@ func TestSchedulerGroupLifecycleActiveReopensAndRebuildsAllCurrentBuckets(t *tes
 	registered, err := cache.retirementRaceCache.ListBuckets(context.Background())
 	require.NoError(t, err)
 	require.Contains(t, bucketStrings(registered), historical.String())
-	require.Len(t, cache.tokens(), schedulerCanonicalBucketCount())
-	require.Equal(t, 11, accounts.callCount())
 	require.Len(t, cache.tokens(), len(current))
 	require.Equal(t, schedulerCanonicalAccountQueryCount(), accounts.callCount())
 	require.Equal(t, 1, accounts.platformCallCount(PlatformOpenAI))
@@ -482,7 +472,6 @@ func TestSchedulerGroupLifecycleActiveReopensAndRebuildsAllCurrentBuckets(t *tes
 	require.True(t, cache.releaseDeadline)
 	require.NoError(t, cache.releaseCtxErr)
 	_, reopenHeld := cache.lifecycleMutationLeaseStates()
-	require.Len(t, reopenHeld, schedulerCanonicalBucketCount())
 	require.Len(t, reopenHeld, len(current))
 	for _, held := range reopenHeld {
 		require.True(t, held)
@@ -509,7 +498,6 @@ func TestSchedulerGroupLifecycleInactiveThenActiveAuthoritativelyReopens(t *test
 	require.NoError(t, svc.handleGroupEvent(context.Background(), ptrInt64(groupID), make(map[batchSeenKey]struct{})))
 
 	require.Len(t, cache.tokens(), schedulerCanonicalBucketCount())
-	require.Equal(t, 11, accounts.callCount())
 	require.Equal(t, schedulerCanonicalAccountQueryCount(), accounts.callCount())
 	for _, bucket := range expectedGroupLifecycleBuckets(groupID) {
 		_, published := cache.counts(bucket)
@@ -558,7 +546,6 @@ func TestSchedulerGroupLifecycleEpochPreventsABA(t *testing.T) {
 	groups.set(&Group{ID: groupID, Status: StatusActive, Hydrated: true}, nil)
 	require.NoError(t, svc.handleGroupEvent(context.Background(), ptrInt64(groupID), make(map[batchSeenKey]struct{})))
 	firstActiveTokens := cache.tokens()
-	require.Len(t, firstActiveTokens, schedulerCanonicalBucketCount())
 	canonicalCount := schedulerCanonicalBucketCount()
 	require.Len(t, firstActiveTokens, canonicalCount)
 
@@ -567,8 +554,6 @@ func TestSchedulerGroupLifecycleEpochPreventsABA(t *testing.T) {
 	groups.set(&Group{ID: groupID, Status: StatusActive, Hydrated: true}, nil)
 	require.NoError(t, svc.handleGroupEvent(context.Background(), ptrInt64(groupID), make(map[batchSeenKey]struct{})))
 	allTokens := cache.tokens()
-	require.Len(t, allTokens, 2*schedulerCanonicalBucketCount())
-	require.Greater(t, allTokens[schedulerCanonicalBucketCount()].Epoch, firstActiveTokens[0].Epoch)
 	require.Len(t, allTokens, 2*canonicalCount)
 	require.Greater(t, allTokens[canonicalCount].Epoch, firstActiveTokens[0].Epoch)
 	require.ErrorIs(t, cache.SetSnapshot(context.Background(), firstActiveTokens[0].Bucket, firstActiveTokens[0], nil), ErrSchedulerBucketWriteFenced)
