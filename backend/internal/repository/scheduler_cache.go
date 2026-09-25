@@ -956,7 +956,13 @@ func filterSchedulerCredentials(credentials map[string]any) map[string]any {
 	}
 	// Candidate-list admission evaluates the account override before hydrating
 	// the full account. Dropping it silently falls back to the platform threshold.
-	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold"}
+	//
+	// openai_capabilities / base_url：候选预筛选里的 SupportsOpenAIEndpointCapability 读这两个键。
+	// 缺了 openai_capabilities，账号配置的端点能力限制在预筛选里全部失效；Seedance 分支还要求
+	// base_url 非空——两个都缺时 Seedance 账号在快照里永远判为 capability_mismatch，所有
+	// /api/v3/contents/generations/tasks 请求都回 503 "No eligible Seedance accounts"
+	// （toooooken 2026-09-25 实测：pool=1, filtered: capability_mismatch=1）。
+	keys := []string{"model_mapping", "compact_model_mapping", "api_key", "project_id", "oauth_type", "plan_type", "account_scheduling_threshold", "openai_capabilities", "base_url"}
 	filtered := make(map[string]any)
 	for _, key := range keys {
 		if value, ok := credentials[key]; ok && value != nil {

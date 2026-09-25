@@ -37,6 +37,37 @@ func TestSchedulerMetadataAccountKeepsOpenAISubscriptionIdentity(t *testing.T) {
 	require.Empty(t, metadata.GetCredential("access_token"))
 }
 
+// 调度快照里的账号要和完整账号对端点能力给出同样的判定：预筛选按快照判，判错了就进不了
+// 后面按完整账号的那一步。Seedance 账号曾因快照丢了 openai_capabilities 与 base_url 而永远
+// 选不上（503 No eligible Seedance accounts）。
+func TestSchedulerMetadataAccountKeepsEndpointCapabilities(t *testing.T) {
+	account := service.Account{
+		ID:       31,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Credentials: map[string]any{
+			"api_key":             "sk-test",
+			"base_url":            "https://ai-gateway.baidubce.com",
+			"openai_capabilities": []any{"seedance"},
+			"model_mapping":       map[string]any{"doubao-seedance-2-0-260128": "doubao-seedance-2-0-260128"},
+			"access_token":        "secret-access-token",
+		},
+	}
+
+	metadata := buildSchedulerMetadataAccount(account)
+
+	for _, capability := range []service.OpenAIEndpointCapability{
+		service.OpenAIEndpointCapabilitySeedance,
+		service.OpenAIEndpointCapabilityChatCompletions,
+		service.OpenAIEndpointCapabilityEmbeddings,
+	} {
+		require.Equal(t, account.SupportsOpenAIEndpointCapability(capability), metadata.SupportsOpenAIEndpointCapability(capability), capability)
+	}
+	require.True(t, metadata.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilitySeedance))
+	require.False(t, metadata.SupportsOpenAIEndpointCapability(service.OpenAIEndpointCapabilityChatCompletions), "只勾了 Seedance 的账号不能被文本流量选中")
+	require.Empty(t, metadata.GetCredential("access_token"))
+}
+
 func TestSchedulerMetadataAccountProjectsUpstreamBillingProbe(t *testing.T) {
 	lastError := strings.Repeat("upstream diagnostic ", 512)
 	probe := map[string]any{
