@@ -87,7 +87,7 @@ func TestSeedanceHandlerLifecycleAndOwnership(t *testing.T) {
 	subject, _ := middleware.GetAuthSubjectFromContext(c)
 	result := &service.OpenAIForwardResult{Usage: service.OpenAIUsage{OutputTokens: 12345}, ResponseID: "seedance:task-ark", UpstreamTaskStatus: "succeeded"}
 	for i := range 20 {
-		billed, _, _ := h.gatewayService.PrepareSeedanceCompletionBilling(context.Background(), zap.NewNop(), subject.UserID, key.ID, result.ResponseID, result)
+		billed, _, _ := h.gatewayService.PrepareSeedanceCompletionBilling(context.Background(), zap.NewNop(), subject.UserID, key.ID, key, result.ResponseID, result)
 		if i == 0 {
 			require.NotNil(t, billed)
 			require.Equal(t, "doubao-seedance", billed.BillingModel)
@@ -167,7 +167,7 @@ func TestSeedanceCompletionBillingIsNeverSilent(t *testing.T) {
 	result := &service.OpenAIForwardResult{Usage: service.OpenAIUsage{OutputTokens: 40594}, UpstreamModel: "doubao-seedance-2-0-mini-260615", ResponseID: service.SeedanceTaskKey("cgt-x"), UpstreamTaskStatus: "succeeded"}
 
 	core, logs := observer.New(zap.WarnLevel)
-	billed, _, outcome := h.gatewayService.PrepareSeedanceCompletionBilling(context.Background(), zap.New(core), subject.UserID, key.ID, result.ResponseID, result)
+	billed, _, outcome := h.gatewayService.PrepareSeedanceCompletionBilling(context.Background(), zap.New(core), subject.UserID, key.ID, key, result.ResponseID, result)
 	require.Equal(t, service.SeedanceBillingReady, outcome)
 	require.NotNil(t, billed, "缺快照也要计费")
 	require.Equal(t, "doubao-seedance-2-0-mini-260615", billed.BillingModel)
@@ -179,7 +179,7 @@ func TestSeedanceCompletionBillingIsNeverSilent(t *testing.T) {
 	core, logs = observer.New(zap.WarnLevel)
 	other := *result
 	other.ResponseID = service.SeedanceTaskKey("cgt-y")
-	billed, _, outcome = h.gatewayService.PrepareSeedanceCompletionBilling(context.Background(), zap.New(core), subject.UserID, key.ID, other.ResponseID, &other)
+	billed, _, outcome = h.gatewayService.PrepareSeedanceCompletionBilling(context.Background(), zap.New(core), subject.UserID, key.ID, key, other.ResponseID, &other)
 	require.Nil(t, billed)
 	require.Equal(t, service.SeedanceBillingRetry, outcome, "抢标记出错：保留在结算索引里稍后再试")
 	require.Equal(t, 1, logs.FilterMessage("grok_media.video_billing_claim_failed").Len())

@@ -71,6 +71,9 @@ func ParseSeedanceRequest(body []byte) (GrokMediaRequestInfo, error) {
 			texts = append(texts, item.Get("text").String())
 		case "image_url":
 			info.InputImageURLs = append(info.InputImageURLs, item.Get("image_url.url").String())
+		case "video_url":
+			// 输入视频（参考 / 编辑 / 延长）：方舟按「输入是否包含视频」区分 token 单价，见 seedanceBillingVariant。
+			info.InputVideoURLs = append(info.InputVideoURLs, item.Get("video_url.url").String())
 		case "draft_task":
 			// 基于样片（draft）生成正式视频：样片任务只存在于创建它的那个上游账号上。
 			id := item.Get("draft_task.id")
@@ -161,6 +164,9 @@ type seedanceTaskStatus struct {
 	Status           string
 	Model            string
 	CompletionTokens int
+	// Resolution 是上游报告的生成视频分辨率（查询接口的 resolution），Draft 表示这是样片任务。
+	Resolution string
+	Draft      bool
 }
 
 func parseSeedanceTaskStatus(body []byte) seedanceTaskStatus {
@@ -168,7 +174,40 @@ func parseSeedanceTaskStatus(body []byte) seedanceTaskStatus {
 		Status:           gjson.GetBytes(body, "status").String(),
 		Model:            gjson.GetBytes(body, "model").String(),
 		CompletionTokens: max(0, int(gjson.GetBytes(body, "usage.completion_tokens").Int())),
+		Resolution:       strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "resolution").String())),
+		Draft:            gjson.GetBytes(body, "draft").Bool(),
 	}
+}
+
+// seedanceDraftBillingResolution：方舟样片（Draft）模式「Step 1：生成 Draft 视频，按 480p 视频计费」。
+const seedanceDraftBillingResolution = "480p"
+
+// billingResolution 是计价用的输出分辨率：取上游报告的实际分辨率（最终事实，不猜默认值），样片按 480p。
+func (s seedanceTaskStatus) billingResolution() string {
+	if s.Draft {
+		return seedanceDraftBillingResolution
+	}
+	return s.Resolution
+}
+
+// seedanceVideoInputVariantSuffix 标记「输入包含视频」的价格档。
+const seedanceVideoInputVariantSuffix = "+video"
+
+// seedanceBillingVariant 返回 Seedance 任务的计价档（计费变体，见 BillingVariantModel）。
+//
+// 方舟按「输出视频分辨率 × 输入是否包含视频」给 token 单价分档（模型价格文档，2026-09-24 版：
+// doubao-seedance-2.5 输出 480p/720p 不含视频 70、含视频 42，1080p 不含视频 77、含视频 46 元/百万 token）。
+// 档位名是 "<分辨率>" 或 "<分辨率>+video"，价格由运营在分组 / 渠道定价里按 "<模型>@<档位>" 配置；
+// 分辨率未知时返回空，按模型本身的价格计。
+func seedanceBillingVariant(resolution string, inputVideo bool) string {
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	if resolution == "" {
+		return ""
+	}
+	if inputVideo {
+		return resolution + seedanceVideoInputVariantSuffix
+	}
+	return resolution
 }
 
 // seedanceTaskTerminal：方舟任务的终态（官方：succeeded / failed / cancelled / expired），此后状态不再变化。
@@ -222,6 +261,7 @@ func (s *OpenAIGatewayService) ForwardSeedance(ctx context.Context, c *gin.Conte
 		result.UpstreamTaskStatus = status.Status
 		if status.Status == "succeeded" {
 			result.Usage.OutputTokens = status.CompletionTokens
+			result.VideoResolution = status.billingResolution()
 		}
 	}
 	writeGrokMediaResponse(c, resp, responseBody, s.responseHeaderFilter)

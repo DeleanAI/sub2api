@@ -66,9 +66,11 @@ type GrokMediaRequestInfo struct {
 	Resolution      string
 	DurationSeconds int
 	InputImageURLs  []string
-	MaskImageURL    string
-	Uploads         []OpenAIImagesUpload
-	MaskUpload      *OpenAIImagesUpload
+	// InputVideoURLs 是请求内容里的输入视频（Seedance 的 video_url：参考 / 编辑 / 延长）。
+	InputVideoURLs []string
+	MaskImageURL   string
+	Uploads        []OpenAIImagesUpload
+	MaskUpload     *OpenAIImagesUpload
 	// ReferencedTaskKeys 是本次请求所基于的既有上游任务（网关任务键，如
 	// SeedanceTaskKey(样片任务 ID)）。这类任务只存在于创建它的账号上，且只能引用调用方
 	// 自己的任务：处理层据此把请求绑定到那个账号，引用不到就拒绝。
@@ -380,6 +382,9 @@ type GrokVideoPendingBilling struct {
 	// （组合分组会解析成具体平台）只能在创建时记下；账号即持有任务的那个上游账号。
 	AccountID     int64  `json:"account_id,omitempty"`
 	QuotaPlatform string `json:"quota_platform,omitempty"`
+	// SeedanceInputVideo 记下创建时「输入是否包含视频」：方舟按它区分 token 单价，而查询结果里没有这项；
+	// 基于样片生成正式视频时沿用样片那一步的值（方舟：Step 2 的单价「根据 Step 1 是否包含输入视频确定」）。
+	SeedanceInputVideo bool `json:"seedance_input_video,omitempty"`
 	// CreatedAt is when the gateway accepted the async create (RFC3339Nano UTC).
 	// duration_ms for deferred billing is measured from this instant until the
 	// first official done+video.url observation (status poll or content download),

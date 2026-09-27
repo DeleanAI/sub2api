@@ -121,7 +121,9 @@ func (s *OpenAIGatewayService) ClaimAsyncVideoBilling(ctx context.Context, log *
 // Ark reports actual completion tokens: never infer tokens from duration or use Grok's per-second
 // tariff. 创建时快照缺失时仍然计费：用量来自这次上游返回本身（方舟文档：completion_tokens「可作为
 // 计费对账依据」），缺的只是调用方用的模型别名，按上游返回的模型名计价并记错误日志。
-func (s *OpenAIGatewayService) PrepareSeedanceCompletionBilling(ctx context.Context, log *zap.Logger, userID, apiKeyID int64, taskKey string, observed *OpenAIForwardResult) (*OpenAIForwardResult, *GrokVideoPendingBilling, SeedanceBillingOutcome) {
+//
+// apiKey 是创建任务的那把 Key（带分组），用来判定计价档在它的分组里有没有配价（applySeedanceBillingVariant）。
+func (s *OpenAIGatewayService) PrepareSeedanceCompletionBilling(ctx context.Context, log *zap.Logger, userID, apiKeyID int64, apiKey *APIKey, taskKey string, observed *OpenAIForwardResult) (*OpenAIForwardResult, *GrokVideoPendingBilling, SeedanceBillingOutcome) {
 	if observed == nil {
 		return nil, nil, SeedanceBillingPending
 	}
@@ -166,7 +168,42 @@ func (s *OpenAIGatewayService) PrepareSeedanceCompletionBilling(ctx context.Cont
 	}
 	merged.RequestID = StableGrokVideoBillingRequestID(taskKey)
 	merged.ResponseID = taskKey
+	s.applySeedanceBillingVariant(ctx, log, apiKey, &merged, pending)
 	return &merged, pending, SeedanceBillingReady
+}
+
+// applySeedanceBillingVariant 把成功任务的计费名换成它的计价档（seedanceBillingVariant），用量行的 model
+// 随之写成 "<模型>@<档位>"，看得出按哪一档计的费。只有这一档在调用方分组的分组 / 渠道定价里配了价才换；
+// 否则按模型本身的价格计并留告警——分档价漏配时不能悄悄按别的价计。
+func (s *OpenAIGatewayService) applySeedanceBillingVariant(ctx context.Context, log *zap.Logger, apiKey *APIKey, bill *OpenAIForwardResult, pending *GrokVideoPendingBilling) {
+	variant := seedanceBillingVariant(bill.VideoResolution, pending != nil && pending.SeedanceInputVideo)
+	if variant == "" {
+		log.Warn("seedance.billing_variant_unknown", zap.String("billing_model", bill.BillingModel),
+			zap.String("note", "upstream reported no resolution; billing the model's own price"))
+		return
+	}
+	model := BillingVariantModel(bill.BillingModel, variant)
+	if s.resolveOpenAIChannelPricing(ctx, model, apiKey) == nil {
+		log.Warn("seedance.billing_variant_unpriced", zap.String("billing_model", bill.BillingModel), zap.String("variant_model", model),
+			zap.String("note", "no group/channel price for this variant; billing the model's own price"))
+		return
+	}
+	bill.Model, bill.BillingModel = model, model
+}
+
+// SeedanceInputVideo 判定一次 Seedance 创建请求「输入是否包含视频」（计价维度之一，见 seedanceBillingVariant）：
+// 请求内容里有 video_url 即为是；基于样片生成正式视频时沿用样片那一步记下的值——方舟规定 Step 2 的单价
+// 「根据 Step 1 是否包含输入视频确定」。样片的快照读不到时按本次请求内容判定并留告警。
+func (s *OpenAIGatewayService) SeedanceInputVideo(ctx context.Context, log *zap.Logger, info GrokMediaRequestInfo, userID, apiKeyID int64) bool {
+	own := len(info.InputVideoURLs) > 0
+	for _, key := range info.ReferencedTaskKeys {
+		if draft := s.LoadAsyncVideoPendingBilling(ctx, log, key, userID, apiKeyID); draft != nil {
+			return draft.SeedanceInputVideo
+		}
+		log.Warn("seedance.draft_snapshot_missing", zap.String("draft_task", key), zap.Bool("request_has_video", own),
+			zap.String("note", "cannot tell whether the draft step had input video; pricing by this request's own content"))
+	}
+	return own
 }
 
 func firstNonBlank(values ...string) string {
@@ -218,8 +255,10 @@ type SeedanceSettlementService struct {
 	subscriptions *SubscriptionService
 	leaderLock    LeaderLockCache
 	log           *zap.Logger
-	// recordUsage 落一笔用量，默认是 record（与请求时同一个 RecordUsage 入口）；单测替换它以免搭整套计费依赖。
-	recordUsage func(ctx context.Context, entry SeedanceSettlementEntry, account *Account, bill *OpenAIForwardResult, pending *GrokVideoPendingBilling) error
+	// loadAPIKey 取创建任务的那把 Key，默认是 fetchAPIKey（与鉴权中间件同一个加载路径）；
+	// recordUsage 落一笔用量，默认是 record（与请求时同一个 RecordUsage 入口）。单测替换两者以免搭整套计费依赖。
+	loadAPIKey  func(ctx context.Context, entry SeedanceSettlementEntry) (*APIKey, error)
+	recordUsage func(ctx context.Context, entry SeedanceSettlementEntry, account *Account, apiKey *APIKey, bill *OpenAIForwardResult, pending *GrokVideoPendingBilling) error
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -250,6 +289,7 @@ func NewSeedanceSettlementService(
 		cancel:        cancel,
 		owner:         uuid.NewString(),
 	}
+	s.loadAPIKey = s.fetchAPIKey
 	s.recordUsage = s.record
 	return s
 }
@@ -440,11 +480,18 @@ func (s *SeedanceSettlementService) settleWith(ctx context.Context, entry Seedan
 	observed := &OpenAIForwardResult{ResponseID: entry.TaskKey, UpstreamModel: status.Model, UpstreamTaskStatus: status.Status}
 	if status.Status == "succeeded" {
 		observed.Usage.OutputTokens = status.CompletionTokens
+		observed.VideoResolution = status.billingResolution()
 	}
-	bill, snapshot, outcome := s.gateway.PrepareSeedanceCompletionBilling(ctx, log, entry.UserID, entry.APIKeyID, entry.TaskKey, observed)
+	apiKey, err := s.loadAPIKey(ctx, entry)
+	if err != nil || apiKey == nil {
+		log.Warn("seedance.settlement_api_key_unavailable", zap.Error(err))
+		s.schedule(ctx, entry, nextSeedanceSettlementCheck(now, pending))
+		return SeedanceBillingRetry
+	}
+	bill, snapshot, outcome := s.gateway.PrepareSeedanceCompletionBilling(ctx, log, entry.UserID, entry.APIKeyID, apiKey, entry.TaskKey, observed)
 	switch outcome {
 	case SeedanceBillingReady:
-		if err := s.recordUsage(ctx, entry, account, bill, snapshot); err != nil {
+		if err := s.recordUsage(ctx, entry, account, apiKey, bill, snapshot); err != nil {
 			log.Error("seedance.settlement_record_failed", zap.Error(err))
 			if releaseErr := s.gateway.ReleaseGrokVideoBilling(ctx, entry.TaskKey, entry.UserID, entry.APIKeyID); releaseErr != nil {
 				log.Error("seedance.settlement_claim_release_failed", zap.Error(releaseErr))
@@ -462,21 +509,25 @@ func (s *SeedanceSettlementService) settleWith(ctx context.Context, entry Seedan
 	return outcome
 }
 
-// record 用与请求时相同的入口（RecordUsage）落账。API Key 走鉴权中间件同一个加载路径（GetByKey），
-// 分组、用户、逐模型倍率与请求时一致；订阅组的订阅也与中间件同样取当前有效的那份。
-func (s *SeedanceSettlementService) record(ctx context.Context, entry SeedanceSettlementEntry, account *Account, bill *OpenAIForwardResult, pending *GrokVideoPendingBilling) error {
+// fetchAPIKey 走鉴权中间件同一个加载路径（GetByID 取到 Key 串再 GetByKey）：分组、用户、逐模型倍率
+// 与请求时一致。
+func (s *SeedanceSettlementService) fetchAPIKey(ctx context.Context, entry SeedanceSettlementEntry) (*APIKey, error) {
 	if s.apiKeys == nil {
-		return errors.New("api key service unavailable")
+		return nil, errors.New("api key service unavailable")
 	}
 	stored, err := s.apiKeys.GetByID(ctx, entry.APIKeyID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	apiKey, err := s.apiKeys.GetByKey(ctx, stored.Key)
-	if err != nil {
-		return err
-	}
-	var subscription *UserSubscription
+	return s.apiKeys.GetByKey(ctx, stored.Key)
+}
+
+// record 用与请求时相同的入口（RecordUsage）落账；订阅组的订阅也与中间件同样取当前有效的那份。
+func (s *SeedanceSettlementService) record(ctx context.Context, entry SeedanceSettlementEntry, account *Account, apiKey *APIKey, bill *OpenAIForwardResult, pending *GrokVideoPendingBilling) error {
+	var (
+		subscription *UserSubscription
+		err          error
+	)
 	if apiKey.Group != nil && apiKey.Group.IsSubscriptionType() && s.subscriptions != nil && apiKey.User != nil {
 		subscription, err = s.subscriptions.GetActiveSubscription(ctx, apiKey.User.ID, apiKey.Group.ID)
 		if err != nil && !errors.Is(err, ErrSubscriptionNotFound) {

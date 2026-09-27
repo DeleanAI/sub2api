@@ -91,11 +91,13 @@ func (r *settlementAccountRepo) GetByID(_ context.Context, id int64) (*Account, 
 
 type settlementFixture struct {
 	svc      *SeedanceSettlementService
+	gateway  *OpenAIGatewayService
 	store    *settlementMemStore
 	cache    *settlementCache
 	upstream *grokMediaContentUpstreamStub
 	entry    SeedanceSettlementEntry
 	member   string
+	apiKey   *APIKey
 	recorded []*OpenAIForwardResult
 	recordFn func() error
 }
@@ -110,9 +112,14 @@ func newSettlementFixture(t *testing.T, createdAt time.Time) *settlementFixture 
 	}
 	account := seedanceTestAccount()
 	gateway := &OpenAIGatewayService{cache: f.cache, httpUpstream: f.upstream}
+	f.gateway = gateway
+	groupID := f.entry.GroupID
+	f.apiKey = &APIKey{ID: f.entry.APIKeyID, UserID: f.entry.UserID, GroupID: &groupID,
+		Group: &Group{ID: groupID, Platform: PlatformOpenAI, Status: StatusActive, Hydrated: true, RateMultiplier: 1}}
 	f.svc = NewSeedanceSettlementService(f.store, gateway, &settlementAccountRepo{account: account}, nil, nil, nil)
 	gateway.AttachSeedanceSettlement(f.svc)
-	f.svc.recordUsage = func(_ context.Context, _ SeedanceSettlementEntry, _ *Account, bill *OpenAIForwardResult, _ *GrokVideoPendingBilling) error {
+	f.svc.loadAPIKey = func(context.Context, SeedanceSettlementEntry) (*APIKey, error) { return f.apiKey, nil }
+	f.svc.recordUsage = func(_ context.Context, _ SeedanceSettlementEntry, _ *Account, _ *APIKey, bill *OpenAIForwardResult, _ *GrokVideoPendingBilling) error {
 		if f.recordFn != nil {
 			if err := f.recordFn(); err != nil {
 				return err
@@ -265,4 +272,24 @@ func TestSeedanceQueryTaskUsesSharedUpstreamCall(t *testing.T) {
 	require.Equal(t, http.StatusOK, status)
 	require.Equal(t, seedanceTaskStatus{Status: "succeeded", Model: "m", CompletionTokens: 3}, parsed)
 	require.Equal(t, "Bearer ark-secret", upstream.request.Header.Get("Authorization"))
+}
+
+// 后台补查同样按计价档计费：分辨率取补查时上游报告的值，「含输入视频」取创建时的快照。
+func TestSeedanceSettlementBillsThePriceTier(t *testing.T) {
+	f := newSettlementFixture(t, time.Now().Add(-20*time.Minute))
+	billing := newTestBillingService()
+	f.gateway.billingService, f.gateway.resolver = billing, NewModelPricingResolver(nil, billing)
+	f.apiKey.Group = seedanceVariantTestGroup(true)
+	require.NoError(t, f.gateway.StoreGrokVideoPendingBilling(context.Background(), f.entry.TaskKey, f.entry.UserID, f.entry.APIKeyID, GrokVideoPendingBilling{
+		Model: seedanceVariantTestModel, BillingModel: seedanceVariantTestModel, AccountID: seedanceTestAccount().ID,
+		QuotaPlatform: PlatformOpenAI, CreatedAt: time.Now().Add(-20 * time.Minute).UTC().Format(time.RFC3339Nano), SeedanceInputVideo: true,
+	}))
+	f.store.due[f.member] = time.Now()
+	f.respond(http.StatusOK, `{"id":"cgt-1","status":"succeeded","resolution":"1080p","draft":false,"usage":{"completion_tokens":1000}}`)
+	f.svc.scanOnce(context.Background())
+
+	require.Len(t, f.recorded, 1)
+	require.Equal(t, seedanceVariantTestModel+"@1080p+video", f.recorded[0].BillingModel)
+	require.Equal(t, seedanceVariantTestModel+"@1080p+video", f.recorded[0].Model)
+	require.False(t, f.pending())
 }

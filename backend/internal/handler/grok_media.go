@@ -511,6 +511,9 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				// Wall-clock start for usage duration_ms: create accepted → first done discovery.
 				CreatedAt: videoCreateStartedAt,
 			}
+			if endpoint == service.SeedanceEndpointCreate {
+				pending.SeedanceInputVideo = h.gatewayService.SeedanceInputVideo(requestCtx, reqLog, requestInfo, subject.UserID, apiKey.ID)
+			}
 			if err := h.gatewayService.StoreGrokVideoPendingBilling(requestCtx, result.ResponseID, subject.UserID, apiKey.ID, pending); err != nil {
 				reqLog.Warn("grok_media.store_video_pending_billing_failed_retrying",
 					zap.Int64("account_id", account.ID),
@@ -536,7 +539,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		// Status poll OR content download can observe official done+video.url.
 		// Both paths share the same claim key so the customer is charged once.
 		if endpoint == service.SeedanceEndpointStatus {
-			billResult, _, outcome := h.gatewayService.PrepareSeedanceCompletionBilling(requestCtx, reqLog, subject.UserID, apiKey.ID, requestID, result)
+			billResult, _, outcome := h.gatewayService.PrepareSeedanceCompletionBilling(requestCtx, reqLog, subject.UserID, apiKey.ID, apiKey, requestID, result)
 			if billResult != nil {
 				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, requestID)
 			}

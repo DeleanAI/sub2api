@@ -105,6 +105,12 @@ var invalidModelRateMultiplierWarnSeen sync.Map
 func resolveGroupModelRateMultiplier(group *Group, model string) float64 {
 	entry, ok := group.ModelRateMultiplierFor(model)
 	if !ok {
+		// 计费变体（<模型>@<变体>）没有自己的规则时沿用模型本身的规则：为模型配的倍率不因计价分档而失效。
+		if base, isVariant := billingVariantBase(model); isVariant {
+			entry, ok = group.ModelRateMultiplierFor(base)
+		}
+	}
+	if !ok {
 		return 1
 	}
 	if !validGroupModelRateMultiplierValue(entry.Multiplier) {
