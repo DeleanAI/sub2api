@@ -91,7 +91,9 @@ type BatchImagePublicService struct {
 	Pricing           BatchImagePricingResolver
 	BillingRepo       UsageBillingRepository
 	AuthCache         APIKeyAuthCacheInvalidator
-	Config            *config.Config
+	// SettingRepo 用来读站内余额单位（BalanceCurrency），记进任务的金额快照；为 nil 时按默认币种。
+	SettingRepo SettingRepository
+	Config      *config.Config
 }
 
 type BatchImagePricingSnapshot struct {
@@ -182,7 +184,7 @@ type BatchImageItemsQuery struct {
 	Cursor string
 }
 
-func NewBatchImagePublicService(repo BatchImageRepository, accountRepo AccountRepository, groupRepo GroupRepository, userGroupRateRepo UserGroupRateRepository, queue BatchImageQueue, pricing *BatchImageModelPricingResolver, billingRepo UsageBillingRepository, authCache APIKeyAuthCacheInvalidator, cfg *config.Config) *BatchImagePublicService {
+func NewBatchImagePublicService(repo BatchImageRepository, accountRepo AccountRepository, groupRepo GroupRepository, userGroupRateRepo UserGroupRateRepository, queue BatchImageQueue, pricing *BatchImageModelPricingResolver, billingRepo UsageBillingRepository, authCache APIKeyAuthCacheInvalidator, settingRepo SettingRepository, cfg *config.Config) *BatchImagePublicService {
 	return &BatchImagePublicService{
 		Repo:              repo,
 		AccountRepo:       accountRepo,
@@ -193,6 +195,7 @@ func NewBatchImagePublicService(repo BatchImageRepository, accountRepo AccountRe
 		Pricing:           pricing,
 		BillingRepo:       billingRepo,
 		AuthCache:         authCache,
+		SettingRepo:       settingRepo,
 		Config:            cfg,
 	}
 }
@@ -278,7 +281,7 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 		BillableUnitPrice:       pricingSnapshot.BillableUnitPrice,
 		HoldUnitPrice:           pricingSnapshot.HoldUnitPrice,
 		PricingSnapshotVersion:  1,
-		Currency:                "USD",
+		Currency:                ReadBalanceCurrency(ctx, s.SettingRepo).Code,
 		HoldID:                  &holdID,
 		IdempotencyKey:          batchImageOptionalStringPtr(idempotencyKey),
 		RequestHash:             batchImageStringPtr(requestHash),

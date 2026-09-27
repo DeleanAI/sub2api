@@ -722,6 +722,13 @@ export interface SystemSettings {
   account_quota_notify_enabled: boolean;
   account_quota_notify_emails: NotifyEmailEntry[];
 
+  // 兑换入口与站内余额单位（fork）
+  redeem_enabled: boolean;
+  /** 站内余额单位的币种（ISO 4217，默认 USD），只决定怎么写、不做换算。 */
+  balance_currency: string;
+  /** 由 balance_currency 推导的符号（只读）。 */
+  balance_currency_symbol: string;
+
   // Channel Monitor feature switch
   channel_monitor_enabled: boolean;
   channel_monitor_mode?: 'v1' | 'v2';
@@ -1029,6 +1036,10 @@ export interface UpdateSettingsRequest {
   subscription_expiry_notify_enabled?: boolean;
   account_quota_notify_enabled?: boolean;
   account_quota_notify_emails?: NotifyEmailEntry[];
+
+  // 兑换入口与站内余额单位（fork）
+  redeem_enabled?: boolean;
+  balance_currency?: string;
 
   // Channel Monitor feature switch
   channel_monitor_enabled?: boolean;

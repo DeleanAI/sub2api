@@ -148,6 +148,14 @@ type RedeemService struct {
 	entClient            *dbent.Client
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	affiliateService     *AffiliateService
+	// availability 回答用户侧能不能自助兑换（redeem_enabled）；只约束公开兑换路径 Redeem，
+	// 管理员发放与支付履约入账不经过它。
+	availability RedeemAvailability
+}
+
+// RedeemAvailability 回答用户侧能不能自助兑换兑换码（由 SettingService 实现）。
+type RedeemAvailability interface {
+	IsRedeemEnabled(ctx context.Context) bool
 }
 
 // NewRedeemService 创建兑换码服务实例
@@ -160,9 +168,15 @@ func NewRedeemService(
 	entClient *dbent.Client,
 	authCacheInvalidator APIKeyAuthCacheInvalidator,
 	affiliateService *AffiliateService,
+	settingService *SettingService,
 ) *RedeemService {
 	redeemUserRepo, _ := userRepo.(RedeemUserAdjustmentRepository)
+	var availability RedeemAvailability
+	if settingService != nil {
+		availability = settingService
+	}
 	return &RedeemService{
+		availability:         availability,
 		redeemRepo:           redeemRepo,
 		userRepo:             userRepo,
 		redeemUserRepo:       redeemUserRepo,
@@ -392,6 +406,9 @@ func unsupportedRedeemTypeError(codeType string) error {
 
 // Redeem 使用兑换码
 func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
+	if s.availability != nil && !s.availability.IsRedeemEnabled(ctx) {
+		return nil, ErrRedeemDisabled
+	}
 	return s.redeem(ctx, userID, code, enforceRedeemRateLimit)
 }
 

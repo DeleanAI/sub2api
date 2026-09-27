@@ -229,6 +229,8 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyBalanceLowNotifyThreshold,
 		SettingKeyBalanceLowNotifyRechargeURL,
 		SettingKeyAccountQuotaNotifyEnabled,
+		SettingKeyRedeemEnabled,
+		SettingKeyBalanceCurrency,
 		SettingKeyChannelMonitorEnabled,
 		SettingKeyChannelMonitorMode,
 		SettingKeyChannelMonitorDefaultIntervalSeconds,
@@ -307,6 +309,8 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		balanceLowNotifyThreshold = v
 	}
 
+	balanceCurrency := balanceCurrencyFromStored(settings[SettingKeyBalanceCurrency])
+
 	return &PublicSettings{
 		RegistrationEnabled:                 settings[SettingKeyRegistrationEnabled] == "true",
 		EmailVerifyEnabled:                  emailVerifyEnabled,
@@ -366,6 +370,10 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		AccountQuotaNotifyEnabled:           settings[SettingKeyAccountQuotaNotifyEnabled] == "true",
 		BalanceLowNotifyThreshold:           balanceLowNotifyThreshold,
 		BalanceLowNotifyRechargeURL:         settings[SettingKeyBalanceLowNotifyRechargeURL],
+
+		RedeemEnabled:         !isFalseSettingValue(settings[SettingKeyRedeemEnabled]),
+		BalanceCurrency:       balanceCurrency.Code,
+		BalanceCurrencySymbol: balanceCurrency.Symbol,
 
 		ChannelMonitorEnabled:                !isFalseSettingValue(settings[SettingKeyChannelMonitorEnabled]),
 		ChannelMonitorMode:                   normalizeChannelMonitorMode(settings[SettingKeyChannelMonitorMode]),
@@ -637,6 +645,9 @@ type PublicSettingsInjectionPayload struct {
 	// Feature flags — MUST match the opt-in/opt-out registry in
 	// frontend/src/utils/featureFlags.ts. Missing a field here is the bug
 	// that hid the "可用渠道" menu on page refresh.
+	RedeemEnabled                        bool   `json:"redeem_enabled"`
+	BalanceCurrency                      string `json:"balance_currency"`
+	BalanceCurrencySymbol                string `json:"balance_currency_symbol"`
 	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
 	ChannelMonitorMode                   string `json:"channel_monitor_mode"`
 	ChannelMonitorDefaultIntervalSeconds int    `json:"channel_monitor_default_interval_seconds"`
@@ -728,6 +739,10 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		AccountQuotaNotifyEnabled:           settings.AccountQuotaNotifyEnabled,
 		BalanceLowNotifyThreshold:           settings.BalanceLowNotifyThreshold,
 		BalanceLowNotifyRechargeURL:         settings.BalanceLowNotifyRechargeURL,
+
+		RedeemEnabled:         settings.RedeemEnabled,
+		BalanceCurrency:       settings.BalanceCurrency,
+		BalanceCurrencySymbol: settings.BalanceCurrencySymbol,
 
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorMode:                   settings.ChannelMonitorMode,

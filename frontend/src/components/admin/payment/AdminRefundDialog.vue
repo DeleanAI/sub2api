@@ -35,7 +35,7 @@
         </div>
         <div class="mt-1 flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.creditedAmount') }}</span>
-          <span class="font-medium text-gray-900 dark:text-white">{{ creditedAmountSymbol }}{{ order?.amount?.toFixed(2) }}</span>
+          <span class="font-medium text-gray-900 dark:text-white">{{ $currency }}{{ order?.amount?.toFixed(2) }}</span>
         </div>
         <div class="mt-1 flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
@@ -43,7 +43,7 @@
         </div>
         <div v-if="actuallyRefunded > 0" class="mt-1 flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.alreadyRefunded') }}</span>
-          <span class="font-medium text-red-600 dark:text-red-400">{{ creditedAmountSymbol }}{{ actuallyRefunded.toFixed(2) }}</span>
+          <span class="font-medium text-red-600 dark:text-red-400">{{ $currency }}{{ actuallyRefunded.toFixed(2) }}</span>
         </div>
       </div>
 
@@ -66,11 +66,11 @@
         <div v-if="form.deduct_balance && userBalance != null" class="mt-3 grid grid-cols-2 gap-3">
           <div class="rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-700">
             <div class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.userBalance') }}</div>
-            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ creditedAmountSymbol }}{{ userBalance.toFixed(2) }}</div>
+            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ $currency }}{{ userBalance.toFixed(2) }}</div>
           </div>
           <div class="rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-700">
             <div class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.orderAmount') }}</div>
-            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ creditedAmountSymbol }}{{ order?.amount?.toFixed(2) }}</div>
+            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ $currency }}{{ order?.amount?.toFixed(2) }}</div>
           </div>
         </div>
 
@@ -95,7 +95,7 @@
       <div>
         <label class="input-label">{{ t('payment.admin.refundAmount') }}</label>
         <div class="relative">
-          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ creditedAmountSymbol }}</span>
+          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">{{ $currency }}</span>
           <input
             v-model.number="form.amount"
             type="number"
@@ -107,7 +107,7 @@
           />
         </div>
         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          {{ t('payment.admin.maxRefundable') }}: {{ creditedAmountSymbol }}{{ maxRefundable.toFixed(2) }}
+          {{ t('payment.admin.maxRefundable') }}: {{ $currency }}{{ maxRefundable.toFixed(2) }}
         </p>
       </div>
 
@@ -187,7 +187,6 @@ const emit = defineEmits<{
   (e: 'cancel'): void
 }>()
 
-const creditedAmountSymbol = currencySymbol('USD')
 
 const paymentAmountSymbol = computed(() => currencySymbol(props.order?.currency))
 

@@ -1,3 +1,5 @@
+import { CURRENCY } from '@/i18n/siteMessages'
+
 export default {
     settings: {
       title: '系统设置',
@@ -59,6 +61,18 @@ export default {
             rechargeOnly: '用户端隐藏「我的订阅」、购买页订阅套餐、顶栏订阅进度与用量页「计费类型」筛选，直接访问「我的订阅」会跳回仪表盘；管理端侧边栏同时隐藏「订阅管理」入口（页面仍可通过地址访问）。已有订阅的计费与兑换码发放的订阅不受影响。',
             subscriptionOnly: '用户端购买页只保留订阅套餐，侧边栏入口显示为「订阅」，余额充值下单会被拒绝；兑换码、返利等余额入账不受影响。',
           },
+        },
+        balanceCurrency: {
+          title: '站内余额单位',
+          description: '余额、价格、用量费用、限额用的是同一个站内单位。这里声明它按哪种货币计：界面与邮件里的金额符号、/v1/usage 返回的 unit 都跟着它走。只改写法，不做任何换算。',
+          label: '币种（ISO 4217 代码）',
+          hint: '例如 USD、CNY、EUR。当前符号：{symbol}',
+        },
+        redeem: {
+          title: '兑换码',
+          description: '用户侧的自助兑换入口。',
+          enabled: '允许用户兑换兑换码',
+          enabledHint: '关闭后隐藏侧边栏与仪表盘的兑换入口，直接访问兑换页会跳回仪表盘，兑换接口返回 REDEEM_DISABLED；管理员发放、支付入账不受影响。',
         },
         modelPlaza: {
           title: '模型广场',
@@ -422,9 +436,9 @@ export default {
       },
       platformQuota: {
         platform:    '平台',
-        daily:       '日限额 (USD)',
-        weekly:      '周限额 (USD)',
-        monthly:     '月限额 (USD, 30天滚动)',
+        daily:       `日限额 (${CURRENCY})`,
+        weekly:      `周限额 (${CURRENCY})`,
+        monthly:     `月限额 (${CURRENCY}, 30天滚动)`,
         placeholder: '不限',
       },
       claudeCode: {
@@ -778,8 +792,8 @@ export default {
         maxAmount: '最高金额',
         dailyLimit: '每日限额',
         balanceRechargeMultiplier: '余额充值倍率',
-        balanceRechargeMultiplierHint: '用户每支付 1 CNY 可获得多少 USD 余额',
-        balanceRechargePreview: '预览：1 CNY = {usd} USD',
+        balanceRechargeMultiplierHint: `用户每支付 1 CNY 可获得多少余额（${CURRENCY}）`,
+        balanceRechargePreview: `预览：1 CNY = ${CURRENCY}{usd}`,
         subscriptionUsdToCnyRate: '订阅 CNY 换算汇率',
         subscriptionUsdToCnyRateHint:
           'CNY 支付通道下，套餐每 1 USD 价格收取多少 CNY（如 7.15）。0 或留空 = 不换算，订阅按 price 数值直接收款。启用后所有套餐 price 必须按 USD 定价',

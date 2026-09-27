@@ -6,6 +6,7 @@ import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
 import { updateFavicon } from '@/utils/branding'
 import { isIOSDevice } from '@/utils/device'
+import { installBalanceCurrency } from '@/utils/balanceCurrency'
 import './style.css'
 
 function initIOSViewportZoomFix() {
@@ -38,6 +39,7 @@ async function bootstrap() {
   const app = createApp(App)
   const pinia = createPinia()
   app.use(pinia)
+  installBalanceCurrency(app)
 
   // Initialize settings from injected config BEFORE mounting (prevents flash)
   // This must happen after pinia is installed but before router and i18n

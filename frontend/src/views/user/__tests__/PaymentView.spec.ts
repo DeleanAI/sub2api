@@ -8,6 +8,7 @@ import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import en from '@/i18n/locales/en'
 import zh from '@/i18n/locales/zh'
 import type { CheckoutInfoResponse, MethodLimit, SubscriptionPlan } from '@/types/payment'
+import { CURRENCY } from '@/i18n/siteMessages'
 
 const routeState = vi.hoisted(() => ({
   path: '/purchase',
@@ -406,8 +407,9 @@ describe('PaymentView recharge rate preview', () => {
       currency: 'USD',
       usd: '0.50',
     })
-    expect(en.payment.rechargeRatePreview).toBe('Current rate: 1 {currency} = {usd} USD')
-    expect(zh.payment.rechargeRatePreview).toBe('当前倍率：1 {currency} = {usd} USD')
+    // 左边是所选支付方式的币种，右边是站内余额单位（跟随站点设置的符号）。
+    expect(en.payment.rechargeRatePreview).toBe(`Current rate: 1 {currency} = ${CURRENCY}{usd}`)
+    expect(zh.payment.rechargeRatePreview).toBe(`当前倍率：1 {currency} = ${CURRENCY}{usd}`)
   })
 })
 

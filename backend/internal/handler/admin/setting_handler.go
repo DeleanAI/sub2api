@@ -374,6 +374,10 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PaymentAlipayForceQRCode:                               paymentCfg.AlipayForceQRCode,
 		PaymentAlipayMobilePrecreateDeepLink:                   paymentCfg.AlipayMobilePrecreateDeepLink,
 
+		RedeemEnabled:         settings.RedeemEnabled,
+		BalanceCurrency:       settings.BalanceCurrency,
+		BalanceCurrencySymbol: settings.BalanceCurrencySymbol,
+
 		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
 		ChannelMonitorMode:                   settings.ChannelMonitorMode,
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,

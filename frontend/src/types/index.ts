@@ -270,6 +270,12 @@ export interface PublicSettings {
   balance_low_notify_enabled: boolean
   account_quota_notify_enabled: boolean
   balance_low_notify_threshold: number
+  /** 用户侧兑换码入口（默认开启）；关闭时侧边栏 / 仪表盘不显示兑换，兑换接口返回 REDEEM_DISABLED。 */
+  redeem_enabled?: boolean
+  /** 站内余额单位的币种（ISO 4217，默认 USD）；只决定怎么写、不做换算，见 utils/balanceCurrency.ts。 */
+  balance_currency?: string
+  /** 由 balance_currency 推导的符号（如 $、¥），界面上写在金额前面。 */
+  balance_currency_symbol?: string
   channel_monitor_enabled: boolean
   /** Exclusive mode: v1 active probes or v2 passive aggregation. Default v2. */
   channel_monitor_mode?: 'v1' | 'v2'

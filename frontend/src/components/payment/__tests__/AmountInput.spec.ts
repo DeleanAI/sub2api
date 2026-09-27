@@ -5,11 +5,16 @@ import AmountInput from '../AmountInput.vue'
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
 
-function mountInput(value: number | null = null) {
-  return mount(AmountInput, { props: { modelValue: value } })
+function mountInput(value: number | null = null, currencySymbol = '¥') {
+  return mount(AmountInput, { props: { modelValue: value, currencySymbol } })
 }
 
 describe('recharge amount input', () => {
+  it('prefixes the custom amount with the payment currency symbol', () => {
+    expect(mountInput(null, '¥').get('.relative span').text()).toBe('¥')
+    expect(mountInput(null, 'HK$').get('.relative span').text()).toBe('HK$')
+  })
+
   it.each(['10abc', '10.555', '-10', '1e2'])('restores the accepted amount after rejecting %s', async (value) => {
     const wrapper = mountInput(10)
     const input = wrapper.get('input')

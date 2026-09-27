@@ -120,7 +120,7 @@ func crossedDownward(oldV, newV, threshold float64) bool {
 
 // dispatchBalanceLowEmail collects recipients and sends the alert in a goroutine.
 func (s *BalanceNotifyService) dispatchBalanceLowEmail(ctx context.Context, user *User, newBalance, threshold float64, rechargeURL string) {
-	siteName := s.getSiteName(ctx)
+	site := s.readNotificationSite(ctx)
 	recipients := s.collectBalanceNotifyRecipients(user)
 	slog.Info("CheckBalanceAfterDeduction: sending notification",
 		"user_id", user.ID, "recipients", recipients, "new_balance", newBalance, "threshold", threshold)
@@ -130,7 +130,7 @@ func (s *BalanceNotifyService) dispatchBalanceLowEmail(ctx context.Context, user
 				slog.Error("panic in balance notification", "recover", r)
 			}
 		}()
-		s.sendBalanceLowEmails(recipients, user.ID, user.Username, user.Email, newBalance, threshold, siteName, rechargeURL)
+		s.sendBalanceLowEmails(recipients, user.ID, user.Username, user.Email, newBalance, threshold, site, rechargeURL)
 	}()
 }
 
@@ -192,7 +192,7 @@ func (s *BalanceNotifyService) CheckAccountQuotaAfterIncrement(ctx context.Conte
 		return
 	}
 
-	siteName := s.getSiteName(ctx)
+	site := s.readNotificationSite(ctx)
 	var dims []quotaDim
 	if quotaState != nil {
 		dims = buildQuotaDimsFromState(account, quotaState)
@@ -201,7 +201,7 @@ func (s *BalanceNotifyService) CheckAccountQuotaAfterIncrement(ctx context.Conte
 		dims = buildQuotaDims(freshAccount)
 		account = freshAccount // use fresh data for alert metadata
 	}
-	s.checkQuotaDimCrossings(account, dims, cost, adminEmails, siteName)
+	s.checkQuotaDimCrossings(account, dims, cost, adminEmails, site)
 }
 
 // fetchFreshAccount loads the latest account from DB; falls back to the snapshot on error.
@@ -220,7 +220,7 @@ func (s *BalanceNotifyService) fetchFreshAccount(ctx context.Context, snapshot *
 
 // checkQuotaDimCrossings iterates pre-built quota dimensions and sends alerts for threshold crossings.
 // Pre-increment value is reconstructed as currentUsed - cost to detect the crossing moment.
-func (s *BalanceNotifyService) checkQuotaDimCrossings(account *Account, dims []quotaDim, cost float64, adminEmails []string, siteName string) {
+func (s *BalanceNotifyService) checkQuotaDimCrossings(account *Account, dims []quotaDim, cost float64, adminEmails []string, site notificationSite) {
 	for _, dim := range dims {
 		if !dim.enabled || dim.threshold <= 0 {
 			continue
@@ -232,20 +232,20 @@ func (s *BalanceNotifyService) checkQuotaDimCrossings(account *Account, dims []q
 		newUsed := dim.currentUsed
 		oldUsed := dim.currentUsed - cost
 		if oldUsed < effectiveThreshold && newUsed >= effectiveThreshold {
-			s.asyncSendQuotaAlert(adminEmails, account.ID, account.Name, account.Platform, dim, newUsed, effectiveThreshold, siteName)
+			s.asyncSendQuotaAlert(adminEmails, account.ID, account.Name, account.Platform, dim, newUsed, effectiveThreshold, site)
 		}
 	}
 }
 
 // asyncSendQuotaAlert sends quota alert email in a goroutine with panic recovery.
-func (s *BalanceNotifyService) asyncSendQuotaAlert(adminEmails []string, accountID int64, accountName, platform string, dim quotaDim, newUsed, effectiveThreshold float64, siteName string) {
+func (s *BalanceNotifyService) asyncSendQuotaAlert(adminEmails []string, accountID int64, accountName, platform string, dim quotaDim, newUsed, effectiveThreshold float64, site notificationSite) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("panic in quota notification", "recover", r)
 			}
 		}()
-		s.sendQuotaAlertEmails(adminEmails, accountID, accountName, platform, dim, newUsed, siteName)
+		s.sendQuotaAlertEmails(adminEmails, accountID, accountName, platform, dim, newUsed, site)
 	}()
 }
 
@@ -289,6 +289,16 @@ func (s *BalanceNotifyService) getAccountQuotaNotifyEmails(ctx context.Context) 
 	}
 
 	return filterVerifiedEmails(entries)
+}
+
+// notificationSite 是通知邮件里关于站点的两件事：站点名与站内余额单位。分发时读一次，随调用链传下去。
+type notificationSite struct {
+	Name     string
+	Currency BalanceCurrency
+}
+
+func (s *BalanceNotifyService) readNotificationSite(ctx context.Context) notificationSite {
+	return notificationSite{Name: s.getSiteName(ctx), Currency: ReadBalanceCurrency(ctx, s.settingRepo)}
 }
 
 // getSiteName reads site name from settings with fallback.
@@ -347,7 +357,7 @@ func (s *BalanceNotifyService) sendEmails(recipients []string, subject, body str
 }
 
 // sendBalanceLowEmails sends balance low notification to all recipients.
-func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID int64, userName, userEmail string, balance, threshold float64, siteName, rechargeURL string) {
+func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID int64, userName, userEmail string, balance, threshold float64, site notificationSite, rechargeURL string) {
 	displayName := userName
 	if displayName == "" {
 		displayName = userEmail
@@ -385,20 +395,20 @@ func (s *BalanceNotifyService) sendBalanceLowEmails(recipients []string, userID 
 		}
 		recipients = fallbackRecipients
 	}
-	subject := fmt.Sprintf("[%s] 余额不足提醒 / Balance Low Alert", sanitizeEmailHeader(siteName))
-	body := s.buildBalanceLowEmailBody(html.EscapeString(displayName), balance, threshold, html.EscapeString(siteName), rechargeURL)
+	subject := fmt.Sprintf("[%s] 余额不足提醒 / Balance Low Alert", sanitizeEmailHeader(site.Name))
+	body := s.buildBalanceLowEmailBody(html.EscapeString(displayName), balance, threshold, site, rechargeURL)
 	s.sendEmails(recipients, subject, body, "user_email", userEmail, "balance", balance)
 }
 
 // sendQuotaAlertEmails sends quota alert notification to admin emails.
-func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accountID int64, accountName, platform string, dim quotaDim, used float64, siteName string) {
+func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accountID int64, accountName, platform string, dim quotaDim, used float64, site notificationSite) {
 	dimLabel := quotaDimLabels[dim.name]
 	if dimLabel == "" {
 		dimLabel = dim.name
 	}
 
 	// Format the remaining-based threshold for display
-	thresholdDisplay := fmt.Sprintf("$%.2f", dim.threshold)
+	thresholdDisplay := site.Currency.Format(dim.threshold)
 	if dim.thresholdType == thresholdTypePercentage {
 		thresholdDisplay = fmt.Sprintf("%.0f%%", dim.threshold)
 	}
@@ -445,8 +455,8 @@ func (s *BalanceNotifyService) sendQuotaAlertEmails(adminEmails []string, accoun
 		adminEmails = fallbackRecipients
 	}
 
-	subject := fmt.Sprintf("[%s] 账号限额告警 / Account Quota Alert - %s", sanitizeEmailHeader(siteName), sanitizeEmailHeader(accountName))
-	body := s.buildQuotaAlertEmailBody(accountID, html.EscapeString(accountName), html.EscapeString(platform), html.EscapeString(dimLabel), used, dim.limit, remaining, thresholdDisplay, html.EscapeString(siteName))
+	subject := fmt.Sprintf("[%s] 账号限额告警 / Account Quota Alert - %s", sanitizeEmailHeader(site.Name), sanitizeEmailHeader(accountName))
+	body := s.buildQuotaAlertEmailBody(accountID, html.EscapeString(accountName), html.EscapeString(platform), html.EscapeString(dimLabel), used, dim.limit, remaining, thresholdDisplay, site)
 	s.sendEmails(adminEmails, subject, body, "account", accountName, "dimension", dim.name)
 }
 
@@ -456,7 +466,7 @@ func sanitizeEmailHeader(s string) string {
 }
 
 // balanceLowEmailTemplate is the HTML template for balance low notifications.
-// Format args: siteName, userName, userName, balance, threshold, threshold.
+// Format args: siteName, userName, userName, balance, threshold, threshold（金额已带站内单位符号，见 BalanceCurrency.Format）.
 // The recharge button is appended dynamically when rechargeURL is set.
 const balanceLowEmailTemplate = `<!DOCTYPE html>
 <html>
@@ -480,10 +490,10 @@ const balanceLowEmailTemplate = `<!DOCTYPE html>
         <div class="content">
             <p style="font-size: 18px; color: #333;">%s，您的余额不足</p>
             <p style="color: #666;">Dear %s, your balance is running low</p>
-            <div class="balance">$%.2f</div>
+            <div class="balance">%s</div>
             <div class="info">
-                <p>您的账户余额已低于提醒阈值 <strong>$%.2f</strong>。</p>
-                <p>Your account balance has fallen below the alert threshold of <strong>$%.2f</strong>.</p>
+                <p>您的账户余额已低于提醒阈值 <strong>%s</strong>。</p>
+                <p>Your account balance has fallen below the alert threshold of <strong>%s</strong>.</p>
                 <p>请及时充值以免服务中断。</p>
                 <p>Please top up to avoid service interruption.</p>
             </div>
@@ -495,7 +505,7 @@ const balanceLowEmailTemplate = `<!DOCTYPE html>
 </html>`
 
 // quotaAlertEmailTemplate is the HTML template for account quota alert notifications.
-// Format args: siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay.
+// Format args: siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay（金额已带站内单位符号）.
 const quotaAlertEmailTemplate = `<!DOCTYPE html>
 <html>
 <head>
@@ -522,9 +532,9 @@ const quotaAlertEmailTemplate = `<!DOCTYPE html>
             <div class="metric"><span class="metric-label">账号 / Account</span><span class="metric-value">%s</span></div>
             <div class="metric"><span class="metric-label">平台 / Platform</span><span class="metric-value">%s</span></div>
             <div class="metric"><span class="metric-label">维度 / Dimension</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">已使用 / Used</span><span class="metric-value">$%.2f</span></div>
+            <div class="metric"><span class="metric-label">已使用 / Used</span><span class="metric-value">%s</span></div>
             <div class="metric"><span class="metric-label">限额 / Limit</span><span class="metric-value">%s</span></div>
-            <div class="metric"><span class="metric-label">剩余额度 / Remaining</span><span class="metric-value">$%.2f</span></div>
+            <div class="metric"><span class="metric-label">剩余额度 / Remaining</span><span class="metric-value">%s</span></div>
             <div class="metric"><span class="metric-label">提醒阈值 / Alert Threshold</span><span class="metric-value">%s</span></div>
             <div class="info">
                 <p>账号剩余额度已低于提醒阈值，请及时关注。</p>
@@ -537,19 +547,22 @@ const quotaAlertEmailTemplate = `<!DOCTYPE html>
 </html>`
 
 // buildBalanceLowEmailBody builds HTML email for balance low notification.
-func (s *BalanceNotifyService) buildBalanceLowEmailBody(userName string, balance, threshold float64, siteName, rechargeURL string) string {
+func (s *BalanceNotifyService) buildBalanceLowEmailBody(userName string, balance, threshold float64, site notificationSite, rechargeURL string) string {
 	rechargeBlock := ""
 	if rechargeURL != "" {
 		rechargeBlock = fmt.Sprintf(`<a href="%s" class="recharge-btn">立即充值 / Top Up Now</a>`, html.EscapeString(rechargeURL))
 	}
-	return fmt.Sprintf(balanceLowEmailTemplate, siteName, userName, userName, balance, threshold, threshold, rechargeBlock)
+	balanceText := html.EscapeString(site.Currency.Format(balance))
+	thresholdText := html.EscapeString(site.Currency.Format(threshold))
+	return fmt.Sprintf(balanceLowEmailTemplate, html.EscapeString(site.Name), userName, userName, balanceText, thresholdText, thresholdText, rechargeBlock)
 }
 
 // buildQuotaAlertEmailBody builds HTML email for account quota alert.
-func (s *BalanceNotifyService) buildQuotaAlertEmailBody(accountID int64, accountName, platform, dimLabel string, used, limit, remaining float64, thresholdDisplay, siteName string) string {
-	limitStr := fmt.Sprintf("$%.2f", limit)
+func (s *BalanceNotifyService) buildQuotaAlertEmailBody(accountID int64, accountName, platform, dimLabel string, used, limit, remaining float64, thresholdDisplay string, site notificationSite) string {
+	limitStr := site.Currency.Format(limit)
 	if limit <= 0 {
 		limitStr = "无限制 / Unlimited"
 	}
-	return fmt.Sprintf(quotaAlertEmailTemplate, siteName, accountID, accountName, platform, dimLabel, used, limitStr, remaining, thresholdDisplay)
+	return fmt.Sprintf(quotaAlertEmailTemplate, html.EscapeString(site.Name), accountID, accountName, platform, dimLabel,
+		html.EscapeString(site.Currency.Format(used)), html.EscapeString(limitStr), html.EscapeString(site.Currency.Format(remaining)), html.EscapeString(thresholdDisplay))
 }

@@ -30,7 +30,7 @@
       </label>
       <div class="relative">
         <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-dark-500">
-          $
+          {{ currencySymbol }}
         </span>
         <input
           type="text"
@@ -52,6 +52,8 @@ import { useI18n } from 'vue-i18n'
 const props = withDefaults(defineProps<{
   amounts?: number[]
   modelValue: number | null
+  /** 支付币种的符号（输入的是要支付的金额，不是站内余额）。 */
+  currencySymbol: string
   min?: number
   max?: number
 }>(), {

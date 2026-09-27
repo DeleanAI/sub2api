@@ -80,3 +80,10 @@ describe('AppSidebar subscription feature flag', () => {
     expect(componentSource).toMatch(/path: '\/purchase'[^\n]*label: purchaseNavLabel\.value/)
   })
 })
+
+describe('AppSidebar redeem feature flag', () => {
+  it('gates the Redeem entry behind the redeem public-settings flag', () => {
+    expect(componentSource).toContain('const flagRedeem = makeSidebarFlag(FeatureFlags.redeem)')
+    expect(componentSource).toMatch(/path: '\/redeem'[^\n]*featureFlag: flagRedeem/)
+  })
+})

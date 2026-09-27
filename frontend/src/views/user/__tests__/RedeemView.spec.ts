@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import RedeemView from '../RedeemView.vue'
 
-const { redeem, getHistory, refreshUser, fetchActiveSubscriptions, showError, showWarning, showSuccess } = vi.hoisted(() => ({
+const { redeem, getHistory, refreshUser, fetchActiveSubscriptions, showError, showWarning, showSuccess, publicSettings } = vi.hoisted(() => ({
+  publicSettings: { value: null as null | { redeem_enabled?: boolean } },
   redeem: vi.fn(),
   getHistory: vi.fn(),
   refreshUser: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock('@/stores/subscriptions', () => ({
   useSubscriptionStore: () => ({ fetchActiveSubscriptions }),
 }))
 vi.mock('@/stores/app', () => ({
-  useAppStore: () => ({ showError, showWarning, showSuccess }),
+  useAppStore: () => ({ showError, showWarning, showSuccess, get cachedPublicSettings() { return publicSettings.value } }),
 }))
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
@@ -237,5 +238,36 @@ describe('RedeemView refresh after redemption', () => {
     expect(showSuccess).not.toHaveBeenCalled()
     expect(showWarning).not.toHaveBeenCalled()
     wrapper.unmount()
+  })
+})
+
+describe('RedeemView when the site disables redeem codes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    getHistory.mockResolvedValue({ items: [], total: 0 })
+  })
+
+  afterEach(() => {
+    publicSettings.value = null
+  })
+
+  it('shows the notice instead of the form', async () => {
+    publicSettings.value = { redeem_enabled: false }
+    const wrapper = mount(RedeemView, {
+      global: { stubs: { AppLayout: { template: '<div><slot /></div>' }, Icon: true } },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="redeem-disabled"]').text()).toBe('redeem.disabled')
+    expect(wrapper.find('form').exists()).toBe(false)
+  })
+
+  it('explains a REDEEM_DISABLED rejection from a page opened before the switch was turned off', async () => {
+    redeem.mockRejectedValue({ status: 403, reason: 'REDEEM_DISABLED', message: 'redeem codes are disabled on this site' })
+
+    const wrapper = await submitCode()
+
+    expect(wrapper.text()).toContain('redeem.disabled')
+    expect(wrapper.text()).not.toContain('redeem.failedToRedeem')
   })
 })

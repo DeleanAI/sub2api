@@ -62,6 +62,12 @@ declare module 'vue-router' {
     requiresSubscription?: boolean
 
     /**
+     * 是否要求兑换码开关（redeem_enabled，opt-out，见 FeatureFlags.redeem）未被显式关闭
+     * @default false
+     */
+    requiresRedeem?: boolean
+
+    /**
      * i18n key for the page title
      */
     titleKey?: string

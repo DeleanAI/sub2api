@@ -58,7 +58,7 @@
             ({{ row.fee_rate }}%)
           </span>
           <div v-if="row.amount !== row.pay_amount" class="text-xs text-gray-500">
-            {{ t('payment.orders.creditedAmount') }}: {{ creditedAmountSymbol }}{{ row.amount.toFixed(2) }}
+            {{ t('payment.orders.creditedAmount') }}: {{ $currency }}{{ row.amount.toFixed(2) }}
           </div>
         </div>
       </template>
@@ -168,7 +168,6 @@ const emit = defineEmits<{
 
 const searchQuery = ref('')
 const filters = reactive({ status: '', payment_type: '', order_type: '' })
-const creditedAmountSymbol = currencySymbol('USD')
 
 function paymentAmountSymbol(order: PaymentOrder): string {
   return currencySymbol(order.currency)

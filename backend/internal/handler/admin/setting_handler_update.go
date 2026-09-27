@@ -330,6 +330,10 @@ type UpdateSettingsRequest struct {
 	// Use Alipay face-to-face precreate and an app deep link on mobile clients.
 	PaymentAlipayMobilePrecreateDeepLink *bool `json:"payment_alipay_mobile_precreate_deep_link"`
 
+	// 兑换入口与金额显示（fork）
+	RedeemEnabled   *bool   `json:"redeem_enabled"`
+	BalanceCurrency *string `json:"balance_currency"`
+
 	// Channel Monitor feature switch
 	ChannelMonitorEnabled                *bool   `json:"channel_monitor_enabled"`
 	ChannelMonitorMode                   *string `json:"channel_monitor_mode"`
@@ -1906,6 +1910,19 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.AccountQuotaNotifyEmails
 		}(),
+		RedeemEnabled: func() bool {
+			if req.RedeemEnabled != nil {
+				return *req.RedeemEnabled
+			}
+			return previousSettings.RedeemEnabled
+		}(),
+		// 站内余额单位：未提供沿用原值；校验与归一化在设置写入路径（NormalizeBalanceCurrency）。
+		BalanceCurrency: func() string {
+			if req.BalanceCurrency != nil {
+				return *req.BalanceCurrency
+			}
+			return previousSettings.BalanceCurrency
+		}(),
 		ChannelMonitorEnabled: func() bool {
 			if req.ChannelMonitorEnabled != nil {
 				return *req.ChannelMonitorEnabled
@@ -2405,6 +2422,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentCancelRateLimitMode:                             updatedPaymentCfg.CancelRateLimitMode,
 		PaymentAlipayForceQRCode:                               updatedPaymentCfg.AlipayForceQRCode,
 		PaymentAlipayMobilePrecreateDeepLink:                   updatedPaymentCfg.AlipayMobilePrecreateDeepLink,
+
+		RedeemEnabled:         updatedSettings.RedeemEnabled,
+		BalanceCurrency:       updatedSettings.BalanceCurrency,
+		BalanceCurrencySymbol: updatedSettings.BalanceCurrencySymbol,
 
 		ChannelMonitorEnabled:                updatedSettings.ChannelMonitorEnabled,
 		ChannelMonitorMode:                   updatedSettings.ChannelMonitorMode,

@@ -247,6 +247,7 @@ const fallbackPlaceholders = [
   "{{site_name}}",
   "{{recipient_name}}",
   "{{recipient_email}}",
+  "{{currency_symbol}}",
   "{{verification_code}}",
   "{{expires_in_minutes}}",
   "{{reset_url}}",

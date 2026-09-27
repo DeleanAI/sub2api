@@ -785,6 +785,7 @@ import {
 } from '@/api/batchImage'
 import type { ApiKey } from '@/types'
 import type { Column } from '@/components/common/types'
+import { balanceCurrencySymbol, withBalanceCurrencySymbol } from '@/utils/balanceCurrency'
 
 type BatchImageJobRow = Pick<BatchImageJob, 'id' | 'task_name' | 'parent_batch_id' | 'status' | 'model' | 'provider' | 'item_count' | 'success_count' | 'fail_count' | 'estimated_cost' | 'hold_amount' | 'actual_cost' | 'created_at' | 'downloaded_at'> & {
   api_key_id: number
@@ -2385,8 +2386,8 @@ function friendlyItemError(error: BatchImageItem['error']) {
 }
 
 function formatMoney(value: number | null | undefined) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return '$0.00'
-  return `$${Number(value).toFixed(2)}`
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return withBalanceCurrencySymbol('0.00')
+  return `${balanceCurrencySymbol()}${Number(value).toFixed(2)}`
 }
 
 function terminalZeroCost(job: Pick<BatchImageJob, 'status' | 'actual_cost'>) {

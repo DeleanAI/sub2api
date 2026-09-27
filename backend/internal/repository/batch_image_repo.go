@@ -40,7 +40,7 @@ func (r *batchImageRepository) CreateBatchImageJob(ctx context.Context, params s
 		params.Status = service.BatchImageJobStatusCreated
 	}
 	if params.Currency == "" {
-		params.Currency = "USD"
+		params.Currency = service.DefaultBalanceCurrency
 	}
 
 	job, err := createBatchImageJobWithSQL(ctx, r.sql, params)

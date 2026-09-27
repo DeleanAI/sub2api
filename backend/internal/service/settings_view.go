@@ -196,6 +196,12 @@ type SystemSettings struct {
 	OpsQueryModeDefault          string
 	OpsMetricsIntervalSeconds    int
 
+	// 兑换入口与金额显示（fork）
+	RedeemEnabled bool `json:"redeem_enabled"`
+	// BalanceCurrency 是站内余额单位的币种代码；BalanceCurrencySymbol 由它推导（只读）。
+	BalanceCurrency       string `json:"balance_currency"`
+	BalanceCurrencySymbol string `json:"balance_currency_symbol"`
+
 	// Channel Monitor feature
 	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
 	ChannelMonitorMode                   string `json:"channel_monitor_mode"`
@@ -392,6 +398,12 @@ type PublicSettings struct {
 	AccountQuotaNotifyEnabled   bool
 	BalanceLowNotifyThreshold   float64
 	BalanceLowNotifyRechargeURL string
+
+	// 兑换入口与金额显示（fork）
+	RedeemEnabled bool `json:"redeem_enabled"`
+	// BalanceCurrency 是站内余额单位的币种代码；BalanceCurrencySymbol 由它推导（只读）。
+	BalanceCurrency       string `json:"balance_currency"`
+	BalanceCurrencySymbol string `json:"balance_currency_symbol"`
 
 	// Channel Monitor feature
 	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`

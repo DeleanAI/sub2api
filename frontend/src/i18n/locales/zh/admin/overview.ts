@@ -1,3 +1,5 @@
+import { CURRENCY } from '@/i18n/siteMessages'
+
 export default {
     // Dashboard
     dashboard: {
@@ -468,7 +470,7 @@ export default {
         changeUser: '更换用户',
         availableQuota: '当前可提取额度',
         frozenHint: '冻结期内的返利不计入可提取额度',
-        amount: '提现金额（USD）',
+        amount: `提现金额（${CURRENCY}）`,
         amountHint: '填写已在站外实际打款给该用户的金额',
         fillAll: '全部',
         warning: '登记后将从该用户的可提取返利额度中扣除，且无法撤销。请确认已完成站外打款。',
@@ -809,9 +811,9 @@ export default {
         subtitle: '为用户 {email} 配置各上游平台的日 / 周 / 月用量上限',
         columns: {
           platform: '平台',
-          daily: '日 (USD)',
-          weekly: '周 (USD)',
-          monthly: '月 (USD, 30天滚动)',
+          daily: `日 (${CURRENCY})`,
+          weekly: `周 (${CURRENCY})`,
+          monthly: `月 (${CURRENCY}, 30天滚动)`,
           usage: '当前用量',
         },
         placeholder: '不限制',
@@ -1056,9 +1058,9 @@ export default {
         typeNotEditable: '分组创建后无法修改计费类型。',
         standard: '标准（余额）',
         subscription: '订阅（配额）',
-        dailyLimit: '每日限额（USD）',
-        weeklyLimit: '每周限额（USD）',
-        monthlyLimit: '每月限额（USD）',
+        dailyLimit: `每日限额（${CURRENCY}）`,
+        weeklyLimit: `每周限额（${CURRENCY}）`,
+        monthlyLimit: `每月限额（${CURRENCY}）`,
         defaultValidityDays: '默认有效期（天）',
         validityHint: '分配给用户时订阅的有效天数',
         noLimit: '无限制'
@@ -1082,7 +1084,7 @@ export default {
       videoPricing: {
         title: '视频生成计费',
         description:
-          '配置 Grok 视频生成的每秒单价（USD/秒），留空则使用默认每秒价（grok-imagine-video：480p $0.05/s、720p $0.07/s；video-1.5：480p $0.08/s、720p $0.14/s、1080p $0.25/s）',
+          `配置 Grok 视频生成的每秒单价（${CURRENCY}/秒），留空则使用默认每秒价（grok-imagine-video：480p ${CURRENCY}0.05/s、720p ${CURRENCY}0.07/s；video-1.5：480p ${CURRENCY}0.08/s、720p ${CURRENCY}0.14/s、1080p ${CURRENCY}0.25/s）`,
         modelOverridesTitle: '按模型覆盖视频价格',
         modelOverridesDescription: '已填写的单元格会覆盖该模型族的平面分辨率价格。video-1.5 的 preview 与 legacy 别名共用同一模型族；留空则回退到平面分辨率价格。',
         independentMultiplier: '视频倍率独立',
@@ -1094,8 +1096,8 @@ export default {
       },
       explicitPricing: {
         title: 'Grok 搜索与 Voice 定价',
-        description: '分组级 web_search（每千次）与 Voice realtime / TTS / STT 单价（USD）。留空表示未配置。',
-        searchPricePer1k: '搜索每千次价格（USD）',
+        description: `分组级 web_search（每千次）与 Voice realtime / TTS / STT 单价（${CURRENCY}）。留空表示未配置。`,
+        searchPricePer1k: `搜索每千次价格（${CURRENCY}）`,
         pricePlaceholder: '可选'
       },
       modelPricing: {
@@ -1124,17 +1126,17 @@ export default {
       },
       voicePricing: {
         title: 'Grok Voice 定价',
-        description: '分组级 Voice realtime / TTS / STT 单价（USD）。留空表示未配置。',
-        audioRealtimePerMin: 'Realtime 每分钟价格（USD）',
-        audioTtsPerMillionChars: 'TTS 每百万字符价格（USD）',
-        audioSttPerHour: 'STT 每小时价格（USD）',
+        description: `分组级 Voice realtime / TTS / STT 单价（${CURRENCY}）。留空表示未配置。`,
+        audioRealtimePerMin: `Realtime 每分钟价格（${CURRENCY}）`,
+        audioTtsPerMillionChars: `TTS 每百万字符价格（${CURRENCY}）`,
+        audioSttPerHour: `STT 每小时价格（${CURRENCY}）`,
         pricePlaceholder: '可选'
       },
       webSearchPricing: {
         title: 'Codex 网页搜索计费',
-        pricePerCall: '搜索单次价格（USD/次）',
+        pricePerCall: `搜索单次价格（${CURRENCY}/次）`,
         pricePerCallHint:
-          '留空使用默认价 $0.01/次（官方定价 $10/1000 次）；填 0 表示免费。实际扣费会叠加分组费率倍数。',
+          `留空使用默认价 ${CURRENCY}0.01/次（OpenAI 官方定价 $10/1000 次）；填 0 表示免费。实际扣费会叠加分组费率倍数。`,
         finalPricePreview: '应用当前倍率后的单次价格：{price}'
       },
       peakRate: {

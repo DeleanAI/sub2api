@@ -1,4 +1,5 @@
 import { createI18n } from 'vue-i18n'
+import { SITE_MESSAGE_NAMESPACE, type SiteMessageName } from './siteMessages'
 
 type LocaleCode = 'en' | 'zh'
 
@@ -42,6 +43,20 @@ export const i18n = createI18n({
 
 const loadedLocales = new Set<LocaleCode>()
 
+// 站点消息（见 ./siteMessages.ts）：name → 取值函数。每个语言包加载时并入全部登记项。
+const siteMessages: Partial<Record<SiteMessageName, () => string>> = {}
+
+/**
+ * 登记一条站点消息的取值函数。它以消息函数的形式进入每个语言包（已加载的立即合入，之后加载的
+ * 在 loadLocaleMessages 里合入），渲染时现取值，读的是响应式状态时界面随之刷新。
+ */
+export function defineSiteMessage(name: SiteMessageName, resolve: () => string): void {
+  siteMessages[name] = () => resolve()
+  for (const locale of loadedLocales) {
+    i18n.global.mergeLocaleMessage(locale, { [SITE_MESSAGE_NAMESPACE]: { [name]: siteMessages[name] } })
+  }
+}
+
 export async function loadLocaleMessages(locale: LocaleCode): Promise<void> {
   if (loadedLocales.has(locale)) {
     return
@@ -49,7 +64,7 @@ export async function loadLocaleMessages(locale: LocaleCode): Promise<void> {
 
   const loader = localeLoaders[locale]
   const module = await loader()
-  i18n.global.setLocaleMessage(locale, module.default)
+  i18n.global.setLocaleMessage(locale, { ...module.default, [SITE_MESSAGE_NAMESPACE]: { ...siteMessages } })
   loadedLocales.add(locale)
 }
 

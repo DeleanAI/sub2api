@@ -185,6 +185,10 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyOpsQueryModeDefault:          "auto",
 		SettingKeyOpsMetricsIntervalSeconds:    "60",
 
+		// 兑换入口默认开启；站内余额单位默认按 USD 计
+		SettingKeyRedeemEnabled:   "true",
+		SettingKeyBalanceCurrency: DefaultBalanceCurrency,
+
 		// Channel monitor defaults (enabled, 60s)
 		SettingKeyChannelMonitorEnabled:                "true",
 		SettingKeyChannelMonitorMode:                   ChannelMonitorModeV1,
@@ -798,6 +802,12 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 			result.OpsMetricsIntervalSeconds = v
 		}
 	}
+
+	// 兑换入口（默认开启）与站内余额单位（默认 USD）
+	result.RedeemEnabled = !isFalseSettingValue(settings[SettingKeyRedeemEnabled])
+	balanceCurrency := balanceCurrencyFromStored(settings[SettingKeyBalanceCurrency])
+	result.BalanceCurrency = balanceCurrency.Code
+	result.BalanceCurrencySymbol = balanceCurrency.Symbol
 
 	// Channel monitor feature (default: enabled, 60s)
 	result.ChannelMonitorEnabled = !isFalseSettingValue(settings[SettingKeyChannelMonitorEnabled])

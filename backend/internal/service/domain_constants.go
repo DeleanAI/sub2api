@@ -529,6 +529,17 @@ const (
 	SettingKeyOpsRuntimeLogConfig = "ops_runtime_log_config"
 
 	// =========================
+	// 兑换入口与金额显示（fork）
+	// =========================
+
+	// SettingKeyRedeemEnabled 是用户侧兑换码的开关（默认开启）：关闭后用户侧不显示兑换入口，兑换接口
+	// 返回 REDEEM_DISABLED；管理员发放、支付履约入账不受影响。
+	SettingKeyRedeemEnabled = "redeem_enabled"
+	// SettingKeyBalanceCurrency 声明站内余额单位按哪种货币计（ISO 4217，默认 USD），只影响怎么写、
+	// 不做换算，见 DefaultBalanceCurrency。
+	SettingKeyBalanceCurrency = "balance_currency"
+
+	// =========================
 	// Channel Monitor (渠道监控)
 	// =========================
 

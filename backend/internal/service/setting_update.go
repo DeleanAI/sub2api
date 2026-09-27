@@ -115,6 +115,12 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 		return nil, infraerrors.BadRequest("INVALID_FORWARDED_CLIENT_IP_HEADERS", err.Error())
 	}
 	settings.ForwardedClientIPHeaders = normalizedForwardedClientIPHeaders
+	balanceCurrency, err := NormalizeBalanceCurrency(settings.BalanceCurrency)
+	if err != nil {
+		return nil, err
+	}
+	settings.BalanceCurrency = balanceCurrency
+	settings.BalanceCurrencySymbol = balanceCurrencyOf(balanceCurrency).Symbol
 	alipaySource, err := normalizeVisibleMethodSettingSource("alipay", settings.PaymentVisibleMethodAlipaySource, settings.PaymentVisibleMethodAlipayEnabled)
 	if err != nil {
 		return nil, err
@@ -409,6 +415,10 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	if settings.OpsMetricsIntervalSeconds > 0 {
 		updates[SettingKeyOpsMetricsIntervalSeconds] = strconv.Itoa(settings.OpsMetricsIntervalSeconds)
 	}
+
+	// 兑换入口与站内余额单位（币种已在本函数开头按 NormalizeBalanceCurrency 归一化）
+	updates[SettingKeyRedeemEnabled] = strconv.FormatBool(settings.RedeemEnabled)
+	updates[SettingKeyBalanceCurrency] = settings.BalanceCurrency
 
 	// Channel monitor feature switch
 	updates[SettingKeyChannelMonitorEnabled] = strconv.FormatBool(settings.ChannelMonitorEnabled)

@@ -1,3 +1,5 @@
+import { CURRENCY } from '@/i18n/siteMessages'
+
 export default {
     scheduledTests: {
       title: 'Scheduled Tests',
@@ -293,7 +295,7 @@ export default {
       generatedSuccessfully: 'Generated Successfully',
       codesCreated: '{count} redeem code(s) created',
       codeType: 'Code Type',
-      amount: 'Amount ($)',
+      amount: `Amount (${CURRENCY})`,
       value: 'Value',
       count: 'Count',
       generating: 'Generating...',
@@ -344,7 +346,7 @@ export default {
         selectType: 'Select type',
         valueLabel: 'Value',
         valuePlaceholder: 'Enter value',
-        balanceHint: 'Balance amount (USD)',
+        balanceHint: `Balance amount (${CURRENCY})`,
         concurrencyHint: 'Concurrency increment',
         countLabel: 'Count',
         countPlaceholder: 'Enter count',
@@ -473,7 +475,7 @@ export default {
       code: 'Promo Code',
       autoGenerate: 'auto-generate if empty',
       codePlaceholder: 'Enter promo code or leave empty',
-      bonusAmount: 'Bonus Amount ($)',
+      bonusAmount: `Bonus Amount (${CURRENCY})`,
       maxUses: 'Max Uses',
       zeroUnlimited: '0 = unlimited',
       expiresAt: 'Expires At',

@@ -1017,6 +1017,8 @@ func TestAPIContracts(t *testing.T) {
 					"balance_low_notify_threshold": 0,
 					"balance_low_notify_recharge_url": "",
 					"account_quota_notify_emails": [],
+					"redeem_enabled": true,
+					"balance_currency": "USD", "balance_currency_symbol": "$",
 					"channel_monitor_enabled": true,
 					"channel_monitor_mode": "v1",
 					"channel_monitor_hide_throughput": true,
@@ -1335,6 +1337,8 @@ func TestAPIContracts(t *testing.T) {
 					"balance_low_notify_threshold": 0,
 					"balance_low_notify_recharge_url": "",
 					"account_quota_notify_emails": [],
+					"redeem_enabled": true,
+					"balance_currency": "USD", "balance_currency_symbol": "$",
 					"channel_monitor_enabled": true,
 					"channel_monitor_mode": "v1",
 					"channel_monitor_hide_throughput": true,
@@ -1506,7 +1510,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	subscriptionService := service.NewSubscriptionService(groupRepo, userSubRepo, nil, nil, cfg)
 	subscriptionHandler := handler.NewSubscriptionHandler(subscriptionService)
 
-	redeemService := service.NewRedeemService(redeemRepo, userRepo, subscriptionService, nil, nil, nil, nil, nil)
+	redeemService := service.NewRedeemService(redeemRepo, userRepo, subscriptionService, nil, nil, nil, nil, nil, nil)
 	redeemHandler := handler.NewRedeemHandler(redeemService)
 
 	settingRepo := newStubSettingRepo()

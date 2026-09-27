@@ -4,6 +4,7 @@
  */
 
 import { i18n, getLocale } from '@/i18n'
+import { withBalanceCurrencySymbol } from '@/utils/balanceCurrency'
 
 /**
  * 格式化相对时间
@@ -53,25 +54,21 @@ export function formatNumber(num: number | null | undefined): string {
 }
 
 /**
- * 格式化货币金额
- * @param amount 金额
- * @param currency 货币代码，默认 USD
- * @returns 格式化后的字符串，如 "$1.25"
+ * 格式化站内金额（余额、费用、额度）：站内余额单位的符号 + 按语言分组的数字（USD 站点写成 $1.25，CNY 站点写成 ¥1,234.00）。
+ * 站内单位只决定写法、不是 Intl 意义上的货币（见 utils/balanceCurrency.ts），所以不用 currency 样式；
+ * 支付单金额走 components/payment/currency.ts。
+ * @param amount 金额；极小的正数保留 6 位小数
  */
-export function formatCurrency(amount: number | null | undefined, currency: string = 'USD'): string {
-  if (amount === null || amount === undefined) return '$0.00'
-
-  const locale = getLocale()
+export function formatCurrency(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined) return withBalanceCurrencySymbol('0.00')
 
   // For very small amounts, show more decimals
   const fractionDigits = amount > 0 && amount < 0.01 ? 6 : 2
 
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency: currency,
+  return withBalanceCurrencySymbol(new Intl.NumberFormat(getLocale(), {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits
-  }).format(amount)
+  }).format(amount))
 }
 
 /**

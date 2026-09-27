@@ -50,7 +50,8 @@ const (
 var (
 	notificationEmailPlaceholderPattern = regexp.MustCompile(`{{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*}}`)
 	notificationEmailLocales            = []string{notificationEmailDefaultLocale, notificationEmailLocaleChinese}
-	notificationEmailCommonPlaceholders = []string{"site_name", "recipient_name", "recipient_email"}
+	// currency_symbol 是站内余额单位的符号（见 BalanceCurrency），模板里写在金额前面，例如 {{currency_symbol}}{{current_balance}}。
+	notificationEmailCommonPlaceholders = []string{"site_name", "recipient_name", "recipient_email", "currency_symbol"}
 	// Keep summary values separate so admins can rearrange or omit individual metrics in the template.
 	notificationEmailOpsSummaryPlaceholders = []string{
 		"report_summary_display",
@@ -517,7 +518,7 @@ func (s *NotificationEmailService) sampleVariables(ctx context.Context, event, l
 	for key, value := range notificationEmailSampleVariables(locale) {
 		variables[key] = value
 	}
-	variables["site_name"] = s.siteName(ctx)
+	s.applySiteVariables(ctx, variables)
 	if variables["unsubscribe_url"] == "" && info.Optional {
 		variables["unsubscribe_url"] = "https://example.com/unsubscribe"
 	}
@@ -557,7 +558,7 @@ func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, 
 			}
 		}
 	}
-	variables["site_name"] = s.siteName(ctx)
+	s.applySiteVariables(ctx, variables)
 	variables["recipient_email"] = input.RecipientEmail
 	if strings.TrimSpace(input.RecipientName) != "" {
 		variables["recipient_name"] = input.RecipientName
@@ -568,6 +569,17 @@ func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, 
 		}
 	}
 	return variables
+}
+
+// applySiteVariables 写入站点级变量（站点名、站内余额单位符号）。它们只取自站点设置，
+// 调用方传入的同名变量会被覆盖，预览与实际发送一致。
+func (s *NotificationEmailService) applySiteVariables(ctx context.Context, variables map[string]string) {
+	variables["site_name"] = s.siteName(ctx)
+	var repo SettingRepository
+	if s != nil {
+		repo = s.settingRepo
+	}
+	variables["currency_symbol"] = ReadBalanceCurrency(ctx, repo).Symbol
 }
 
 func (s *NotificationEmailService) siteName(ctx context.Context) string {
@@ -1259,7 +1271,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 			Subject: "[{{site_name}}] Low balance alert",
 			HTML: notificationEmailCard("#d97706", "Low balance alert", `
 <p>Hello {{recipient_name}},</p>
-<p>Your current balance is <strong>${{current_balance}}</strong>, below the configured alert threshold of <strong>${{threshold}}</strong>.</p>
+<p>Your current balance is <strong>{{currency_symbol}}{{current_balance}}</strong>, below the configured alert threshold of <strong>{{currency_symbol}}{{threshold}}</strong>.</p>
 <p>Please recharge in time to avoid service interruption.</p>
 <p><a class="button" href="{{recharge_url}}">Recharge now</a></p>
 <p class="muted"><a href="{{unsubscribe_url}}">Unsubscribe from optional balance alerts</a></p>`),
@@ -1268,7 +1280,7 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 			Subject: "[{{site_name}}] 余额不足提醒",
 			HTML: notificationEmailCard("#d97706", "余额不足提醒", `
 <p>{{recipient_name}}，您好：</p>
-<p>您当前余额为 <strong>${{current_balance}}</strong>，已低于提醒阈值 <strong>${{threshold}}</strong>。</p>
+<p>您当前余额为 <strong>{{currency_symbol}}{{current_balance}}</strong>，已低于提醒阈值 <strong>{{currency_symbol}}{{threshold}}</strong>。</p>
 <p>请及时充值以免服务中断。</p>
 <p><a class="button" href="{{recharge_url}}">立即充值</a></p>
 <p class="muted"><a href="{{unsubscribe_url}}">退订此类余额提醒</a></p>`),
@@ -1279,16 +1291,16 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
 			Subject: "[{{site_name}}] Balance recharge successful",
 			HTML: notificationEmailCard("#16a34a", "Recharge successful", `
 <p>Hello {{recipient_name}},</p>
-<p>Your balance recharge of <strong>${{recharge_amount}}</strong> has been completed.</p>
-<p>Current balance: <strong>${{current_balance}}</strong></p>
+<p>Your balance recharge of <strong>{{currency_symbol}}{{recharge_amount}}</strong> has been completed.</p>
+<p>Current balance: <strong>{{currency_symbol}}{{current_balance}}</strong></p>
 <p>Order ID: {{order_id}}</p>`),
 		},
 		notificationEmailLocaleChinese: {
 			Subject: "[{{site_name}}] 余额充值成功",
 			HTML: notificationEmailCard("#16a34a", "余额充值成功", `
 <p>{{recipient_name}}，您好：</p>
-<p>您的余额充值 <strong>${{recharge_amount}}</strong> 已完成。</p>
-<p>当前余额：<strong>${{current_balance}}</strong></p>
+<p>您的余额充值 <strong>{{currency_symbol}}{{recharge_amount}}</strong> 已完成。</p>
+<p>当前余额：<strong>{{currency_symbol}}{{current_balance}}</strong></p>
 			<p>订单号：{{order_id}}</p>`),
 		},
 	},
@@ -1301,8 +1313,8 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
   <tr><td>Account ID</td><td>{{account_id}}</td></tr>
   <tr><td>Platform</td><td>{{platform}}</td></tr>
   <tr><td>Dimension</td><td>{{quota_dimension}}</td></tr>
-  <tr><td>Used / Limit</td><td>{{quota_used}} / {{quota_limit}}</td></tr>
-  <tr><td>Remaining</td><td>{{quota_remaining}}</td></tr>
+  <tr><td>Used / Limit</td><td>{{currency_symbol}}{{quota_used}} / {{currency_symbol}}{{quota_limit}}</td></tr>
+  <tr><td>Remaining</td><td>{{currency_symbol}}{{quota_remaining}}</td></tr>
   <tr><td>Threshold</td><td>{{quota_threshold}}</td></tr>
 </table>`),
 		},
@@ -1314,8 +1326,8 @@ var notificationEmailOfficialTemplates = map[string]map[string]notificationEmail
   <tr><td>账号 ID</td><td>{{account_id}}</td></tr>
   <tr><td>平台</td><td>{{platform}}</td></tr>
   <tr><td>维度</td><td>{{quota_dimension}}</td></tr>
-  <tr><td>已用 / 限额</td><td>{{quota_used}} / {{quota_limit}}</td></tr>
-  <tr><td>剩余额度</td><td>{{quota_remaining}}</td></tr>
+  <tr><td>已用 / 限额</td><td>{{currency_symbol}}{{quota_used}} / {{currency_symbol}}{{quota_limit}}</td></tr>
+  <tr><td>剩余额度</td><td>{{currency_symbol}}{{quota_remaining}}</td></tr>
   <tr><td>告警阈值</td><td>{{quota_threshold}}</td></tr>
 </table>`),
 		},

@@ -11,7 +11,7 @@
           </div>
           <p class="text-sm font-medium text-primary-100">{{ t('redeem.currentBalance') }}</p>
           <p class="mt-2 text-4xl font-bold text-white">
-            ${{ user?.balance?.toFixed(2) || '0.00' }}
+            {{ $currency }}{{ user?.balance?.toFixed(2) || '0.00' }}
           </p>
           <p class="mt-2 text-sm text-primary-100">
             {{ t('redeem.concurrency') }}: {{ user?.concurrency || 0 }} {{ t('redeem.requests') }}
@@ -19,8 +19,13 @@
         </div>
       </div>
 
+      <!-- 站点关闭了兑换码（FeatureFlags.redeem）：不给表单，只说明原因 -->
+      <div v-if="!redeemEnabled" class="card p-6 text-center text-sm text-gray-500 dark:text-gray-400" data-test="redeem-disabled">
+        {{ t('redeem.disabled') }}
+      </div>
+
       <!-- Redeem Form -->
-      <div class="card">
+      <div v-else class="card">
         <div class="p-6">
           <form @submit.prevent="handleRedeem" class="space-y-5">
             <div>
@@ -99,7 +104,7 @@
                   <p>{{ redeemResult.message }}</p>
                   <div class="mt-3 space-y-1">
                     <p v-if="redeemResult.type === 'balance'" class="font-medium">
-                      {{ t('redeem.added') }}: ${{ redeemResult.value.toFixed(2) }}
+                      {{ t('redeem.added') }}: {{ $currency }}{{ redeemResult.value.toFixed(2) }}
                     </p>
                     <p v-else-if="redeemResult.type === 'concurrency'" class="font-medium">
                       {{ t('redeem.added') }}: {{ redeemResult.value }}
@@ -116,7 +121,7 @@
                     </p>
                     <p v-if="redeemResult.new_balance !== undefined">
                       {{ t('redeem.newBalance') }}:
-                      <span class="font-semibold">${{ redeemResult.new_balance.toFixed(2) }}</span>
+                      <span class="font-semibold">{{ $currency }}{{ redeemResult.new_balance.toFixed(2) }}</span>
                     </p>
                     <p v-if="redeemResult.new_concurrency !== undefined">
                       {{ t('redeem.newConcurrency') }}:
@@ -375,6 +380,9 @@ import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
+import { balanceCurrencySymbol } from '@/utils/balanceCurrency'
+import { extractApiErrorCode } from '@/utils/apiError'
+import { FeatureFlags, resolveFeatureFlag } from '@/utils/featureFlags'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
@@ -383,6 +391,7 @@ const subscriptionStore = useSubscriptionStore()
 
 const user = computed(() => authStore.user)
 
+const redeemEnabled = computed(() => resolveFeatureFlag(appStore.cachedPublicSettings, FeatureFlags.redeem))
 const redeemCode = ref('')
 const submitting = ref(false)
 const redeemResult = ref<{
@@ -437,7 +446,7 @@ const getHistoryItemTitle = (item: RedeemHistoryItem) => {
 const formatHistoryValue = (item: RedeemHistoryItem) => {
   if (isBalanceType(item.type)) {
     const sign = item.value >= 0 ? '+' : ''
-    return `${sign}$${item.value.toFixed(2)}`
+    return `${sign}${balanceCurrencySymbol()}${item.value.toFixed(2)}`
   } else if (isSubscriptionType(item.type)) {
     // 订阅类型显示有效天数和分组名称
     const days = item.validity_days || Math.round(item.value)
@@ -513,7 +522,9 @@ const handleRedeem = async () => {
     // Show success toast
     appStore.showSuccess(t('redeem.codeRedeemSuccess'))
   } catch (error: any) {
-    errorMessage.value = error.response?.data?.detail || t('redeem.failedToRedeem')
+    errorMessage.value = extractApiErrorCode(error) === 'REDEEM_DISABLED'
+      ? t('redeem.disabled')
+      : error.response?.data?.detail || t('redeem.failedToRedeem')
 
     appStore.showError(t('redeem.redeemFailed'))
   } finally {

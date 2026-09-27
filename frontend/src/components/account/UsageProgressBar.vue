@@ -13,14 +13,14 @@
           {{ formatTokens }}
         </span>
         <span class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800" :title="t('usage.accountBilled')">
-          A ${{ formatAccountCost }}
+          A {{ $currency }}{{ formatAccountCost }}
         </span>
         <span
           v-if="windowStats?.user_cost != null"
           class="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800"
           :title="t('usage.userBilled')"
         >
-          U ${{ formatUserCost }}
+          U {{ $currency }}{{ formatUserCost }}
         </span>
         <span
           v-if="estimatedTotalCost != null"

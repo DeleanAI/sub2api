@@ -1,3 +1,5 @@
+import { CURRENCY } from '@/i18n/siteMessages'
+
 export default {
     // Dashboard
     dashboard: {
@@ -468,7 +470,7 @@ export default {
         changeUser: 'Change user',
         availableQuota: 'Available quota',
         frozenHint: 'Rebates still in the freeze period are not included in the available quota',
-        amount: 'Withdrawal amount (USD)',
+        amount: `Withdrawal amount (${CURRENCY})`,
         amountHint: 'Enter the amount already paid to this user outside the site',
         fillAll: 'All',
         warning: 'Recording deducts this amount from the user\'s available affiliate quota and cannot be undone. Make sure the off-site payment is complete.',
@@ -809,12 +811,12 @@ export default {
       platformQuota: {
         menuItem: 'Platform Quotas',
         title: 'Platform Quotas',
-        subtitle: 'Configure daily / weekly / monthly USD usage limits for each upstream platform for user {email}',
+        subtitle: `Configure daily / weekly / monthly usage limits (${CURRENCY}) for each upstream platform for user {email}`,
         columns: {
           platform: 'Platform',
-          daily: 'Daily (USD)',
-          weekly: 'Weekly (USD)',
-          monthly: 'Monthly (USD, 30-day rolling)',
+          daily: `Daily (${CURRENCY})`,
+          weekly: `Weekly (${CURRENCY})`,
+          monthly: `Monthly (${CURRENCY}, 30-day rolling)`,
           usage: 'Current Usage',
         },
         placeholder: 'unlimited',
@@ -1059,9 +1061,9 @@ export default {
         typeNotEditable: 'Billing type cannot be changed after group creation.',
         standard: 'Standard (Balance)',
         subscription: 'Subscription (Quota)',
-        dailyLimit: 'Daily Limit (USD)',
-        weeklyLimit: 'Weekly Limit (USD)',
-        monthlyLimit: 'Monthly Limit (USD)',
+        dailyLimit: `Daily Limit (${CURRENCY})`,
+        weeklyLimit: `Weekly Limit (${CURRENCY})`,
+        monthlyLimit: `Monthly Limit (${CURRENCY})`,
         defaultValidityDays: 'Default Validity (Days)',
         validityHint: 'Number of days the subscription is valid when assigned to a user',
         noLimit: 'No limit'
@@ -1085,7 +1087,7 @@ export default {
       videoPricing: {
         title: 'Video Generation Pricing',
         description:
-          'Configure Grok video generation prices in USD per second of output video. Leave empty to use the default per-second rates (grok-imagine-video: $0.05/s 480p, $0.07/s 720p; video-1.5: $0.08/s 480p, $0.14/s 720p, $0.25/s 1080p).',
+          `Configure Grok video generation prices in ${CURRENCY} per second of output video. Leave empty to use the default per-second rates (grok-imagine-video: ${CURRENCY}0.05/s 480p, ${CURRENCY}0.07/s 720p; video-1.5: ${CURRENCY}0.08/s 480p, ${CURRENCY}0.14/s 720p, ${CURRENCY}0.25/s 1080p).`,
         modelOverridesTitle: 'Per-model video price overrides',
         modelOverridesDescription: 'Each populated cell overrides the flat resolution price for that model family. Preview and legacy aliases for video-1.5 use the same family; empty cells fall back to the flat resolution price.',
         independentMultiplier: 'Use independent video multiplier',
@@ -1097,8 +1099,8 @@ export default {
       },
       explicitPricing: {
         title: 'Grok Search & Voice Pricing',
-        description: 'Optional per-group prices for web_search (per 1k calls) and Voice realtime / TTS / STT (USD). Leave empty if unused.',
-        searchPricePer1k: 'Search price per 1k calls (USD)',
+        description: `Optional per-group prices for web_search (per 1k calls) and Voice realtime / TTS / STT (${CURRENCY}). Leave empty if unused.`,
+        searchPricePer1k: `Search price per 1k calls (${CURRENCY})`,
         pricePlaceholder: 'optional'
       },
       modelPricing: {
@@ -1127,17 +1129,17 @@ export default {
       },
       voicePricing: {
         title: 'Grok Voice Pricing',
-        description: 'Optional per-group prices for Voice realtime / TTS / STT (USD). Leave empty to leave unpriced.',
-        audioRealtimePerMin: 'Realtime price per minute (USD)',
-        audioTtsPerMillionChars: 'TTS price per million chars (USD)',
-        audioSttPerHour: 'STT price per hour (USD)',
+        description: `Optional per-group prices for Voice realtime / TTS / STT (${CURRENCY}). Leave empty to leave unpriced.`,
+        audioRealtimePerMin: `Realtime price per minute (${CURRENCY})`,
+        audioTtsPerMillionChars: `TTS price per million chars (${CURRENCY})`,
+        audioSttPerHour: `STT price per hour (${CURRENCY})`,
         pricePlaceholder: 'optional'
       },
       webSearchPricing: {
         title: 'Codex Web Search Pricing',
-        pricePerCall: 'Price per search call (USD)',
+        pricePerCall: `Price per search call (${CURRENCY})`,
         pricePerCallHint:
-          'Leave empty to use the default $0.01 per call (official pricing: $10 per 1,000 calls); 0 means free. The group rate multiplier is applied on top.',
+          `Leave empty to use the default ${CURRENCY}0.01 per call (OpenAI official pricing: $10 per 1,000 calls); 0 means free. The group rate multiplier is applied on top.`,
         finalPricePreview: 'Per-call price after current multiplier: {price}'
       },
       peakRate: {

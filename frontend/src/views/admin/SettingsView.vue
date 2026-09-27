@@ -7412,6 +7412,66 @@
         <div class="card">
           <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
             <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.balanceCurrency.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.balanceCurrency.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div class="min-w-0">
+                <label for="balance-currency" class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.balanceCurrency.label') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.balanceCurrency.hint', { symbol: form.balance_currency_symbol }) }}
+                </p>
+              </div>
+              <div class="w-full shrink-0 sm:w-56">
+                <input
+                  id="balance-currency"
+                  v-model.trim="form.balance_currency"
+                  type="text"
+                  maxlength="3"
+                  list="balance-currency-suggestions"
+                  class="input font-mono uppercase"
+                />
+                <datalist id="balance-currency-suggestions">
+                  <option v-for="code in BALANCE_CURRENCY_SUGGESTIONS" :key="code" :value="code" />
+                </datalist>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+              {{ t('admin.settings.features.redeem.title') }}
+            </h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              {{ t('admin.settings.features.redeem.description') }}
+            </p>
+          </div>
+          <div class="space-y-5 p-6">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('admin.settings.features.redeem.enabled') }}
+                </label>
+                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.settings.features.redeem.enabledHint') }}
+                </p>
+              </div>
+              <Toggle v-model="form.redeem_enabled" />
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
               {{ t('admin.settings.features.pluginManagement.title') }}
             </h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -8769,7 +8829,7 @@
                 <div class="relative">
                   <span
                     class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                    >$</span
+                    >{{ $currency }}</span
                   >
                   <input
                     v-model.number="form.balance_low_notify_threshold"
@@ -9004,6 +9064,13 @@ import {
   resolveSiteBillingMode,
   type SiteBillingMode,
 } from "@/utils/siteBillingMode";
+import {
+  DEFAULT_BALANCE_CURRENCY,
+  DEFAULT_BALANCE_CURRENCY_SYMBOL,
+} from "@/utils/balanceCurrency";
+
+// 站内余额单位输入框的候选（只是提示，后端接受任何 ISO 4217 代码）。
+const BALANCE_CURRENCY_SUGGESTIONS = ["USD", "CNY", "EUR", "HKD", "JPY", "GBP"];
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import PaymentProviderList from "@/components/payment/PaymentProviderList.vue";
 import PaymentProviderDialog from "@/components/payment/PaymentProviderDialog.vue";
@@ -10028,6 +10095,10 @@ const form = reactive<SettingsForm>({
   plugin_management_enabled: false,
   // Affiliate (邀请返利) feature switch
   affiliate_enabled: false,
+  // 用户侧兑换码入口（opt-out）与站内余额单位（符号由后端按币种推导，只读）
+  redeem_enabled: true,
+  balance_currency: DEFAULT_BALANCE_CURRENCY,
+  balance_currency_symbol: DEFAULT_BALANCE_CURRENCY_SYMBOL,
   // Allow user view error requests
   allow_user_view_error_requests: false,
 });
@@ -11736,6 +11807,8 @@ async function saveSettings() {
       plugin_management_enabled: form.plugin_management_enabled,
       // Affiliate (邀请返利) feature switch
       affiliate_enabled: form.affiliate_enabled,
+      redeem_enabled: form.redeem_enabled,
+      balance_currency: form.balance_currency,
       allow_user_view_error_requests: form.allow_user_view_error_requests,
     };
 

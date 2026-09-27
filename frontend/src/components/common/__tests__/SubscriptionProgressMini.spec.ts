@@ -4,7 +4,10 @@ import SubscriptionProgressMini from '../SubscriptionProgressMini.vue'
 const store = vi.hoisted(() => ({ activeSubscriptions: [] as unknown[], hasActiveSubscriptions: true, fetchActiveSubscriptions: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/stores', () => ({ useSubscriptionStore: () => store }))
 vi.mock('@/utils/featureFlags', () => ({ FeatureFlags: { subscription: 'subscription' }, isFeatureFlagEnabled: () => true }))
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async () => {
+  const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
+  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+})
 enableAutoUnmount(afterEach)
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 8, 22, 12)) })
 afterEach(() => vi.useRealTimers())

@@ -1,3 +1,5 @@
+import { CURRENCY } from '@/i18n/siteMessages'
+
 export default {
     accounts: {
       title: 'Account Management',
@@ -457,7 +459,7 @@ export default {
       resetQuota: 'Reset Quota',
       quotaLimit: 'Quota Limit',
       quotaLimitPlaceholder: '0 means unlimited',
-      quotaLimitHint: 'Set daily/weekly/total spending limits (USD). Anthropic API key accounts can also configure client affinity. Changing limits won\'t reset usage.',
+      quotaLimitHint: `Set daily/weekly/total spending limits (${CURRENCY}). Anthropic API key accounts can also configure client affinity. Changing limits won't reset usage.`,
       quotaLimitToggle: 'Enable Quota Limit',
       quotaLimitToggleHint: 'When enabled, account will be paused when usage reaches the set limit',
       quotaDailyLimit: 'Daily Limit',
@@ -1614,7 +1616,7 @@ export default {
         grokLastHeadersSeen: 'Headers {time}',
         passiveSampled: 'Passive',
         activeQuery: 'Query',
-        estimatedTotalCost: 'Est. total ${cost}',
+        estimatedTotalCost: `Est. total ${CURRENCY}{cost}`,
         estimatedTotalCostTooltip: 'Estimated total cost at 100% utilization, based on current window cost and utilization'
       },
       openaiReferral: {

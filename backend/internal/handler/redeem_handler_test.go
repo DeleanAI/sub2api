@@ -48,7 +48,7 @@ func TestRedeemHistory(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &historyRepo{}
-			h := NewRedeemHandler(service.NewRedeemService(repo, nil, nil, nil, nil, nil, nil, nil))
+			h := NewRedeemHandler(service.NewRedeemService(repo, nil, nil, nil, nil, nil, nil, nil, nil))
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest("GET", "/api/v1/redeem/history"+tt.query, nil)

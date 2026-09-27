@@ -1,3 +1,5 @@
+import { CURRENCY } from '@/i18n/siteMessages'
+
 export default {
     settings: {
       title: 'System Settings',
@@ -59,6 +61,18 @@ export default {
             rechargeOnly: 'Hides "My Subscriptions", the purchase-page subscription tab, the header subscription badge and the usage billing-type filter; direct visits to "My Subscriptions" return to the dashboard. The admin sidebar also hides the "Subscription Management" entry (the page stays reachable by URL). Existing subscription billing and redeem-code subscriptions are unaffected.',
             subscriptionOnly: 'The purchase page only offers subscription plans and the sidebar entry reads "Subscription"; balance top-up orders are rejected. Redeem codes, affiliate payouts and other balance credits are unaffected.',
           },
+        },
+        balanceCurrency: {
+          title: 'Balance Unit',
+          description: 'Balances, prices, usage costs and limits all share one site unit. Declare which currency it is denominated in: amount symbols in the UI and emails, and the unit reported by /v1/usage, follow it. Display only — nothing is converted.',
+          label: 'Currency (ISO 4217 code)',
+          hint: 'e.g. USD, CNY, EUR. Current symbol: {symbol}',
+        },
+        redeem: {
+          title: 'Redeem Codes',
+          description: 'The self-service redeem entry for users.',
+          enabled: 'Allow users to redeem codes',
+          enabledHint: 'When off, the sidebar and dashboard redeem entries are hidden, visiting the redeem page returns to the dashboard, and the redeem endpoint answers REDEEM_DISABLED. Admin grants and payment credits are unaffected.',
         },
         modelPlaza: {
           title: 'Model Plaza',
@@ -427,9 +441,9 @@ export default {
       },
       platformQuota: {
         platform:    'Platform',
-        daily:       'Daily (USD)',
-        weekly:      'Weekly (USD)',
-        monthly:     'Monthly (USD, 30d rolling)',
+        daily:       `Daily (${CURRENCY})`,
+        weekly:      `Weekly (${CURRENCY})`,
+        monthly:     `Monthly (${CURRENCY}, 30d rolling)`,
         placeholder: 'Unlimited',
       },
       claudeCode: {
@@ -783,8 +797,8 @@ export default {
         maxAmount: 'Maximum Amount',
         dailyLimit: 'Daily Limit',
         balanceRechargeMultiplier: 'Balance Recharge Multiplier',
-        balanceRechargeMultiplierHint: 'How many USD balance the user receives for each 1 CNY paid',
-        balanceRechargePreview: 'Preview: 1 CNY = {usd} USD',
+        balanceRechargeMultiplierHint: `How much balance (${CURRENCY}) the user receives for each 1 CNY paid`,
+        balanceRechargePreview: `Preview: 1 CNY = ${CURRENCY}{usd}`,
         subscriptionUsdToCnyRate: 'Subscription USD to CNY Rate',
         subscriptionUsdToCnyRateHint:
           'CNY charged per 1 USD of plan price on CNY channels (e.g. 7.15). 0 or empty = disabled, plan price is charged as-is. When enabled, all plan prices must be set in USD',

@@ -26,6 +26,7 @@ const appStore = vi.hoisted(() => ({
     payment_enabled?: boolean
     risk_control_enabled?: boolean
     subscription_enabled?: boolean
+    redeem_enabled?: boolean
     custom_menu_items?: []
   },
   fetchPublicSettings: vi.fn(),
@@ -144,6 +145,7 @@ describe('feature route guard', () => {
     ['payment', { requiresPayment: true }, '/purchase'],
     ['risk control', { requiresRiskControl: true }, '/admin/risk-control'],
     ['subscription', { requiresSubscription: true }, '/subscriptions'],
+    ['redeem', { requiresRedeem: true }, '/redeem'],
   ])('does not treat a failed %s settings load as explicitly disabled', async (_name, meta, path) => {
     authStore.isAdmin = meta.requiresRiskControl === true
     appStore.fetchPublicSettings.mockResolvedValue(null)
@@ -165,6 +167,7 @@ describe('feature route guard', () => {
       '/admin/settings',
     ],
     ['subscription', { requiresSubscription: true }, { subscription_enabled: false }, '/dashboard'],
+    ['redeem', { requiresRedeem: true }, { redeem_enabled: false }, '/dashboard'],
   ])('redirects when loaded settings explicitly disable %s', async (_name, meta, settings, target) => {
     authStore.isAdmin = meta.requiresRiskControl === true
     appStore.cachedPublicSettings = settings
@@ -205,6 +208,38 @@ describe('subscription route guard (opt-out flag)', () => {
     appStore.cachedPublicSettings = { subscription_enabled: false }
 
     const { navigation, next } = runGuard({ requiresSubscription: true }, '/subscriptions')
+    await navigation
+
+    expect(next).toHaveBeenCalledWith('/admin/dashboard')
+  })
+})
+
+describe('redeem route guard (opt-out flag)', () => {
+  beforeEach(() => {
+    authStore.isAdmin = false
+    authStore.isSimpleMode = false
+    appStore.publicSettingsLoaded = true
+    appStore.fetchPublicSettings.mockReset()
+  })
+
+  it.each([
+    ['missing key', {}],
+    ['explicit true', { redeem_enabled: true }],
+  ])('lets /redeem through when the flag is %s', async (_name, settings) => {
+    appStore.cachedPublicSettings = settings
+
+    const { navigation, next } = runGuard({ requiresRedeem: true }, '/redeem')
+    await navigation
+
+    expect(next).toHaveBeenCalledOnce()
+    expect(next).toHaveBeenCalledWith()
+  })
+
+  it('sends admins to the admin dashboard when redeem codes are disabled', async () => {
+    authStore.isAdmin = true
+    appStore.cachedPublicSettings = { redeem_enabled: false }
+
+    const { navigation, next } = runGuard({ requiresRedeem: true }, '/redeem')
     await navigation
 
     expect(next).toHaveBeenCalledWith('/admin/dashboard')

@@ -305,6 +305,11 @@ type SystemSettings struct {
 	AccountQuotaNotifyEnabled       bool               `json:"account_quota_notify_enabled"`
 	AccountQuotaNotifyEmails        []NotifyEmailEntry `json:"account_quota_notify_emails"`
 
+	// 兑换入口与金额显示（fork）
+	RedeemEnabled         bool   `json:"redeem_enabled"`
+	BalanceCurrency       string `json:"balance_currency"`
+	BalanceCurrencySymbol string `json:"balance_currency_symbol"`
+
 	// Channel Monitor feature switch
 	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
 	ChannelMonitorMode                   string `json:"channel_monitor_mode"`
@@ -426,6 +431,10 @@ type PublicSettings struct {
 	AccountQuotaNotifyEnabled   bool    `json:"account_quota_notify_enabled"`
 	BalanceLowNotifyThreshold   float64 `json:"balance_low_notify_threshold"`
 	BalanceLowNotifyRechargeURL string  `json:"balance_low_notify_recharge_url"`
+
+	RedeemEnabled         bool   `json:"redeem_enabled"`
+	BalanceCurrency       string `json:"balance_currency"`
+	BalanceCurrencySymbol string `json:"balance_currency_symbol"`
 
 	ChannelMonitorEnabled                bool   `json:"channel_monitor_enabled"`
 	ChannelMonitorMode                   string `json:"channel_monitor_mode"`

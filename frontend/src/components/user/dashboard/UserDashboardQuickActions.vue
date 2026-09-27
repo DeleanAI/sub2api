@@ -49,7 +49,7 @@
         />
       </button>
 
-      <button @click="router.push('/redeem')" class="group flex w-full items-center gap-4 rounded-xl bg-gray-50 p-4 text-left transition-all duration-200 hover:bg-gray-100 dark:bg-dark-800/50 dark:hover:bg-dark-800">
+      <button v-if="redeemEnabled" @click="router.push('/redeem')" class="group flex w-full items-center gap-4 rounded-xl bg-gray-50 p-4 text-left transition-all duration-200 hover:bg-gray-100 dark:bg-dark-800/50 dark:hover:bg-dark-800">
         <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-amber-100 transition-transform group-hover:scale-105 dark:bg-amber-900/30">
           <Icon name="gift" size="lg" class="text-amber-600 dark:text-amber-400" />
         </div>
@@ -68,12 +68,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useBatchImageAccess } from '@/composables/useBatchImageAccess'
+import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 const router = useRouter()
+const redeemEnabled = computed(() => isFeatureFlagEnabled(FeatureFlags.redeem))
 const { t } = useI18n()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 

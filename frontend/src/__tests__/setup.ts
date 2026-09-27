@@ -3,7 +3,8 @@
  * 提供全局 mock 和测试工具
  */
 import { config } from '@vue/test-utils'
-import { vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, vi } from 'vitest'
 
 function createMemoryStorage(): Storage {
   const values = new Map<string, string>()
@@ -93,6 +94,17 @@ globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserv
 config.global.stubs = {
   // 可以在这里添加全局 stub
 }
+
+// 模板全局属性 $currency（站内余额单位的符号，生产里由 utils/balanceCurrency.ts 的 installBalanceCurrency 注册）：
+// 组件测试不装 pinia，按默认站点（USD）写成 "$"。接线本身由 balanceCurrencyGuard.spec.ts 覆盖。
+config.global.mocks = { ...config.global.mocks, $currency: '$' }
+
+// 应用在任何渲染之前就装好了 pinia（main.ts）。测试里给每个用例一个全新的活动 pinia，
+// 让组件脚本里读 store 的纯函数（如 balanceCurrencySymbol()）在没有显式装 pinia 的组件测试里同样可用；
+// 自己 mock store 或另建 pinia 的测试不受影响。
+beforeEach(() => {
+  setActivePinia(createPinia())
+})
 
 // 设置全局测试超时
 vi.setConfig({ testTimeout: 10000 })

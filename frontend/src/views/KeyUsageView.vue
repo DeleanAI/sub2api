@@ -426,6 +426,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { buildGatewayUrl } from '@/api/client'
 import { formatDateLocalInput } from '@/utils/format'
 import { sanitizeUrl } from '@/utils/url'
+import { balanceCurrencySymbol } from '@/utils/balanceCurrency'
 
 const { t, locale } = useI18n()
 const appStore = useAppStore()
@@ -835,7 +836,7 @@ const showDailyUsage = computed(() => Boolean(resultData.value && Array.isArray(
 
 function usd(value: number | null | undefined): string {
   if (value == null || value < 0) return '-'
-  return '$' + Number(value).toFixed(2)
+  return balanceCurrencySymbol() + Number(value).toFixed(2)
 }
 
 function fmtNum(val: number | null | undefined): string {
