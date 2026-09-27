@@ -44,8 +44,8 @@ curl -X DELETE "$SUB2API_BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \
 - 查询和删除只能访问同一用户、同一 API Key、同一分组创建的任务，并始终使用原提交账号；不会转到其他账号查询。
 - 每个经网关创建、最终成功的任务**恰好计费一次**，在第一次观察到 `succeeded` 时按上游 `usage.completion_tokens` 计费：可能是调用方的查询，也可能是网关的后台补查。创建时不扣费；失败、取消、过期的任务不计费；重复观察由共享缓存声明和持久化用量去重共同保护。
 - 后台补查：方舟会把结果直接推给 `callback_url`，调用方未必再经网关查询，而方舟对成功任务照常收费。网关因此把每个新任务登记到结算索引，调用方正常轮询时第一次查到成功即结清、不会发生补查；否则创建后 10 分钟起补查，间隔随任务年龄增长、最长 1 小时一次，结清或进入终态即停。后台结清的用量行 `inbound_endpoint` 为 `gateway:seedance-settlement`。
-- **按计价档取价**：方舟按两个维度定价——输出分辨率 × 输入是否包含视频。网关据此给成功任务定档：分辨率取查询结果里的 `resolution`（样片 Step 1，即 `draft: true`，按 480p 计）；输入含视频指创建请求的 `content` 里有 `video_url`，基于样片生成正式视频（`draft_task`）时沿用样片那一步的判断（方舟规则：Step 2 的单价由 Step 1 是否含视频决定）。计费模型名写成 `<模型>@<分辨率>[+video]`，用量记录的 `model` 列即为档位名；档位名没有自己的逐模型倍率时沿用模型本身的倍率。
-- 档位价没配、或上游没报分辨率时，按模型本身的价格计费并记告警日志（`seedance.billing_variant_unpriced` / `seedance.billing_variant_unknown`）；基于样片生成时读不到样片的计费快照，按本次请求内容判断并记 `seedance.draft_snapshot_missing`。
+- **按计价档取价**：方舟按两个维度定价——输出分辨率 × 输入是否包含视频。网关据此给成功任务定档：分辨率取查询结果里的 `resolution`（样片 Step 1，即 `draft: true`，按 480p 计）；输入含视频指创建请求的 `content` 里有 `video_url`，基于样片生成正式视频（`draft_task`）时沿用样片那一步的判断（方舟规则：Step 2 的单价由 Step 1 是否含视频决定）。计费模型名写成 `<模型>@<分辨率>[+video]`，用量记录的 `model` 列即为档位名，「请求模型」列仍是客户端创建任务时请求的模型；档位名没有自己的逐模型倍率时沿用模型本身的倍率。只有 `<数字>p` 形式的分辨率算计价档（`@` 也会出现在真实模型名里，如 Vertex 上的 `claude-sonnet-4@20250514`，不会被当成档位）。
+- 档位价没配、或上游没报可识别的分辨率时，按模型本身的价格计费并记告警日志（`seedance.billing_variant_unpriced` / `seedance.billing_variant_unknown`）；基于样片生成时读不到样片的计费快照，按本次请求内容判断并记 `seedance.draft_snapshot_missing`。
 - 删除（DELETE）一个尚未结清的任务前，网关先查一次状态并结清，再转发删除——删除后任务记录就查不到了。
 - Redis 保存任务绑定、创建时的计费快照（模型、账号、额度归属平台、创建时间）与结算索引 7 天，与方舟的任务保留期一致（任务记录保存 7 天；排队/运行最长 `execution_expires_after` = 72 小时；成功后 `video_url` 有效 24 小时）。
 - 创建时快照缺失（写入失败等）时仍按查询结果中的 `usage.completion_tokens` 计费，模型名取上游返回值，并记错误日志；读快照或抢计费标记失败同样记日志，不会静默跳过。

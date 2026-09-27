@@ -43,10 +43,12 @@ func seedanceVariantTestKey(group *Group) *APIKey {
 func TestBillingVariantModelRoundTrip(t *testing.T) {
 	require.Equal(t, "m@720p+video", BillingVariantModel("m", "720p+video"))
 	require.Equal(t, "m", BillingVariantModel("m", " "))
+	require.Equal(t, "m", BillingVariantModel("m", "20250514"), "不符合变体语法的后缀不组名")
 	base, ok := billingVariantBase("m@720p+video")
 	require.True(t, ok)
 	require.Equal(t, "m", base)
-	for _, notVariant := range []string{"m", "m@", "@720p", ""} {
+	// "@" 也出现在真实模型名里（Vertex 上的 Claude），只有变体语法的后缀才算变体。
+	for _, notVariant := range []string{"m", "m@", "@720p", "", "claude-sonnet-4@20250514", "m@720", "m@video", "m@2k"} {
 		_, ok := billingVariantBase(notVariant)
 		require.False(t, ok, notVariant)
 	}
@@ -57,6 +59,7 @@ func TestSeedanceBillingVariantFollowsOfficialDimensions(t *testing.T) {
 	require.Equal(t, "720p", seedanceBillingVariant("720p", false))
 	require.Equal(t, "1080p+video", seedanceBillingVariant(" 1080P ", true))
 	require.Empty(t, seedanceBillingVariant("", true), "分辨率未知时不分档")
+	require.Empty(t, seedanceBillingVariant("2k", false), "不是 <数字>p 的分辨率按未知处理（调用方告警、按模型本身价格计）")
 
 	status := parseSeedanceTaskStatus([]byte(`{"status":"succeeded","resolution":"1080p","draft":false,"usage":{"completion_tokens":9}}`))
 	require.Equal(t, "1080p", status.billingResolution())
@@ -154,4 +157,21 @@ func TestGroupModelRateMultiplierCoversBillingVariants(t *testing.T) {
 	group.ModelRateMultipliers = append([]GroupModelRateMultiplier{{ModelPattern: variant, Multiplier: 3}}, group.ModelRateMultipliers...)
 	require.Equal(t, 3.0, resolveGroupModelRateMultiplier(group, variant))
 	require.Equal(t, 1.0, resolveGroupModelRateMultiplier(group, "gpt-5.5"))
+
+	// 带 "@" 的真实模型名不是变体，不沿用去掉后缀那个模型的规则。
+	vertex := &Group{ID: 2, ModelRateMultipliers: []GroupModelRateMultiplier{{ModelPattern: "claude-sonnet-4", Multiplier: 2}}}
+	require.Equal(t, 1.0, resolveGroupModelRateMultiplier(vertex, "claude-sonnet-4@20250514"))
+}
+
+// 完成计费那条用量行：请求模型 / 映射模型取创建时快照，计价档只进 model 列。
+func TestAsyncVideoCompletionUsageFields(t *testing.T) {
+	bill := &OpenAIForwardResult{Model: seedanceVariantTestModel + "@480p"}
+	require.Equal(t, ChannelUsageFields{OriginalModel: "seedance-video", ChannelMappedModel: seedanceVariantTestModel},
+		AsyncVideoCompletionUsageFields(bill, &GrokVideoPendingBilling{Model: seedanceVariantTestModel, OriginalModel: "seedance-video"}))
+	require.Equal(t, ChannelUsageFields{OriginalModel: seedanceVariantTestModel, ChannelMappedModel: seedanceVariantTestModel},
+		AsyncVideoCompletionUsageFields(bill, &GrokVideoPendingBilling{Model: seedanceVariantTestModel}), "快照没记请求模型时用映射模型")
+	require.Equal(t, ChannelUsageFields{OriginalModel: seedanceVariantTestModel, ChannelMappedModel: seedanceVariantTestModel},
+		AsyncVideoCompletionUsageFields(bill, nil), "没有快照时按计费名去掉档位")
+	vertex := &OpenAIForwardResult{Model: "claude-sonnet-4@20250514"}
+	require.Equal(t, "claude-sonnet-4@20250514", AsyncVideoCompletionUsageFields(vertex, nil).OriginalModel)
 }

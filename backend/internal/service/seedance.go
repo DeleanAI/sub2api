@@ -197,17 +197,17 @@ const seedanceVideoInputVariantSuffix = "+video"
 //
 // 方舟按「输出视频分辨率 × 输入是否包含视频」给 token 单价分档（模型价格文档，2026-09-24 版：
 // doubao-seedance-2.5 输出 480p/720p 不含视频 70、含视频 42，1080p 不含视频 77、含视频 46 元/百万 token）。
-// 档位名是 "<分辨率>" 或 "<分辨率>+video"，价格由运营在分组 / 渠道定价里按 "<模型>@<档位>" 配置；
-// 分辨率未知时返回空，按模型本身的价格计。
+// 档位名是 "<分辨率>" 或 "<分辨率>+video"，价格由运营在分组 / 渠道定价里按 "<模型>@<档位>" 配置。
+// 分辨率未知、或不是变体语法认得的 "<数字>p"（billingVariantPattern）时返回空，由调用方告警并按模型本身的价格计。
 func seedanceBillingVariant(resolution string, inputVideo bool) string {
-	resolution = strings.ToLower(strings.TrimSpace(resolution))
-	if resolution == "" {
+	variant := strings.ToLower(strings.TrimSpace(resolution))
+	if variant != "" && inputVideo {
+		variant += seedanceVideoInputVariantSuffix
+	}
+	if !billingVariantPattern.MatchString(variant) {
 		return ""
 	}
-	if inputVideo {
-		return resolution + seedanceVideoInputVariantSuffix
-	}
-	return resolution
+	return variant
 }
 
 // seedanceTaskTerminal：方舟任务的终态（官方：succeeded / failed / cancelled / expired），此后状态不再变化。

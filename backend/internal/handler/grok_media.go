@@ -499,13 +499,15 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			// Defer billing until status polling observes video.url. Persist create-time
 			// model/duration/resolution so status can still price if upstream omits them.
 			// Retry once: missing pending causes silent underpricing (status omits resolution).
+			// 用量归因按创建请求记下，完成计费时由 service.AsyncVideoCompletionUsageFields 原样取回。
+			createUsageFields := grokMediaRequestUsageFields(c, requestModel)
 			pending := service.GrokVideoPendingBilling{
-				Model:                requestModel,
+				Model:                createUsageFields.ChannelMappedModel,
 				BillingModel:         firstNonEmptyString(result.BillingModel, requestModel),
 				UpstreamModel:        result.UpstreamModel,
 				VideoResolution:      result.VideoResolution,
 				VideoDurationSeconds: result.VideoDurationSeconds,
-				OriginalModel:        clientRequestedModel(c, requestModel),
+				OriginalModel:        createUsageFields.OriginalModel,
 				AccountID:            account.ID,
 				QuotaPlatform:        service.QuotaPlatform(c.Request.Context(), apiKey),
 				// Wall-clock start for usage duration_ms: create accepted → first done discovery.
@@ -539,9 +541,10 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		// Status poll OR content download can observe official done+video.url.
 		// Both paths share the same claim key so the customer is charged once.
 		if endpoint == service.SeedanceEndpointStatus {
-			billResult, _, outcome := h.gatewayService.PrepareSeedanceCompletionBilling(requestCtx, reqLog, subject.UserID, apiKey.ID, apiKey, requestID, result)
+			billResult, pending, outcome := h.gatewayService.PrepareSeedanceCompletionBilling(requestCtx, reqLog, subject.UserID, apiKey.ID, apiKey, requestID, result)
 			if billResult != nil {
-				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, requestID)
+				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult,
+					service.AsyncVideoCompletionUsageFields(billResult, pending), body, requestID)
 			}
 			if outcome.Done() {
 				// 落账是异步的：失败时 recordGrokMediaUsage 会释放计费标记并把任务放回索引。
@@ -549,11 +552,11 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 			}
 		} else if endpoint == service.GrokMediaEndpointVideoStatus || endpoint == service.GrokMediaEndpointVideoContent {
 			taskID := strings.TrimSpace(requestID)
-			if billResult := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
-				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, billResult.Model, body, taskID)
+			if billResult, usageFields := prepareGrokVideoCompletionBilling(requestCtx, h, reqLog, apiKey, subject, taskID, result); billResult != nil {
+				recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, billResult, usageFields, body, taskID)
 			}
 		} else if shouldRecordGrokMediaUsage(endpoint, requestModel, result) {
-			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, requestModel, body, requestID)
+			recordGrokMediaUsage(c, h, reqLog, apiKey, subject, subscription, account, result, grokMediaRequestUsageFields(c, requestModel), body, requestID)
 		}
 		reqLog.Debug("grok_media.request_completed",
 			zap.Int64("account_id", account.ID),
@@ -637,17 +640,17 @@ func prepareGrokVideoCompletionBilling(
 	subject middleware2.AuthSubject,
 	taskRequestID string,
 	statusResult *service.OpenAIForwardResult,
-) *service.OpenAIForwardResult {
+) (*service.OpenAIForwardResult, service.ChannelUsageFields) {
 	if h == nil || h.gatewayService == nil || apiKey == nil || statusResult == nil {
-		return nil
+		return nil, service.ChannelUsageFields{}
 	}
 	// Forward already set VideoCount only when status=done && video.url (official).
 	if statusResult.VideoCount <= 0 {
-		return nil
+		return nil, service.ChannelUsageFields{}
 	}
 	taskRequestID = strings.TrimSpace(firstNonEmptyString(taskRequestID, statusResult.ResponseID))
 	if taskRequestID == "" {
-		return nil
+		return nil, service.ChannelUsageFields{}
 	}
 	// Load create-time snapshot before claim so we can fail-closed without burning the claim
 	// when Redis lost pending and status cannot price the job.
@@ -660,7 +663,7 @@ func prepareGrokVideoCompletionBilling(
 				zap.String("request_id", taskRequestID),
 				zap.String("reason", "no create-time snapshot and status has no video.duration"),
 			)
-			return nil
+			return nil, service.ChannelUsageFields{}
 		}
 		reqLog.Error("grok_media.video_billing_without_pending",
 			zap.String("request_id", taskRequestID),
@@ -669,7 +672,7 @@ func prepareGrokVideoCompletionBilling(
 		)
 	}
 	if claimed, err := h.gatewayService.ClaimAsyncVideoBilling(ctx, reqLog, taskRequestID, subject.UserID, apiKey.ID); err != nil || !claimed {
-		return nil
+		return nil, service.ChannelUsageFields{}
 	}
 	// Re-merge with pending: resolution is request-only; model/duration fill gaps.
 	merged := *statusResult
@@ -719,7 +722,7 @@ func prepareGrokVideoCompletionBilling(
 			merged.Duration = e2e
 		}
 	}
-	return &merged
+	return &merged, service.AsyncVideoCompletionUsageFields(&merged, pending)
 }
 
 // resolveReferencedMediaTaskAccount 把请求引用的既有任务解析到创建它们的账号：用的是与查询/删除
@@ -750,6 +753,17 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
+// grokMediaRequestUsageFields 是媒体请求用量归因的唯一口径：OriginalModel 记客户端请求的模型——composite
+// 分组下 body 已被改写为具体模型，公开别名需从 context 取回，与其他端点的用量归因口径一致；
+// ChannelMappedModel 记映射后的模型（计费不受影响：BillingModelSource 为空不会触发来源覆盖）。
+// 异步视频任务在创建时按它记进快照，完成计费时由 service.AsyncVideoCompletionUsageFields 原样取回。
+func grokMediaRequestUsageFields(c *gin.Context, requestModel string) service.ChannelUsageFields {
+	return service.ChannelUsageFields{
+		OriginalModel:      clientRequestedModel(c, requestModel),
+		ChannelMappedModel: requestModel,
+	}
+}
+
 func recordGrokMediaUsage(
 	c *gin.Context,
 	h *OpenAIGatewayHandler,
@@ -759,7 +773,7 @@ func recordGrokMediaUsage(
 	subscription *service.UserSubscription,
 	account *service.Account,
 	result *service.OpenAIForwardResult,
-	requestModel string,
+	usageFields service.ChannelUsageFields,
 	body []byte,
 	requestID string,
 ) {
@@ -773,13 +787,6 @@ func recordGrokMediaUsage(
 	inboundEndpoint := GetInboundEndpoint(c)
 	upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 	quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
-	// OriginalModel 记录客户端请求的模型：composite 分组下 body 已被改写为具体模型，
-	// 公开别名需从 context 取回，与其他端点的用量归因口径一致（计费不受影响：
-	// BillingModelSource 为空不会触发来源覆盖）。
-	channelUsageFields := service.ChannelUsageFields{
-		OriginalModel:      clientRequestedModel(c, requestModel),
-		ChannelMappedModel: requestModel,
-	}
 	// Async video: force durable task request id and release claim if billing fails.
 	videoTaskID := ""
 	if result != nil && (result.VideoCount > 0 || service.IsSeedanceTaskKey(result.ResponseID)) {
@@ -807,7 +814,7 @@ func recordGrokMediaUsage(
 			APIKeyService:      h.apiKeyService,
 			QuotaPlatform:      quotaPlatform,
 			SessionID:          sessionID,
-			ChannelUsageFields: channelUsageFields,
+			ChannelUsageFields: usageFields,
 		}); err != nil {
 			if videoTaskID != "" {
 				if releaseErr := h.gatewayService.ReleaseGrokVideoBilling(ctx, videoTaskID, subject.UserID, apiKey.ID); releaseErr != nil {
@@ -825,7 +832,7 @@ func recordGrokMediaUsage(
 				zap.Int64("user_id", subject.UserID),
 				zap.Int64("api_key_id", apiKey.ID),
 				zap.Any("group_id", apiKey.GroupID),
-				zap.String("model", requestModel),
+				zap.String("model", usageFields.ChannelMappedModel),
 				zap.Int64("account_id", account.ID),
 			).Error("grok_media.record_usage_failed", zap.Error(err))
 			reqLog.Debug("grok_media.record_usage_failed", zap.Error(err))

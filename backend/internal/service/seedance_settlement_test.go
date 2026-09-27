@@ -293,3 +293,31 @@ func TestSeedanceSettlementBillsThePriceTier(t *testing.T) {
 	require.Equal(t, seedanceVariantTestModel+"@1080p+video", f.recorded[0].Model)
 	require.False(t, f.pending())
 }
+
+// 后台补查落的用量行：model 是计价档，请求模型是客户端创建任务时请求的模型（走真实的 RecordUsage）。
+func TestSeedanceSettlementRecordsTheRequestedModelWithoutTheTier(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		originalModel string
+		wantRequested string
+	}{
+		{"client used a public alias", "seedance-video", "seedance-video"},
+		{"snapshot without the client's model", "", seedanceVariantTestModel},
+	} {
+		usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
+		gateway := newOpenAIRecordUsageServiceForTest(usageRepo, &openAIRecordUsageUserRepoStub{}, &openAIRecordUsageSubRepoStub{}, nil)
+		svc := &SeedanceSettlementService{gateway: gateway}
+		group := seedanceVariantTestGroup(true)
+		key := &APIKey{ID: 8, GroupID: &group.ID, Group: group, User: &User{ID: 3}}
+		bill := &OpenAIForwardResult{Model: seedanceVariantTestModel + "@480p", BillingModel: seedanceVariantTestModel + "@480p",
+			RequestID: StableGrokVideoBillingRequestID(SeedanceTaskKey("cgt-1")), VideoResolution: "480p"}
+		bill.Usage.OutputTokens = 1000
+		pending := &GrokVideoPendingBilling{Model: seedanceVariantTestModel, OriginalModel: tc.originalModel, QuotaPlatform: PlatformOpenAI}
+
+		require.NoError(t, svc.record(context.Background(), SeedanceSettlementEntry{TaskKey: SeedanceTaskKey("cgt-1"), UserID: 3, APIKeyID: 8},
+			&Account{ID: 4, Platform: PlatformOpenAI}, key, bill, pending), tc.name)
+		require.NotNil(t, usageRepo.lastLog, tc.name)
+		require.Equal(t, seedanceVariantTestModel+"@480p", usageRepo.lastLog.Model, tc.name)
+		require.Equal(t, tc.wantRequested, usageRepo.lastLog.RequestedModel, tc.name)
+	}
+}

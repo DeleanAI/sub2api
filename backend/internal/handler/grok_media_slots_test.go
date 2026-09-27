@@ -422,10 +422,12 @@ func TestGrokMediaVideoCompletionStillClaimsBillingOnce(t *testing.T) {
 	result := &service.OpenAIForwardResult{ResponseID: "task", Model: "grok-imagine-video",
 		VideoCount: 1, VideoDurationSeconds: 6}
 	for i := range 20 {
-		bill := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", result)
+		bill, usageFields := prepareGrokVideoCompletionBilling(c.Request.Context(), h, zap.NewNop(), key, subject, "task", result)
 		if i == 0 {
 			require.NotNil(t, bill)
 			require.Equal(t, service.StableGrokVideoBillingRequestID("task"), bill.RequestID)
+			// 没有创建快照时，归因取计费名本身。
+			require.Equal(t, service.ChannelUsageFields{OriginalModel: "grok-imagine-video", ChannelMappedModel: "grok-imagine-video"}, usageFields)
 		} else {
 			require.Nil(t, bill)
 		}

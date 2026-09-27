@@ -392,6 +392,26 @@ type GrokVideoPendingBilling struct {
 	CreatedAt string `json:"created_at,omitempty"`
 }
 
+// AsyncVideoCompletionUsageFields 是异步视频任务（Grok 视频、Seedance）完成计费那条用量行的归因字段，
+// 查询路径与后台补查共用这一处。完成计费发生在查询或补查时，请求里已经没有模型名，所以请求模型 / 映射模型
+// 从创建时快照原样取回（创建时 OriginalModel 记客户端请求的公开模型，Model 记映射后的模型）。
+// 计费名（bill.Model，可能带计价档后缀 "@<档位>"）只进用量行的 model 列，不进这两列；
+// 快照缺失时按计费名去掉档位后缀推断。
+func AsyncVideoCompletionUsageFields(bill *OpenAIForwardResult, pending *GrokVideoPendingBilling) ChannelUsageFields {
+	mapped := ""
+	if bill != nil {
+		mapped = strings.TrimSpace(bill.Model)
+		if base, ok := billingVariantBase(mapped); ok {
+			mapped = base
+		}
+	}
+	if pending != nil {
+		mapped = firstNonBlank(pending.Model, mapped)
+		return ChannelUsageFields{OriginalModel: firstNonBlank(pending.OriginalModel, mapped), ChannelMappedModel: mapped}
+	}
+	return ChannelUsageFields{OriginalModel: mapped, ChannelMappedModel: mapped}
+}
+
 // GrokVideoPendingCreatedAtNow formats a create-accept timestamp for pending billing.
 func GrokVideoPendingCreatedAtNow() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)

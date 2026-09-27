@@ -179,7 +179,8 @@ func (s *OpenAIGatewayService) applySeedanceBillingVariant(ctx context.Context, 
 	variant := seedanceBillingVariant(bill.VideoResolution, pending != nil && pending.SeedanceInputVideo)
 	if variant == "" {
 		log.Warn("seedance.billing_variant_unknown", zap.String("billing_model", bill.BillingModel),
-			zap.String("note", "upstream reported no resolution; billing the model's own price"))
+			zap.String("resolution", bill.VideoResolution),
+			zap.String("note", "upstream reported no recognizable resolution; billing the model's own price"))
 		return
 	}
 	model := BillingVariantModel(bill.BillingModel, variant)
@@ -534,10 +535,9 @@ func (s *SeedanceSettlementService) record(ctx context.Context, entry SeedanceSe
 			return err
 		}
 	}
-	quotaPlatform, originalModel := "", bill.Model
+	quotaPlatform := ""
 	if pending != nil {
 		quotaPlatform = pending.QuotaPlatform
-		originalModel = firstNonBlank(pending.OriginalModel, bill.Model)
 	}
 	if quotaPlatform == "" {
 		quotaPlatform = QuotaPlatform(ctx, apiKey)
@@ -553,6 +553,6 @@ func (s *SeedanceSettlementService) record(ctx context.Context, entry SeedanceSe
 		RequestPayloadHash: HashUsageRequestPayload([]byte(entry.TaskKey)),
 		APIKeyService:      s.apiKeys,
 		QuotaPlatform:      quotaPlatform,
-		ChannelUsageFields: ChannelUsageFields{OriginalModel: originalModel, ChannelMappedModel: bill.Model},
+		ChannelUsageFields: AsyncVideoCompletionUsageFields(bill, pending),
 	})
 }
