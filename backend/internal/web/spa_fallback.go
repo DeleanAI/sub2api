@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http"
 	"strings"
 	"sync"
 
@@ -13,10 +14,23 @@ type RouteTable interface {
 	Routes() gin.RoutesInfo
 }
 
+// SiteRootPath 是站点首页。GET/HEAD 永远由页面应答；API 只能用别的方法挂在根上（方舟 OpenAPI 的 POST /?Action=…）。
+const SiteRootPath = "/"
+
+// ServesPages 报告这个方法的请求能不能由页面应答：页面与静态文件只用 GET/HEAD 取（浏览器导航与资源加载）。
+func ServesPages(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
+}
+
 // SPAFallback 把"返回前端页面或静态文件"的处理器 serve 包成只接路由表不要的请求。
 // 两个前端入口（FrontendServer.Middleware 与安装向导用的 ServeEmbeddedFrontend）都建立在它上面。
 //
-// 以下请求一律交给后面的处理链（路由自己的处理器，或 gin 的 404），serve 不会被调用：
+// 只有 GET/HEAD（ServesPages）会拿到页面。其他方法一律交给后面的处理链：过去任何方法打到未知路径都得到 200 +
+// index.html，调用方以为调用成功了（方舟素材库的 POST /?Action=… 就是这样被吞掉的）。GET/HEAD 按下面的顺序判定：
+//
+//   - 站点根 SiteRootPath 永远是首页。
+//
+// 以下 GET/HEAD 请求交给后面的处理链（路由自己的处理器，或 gin 的 404），serve 不会被调用：
 //
 //   - 路径属于路由表，不论方法。主服务把前端中间件挂在 registerRoutes 之前，于是它出现在每一条
 //     已注册路由的处理链里；过去只靠手写名单放行，名单外的已注册路由（POST /chat/completions、
@@ -30,11 +44,16 @@ func SPAFallback(table RouteTable, serve gin.HandlerFunc) gin.HandlerFunc {
 	routed := &routedPaths{table: table}
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		if c.FullPath() != "" || routed.match(path) || shouldBypassEmbeddedFrontend(path) {
+		switch {
+		case !ServesPages(c.Request.Method):
 			c.Next()
-			return
+		case path == SiteRootPath:
+			serve(c)
+		case c.FullPath() != "" || routed.match(path) || shouldBypassEmbeddedFrontend(path):
+			c.Next()
+		default:
+			serve(c)
 		}
-		serve(c)
 	}
 }
 

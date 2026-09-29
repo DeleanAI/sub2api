@@ -24,7 +24,8 @@ func spaFallbackTestRouter() *gin.Engine {
 	return router
 }
 
-// 四种结局：路由表认领 → 交给路由；路径属于路由表但方法不对 → 404；API 命名空间里的未知路径 → 404；其余 → 页面。
+// 结局：非 GET/HEAD → 交给路由或 404，永远不是页面；站点根的 GET/HEAD → 首页；路由表认领 → 交给路由；
+// 路径属于路由表但方法不对 → 404；API 命名空间里的未知路径 → 404；其余 → 页面。
 func TestSPAFallbackDecidesByRouteTableThenReservedNamespaces(t *testing.T) {
 	router := spaFallbackTestRouter()
 	reached := ""
@@ -35,6 +36,7 @@ func TestSPAFallbackDecidesByRouteTableThenReservedNamespaces(t *testing.T) {
 	router.POST("/chat/completions", handler)
 	router.GET("/custom-voices/:voice_id", handler)
 	router.POST("/responses/*subpath", handler)
+	router.POST(SiteRootPath, handler)
 
 	cases := []struct {
 		method, path, wantReached string
@@ -52,6 +54,13 @@ func TestSPAFallbackDecidesByRouteTableThenReservedNamespaces(t *testing.T) {
 		{method: http.MethodPost, path: "/v1/chat/completion", wantStatus: http.StatusNotFound},
 		{method: http.MethodPost, path: "/v3/contents/generation/tasks", wantStatus: http.StatusNotFound},
 		{method: http.MethodHead, path: probe.ReadinessPath, wantStatus: http.StatusNotFound},
+		// 非 GET/HEAD 永远不拿页面：未知路径 404，站点根上的 API 照常到达。
+		{method: http.MethodPost, path: "/dashboard", wantStatus: http.StatusNotFound},
+		{method: http.MethodOptions, path: "/no-such-page", wantStatus: http.StatusNotFound},
+		{method: http.MethodPost, path: "/", wantReached: "/", wantStatus: http.StatusNoContent},
+		{method: http.MethodPut, path: "/", wantStatus: http.StatusNotFound},
+		// 站点根的 GET/HEAD 永远是首页，哪怕根上挂着别的方法的 API。
+		{method: http.MethodHead, path: "/", wantStatus: http.StatusOK, wantPage: true},
 		// 其余才归页面。
 		{method: http.MethodGet, path: "/dashboard", wantStatus: http.StatusOK, wantPage: true},
 		{method: http.MethodGet, path: "/custom-voices", wantStatus: http.StatusOK, wantPage: true},

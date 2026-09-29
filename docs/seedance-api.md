@@ -52,4 +52,25 @@ curl -X DELETE "$SUB2API_BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \
 - 不开放上游的任务列表接口，防止共享账号的任务泄露给其他用户。删除遵循上游语义，不自动退款。
 - 异步创建的上游错误不自动重试，以免重复创建付费任务。
 
+## 素材库（私域虚拟人像库）
+
+方舟的素材库接口是管控面 OpenAPI，挂在站点根上：`POST /?Action=<Action>&Version=2024-01-01`，参数放在 JSON 请求体里。鉴权用网关的 API Key（`Authorization: Bearer`，不支持火山 AK/SK 签名），账号调度与任务接口相同（Key 所在分组里具备 seedance 能力的账号）。
+
+```bash
+curl -X POST "$SUB2API_BASE_URL/?Action=CreateAssetGroup&Version=2024-01-01" \
+  -H "Authorization: Bearer $SUB2API_KEY" -H "Content-Type: application/json" \
+  -d '{"Name":"figure_group_1","Description":"Figure group 1"}'
+
+curl -X POST "$SUB2API_BASE_URL/?Action=ListAssets&Version=2024-01-01" \
+  -H "Authorization: Bearer $SUB2API_KEY" -H "Content-Type: application/json" \
+  -d '{"Filter":{"GroupType":"AIGC","GroupIds":["group-…"]},"PageNumber":1,"PageSize":20}'
+```
+
+- 开放的 Action：`CreateAssetGroup`、`CreateAsset`、`ListAssetGroups`、`ListAssets`、`GetAssetGroup`、`GetAsset`、`UpdateAssetGroup`、`UpdateAsset`、`DeleteAssetGroup`、`DeleteAsset`（官方 API 参考 2024-01-01 版的全部接口）。其他 Action 或版本返回 400 `InvalidActionOrVersion`；真人人像的认证与入库走方舟控制台扫码授权，没有 OpenAPI。
+- 请求体与上游的回答原样透传（素材 ID、组 ID 即上游的原始 ID），生成时在 `content.<模态>_url.url` 里写 `asset://<素材 ID>` 引用。网关自己的错误同样按 OpenAPI 格式返回（`ResponseMetadata.Error.Code / Message`）。
+- 素材按公开信息对待：同一上游账号下，各调用方建的素材组与素材彼此可见。
+- 列表接口上游要求 `Filter.GroupType`（当前只有 `AIGC`）。
+- 受 RPM、Key 额度窗口与用户/账号并发限制；不计费（没有上游对素材接口收费的依据）。每次调用记审计日志 `seedance.asset_action`，开启请求负载审计时请求与响应体另有记录。
+- 前端页面只响应 GET/HEAD：`GET /` 仍是首页；任何非 GET/HEAD 请求都不会再拿到页面，未注册的路径返回 404。
+
 协议依据：[火山官方 Go SDK](https://github.com/volcengine/volcengine-go-sdk/blob/master/service/arkruntime/model/content_generation.go)、[创建任务文档](https://www.volcengine.com/docs/82379/1520757)、[查询任务文档](https://www.volcengine.com/docs/82379/1521309)。

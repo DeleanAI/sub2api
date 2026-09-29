@@ -9,17 +9,28 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// seedanceGroupAllowed：Seedance（任务与素材库）只对 OpenAI 或组合分组开放——Seedance 账号是 OpenAI 平台的 API Key 账号。
+func seedanceGroupAllowed(group *service.Group) bool {
+	return group != nil && (group.Platform == service.PlatformOpenAI || group.Platform == service.PlatformComposite)
+}
+
+// seedanceJSONContentType：带请求体的 Seedance 请求只收 JSON；没写 Content-Type 的按 JSON 处理。
+func seedanceJSONContentType(c *gin.Context) bool {
+	if c.Request.Method != http.MethodPost || c.GetHeader("Content-Type") == "" {
+		return true
+	}
+	mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	return err == nil && mediaType == "application/json"
+}
+
 // SeedanceTasks exposes Ark's native asynchronous video task protocol.
 func (h *OpenAIGatewayHandler) SeedanceTasks(c *gin.Context) {
-	if c.Request.Method == http.MethodPost && c.GetHeader("Content-Type") != "" {
-		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
-		if err != nil || mediaType != "application/json" {
-			h.errorResponse(c, http.StatusUnsupportedMediaType, "invalid_request_error", "Seedance requires application/json")
-			return
-		}
+	if !seedanceJSONContentType(c) {
+		h.errorResponse(c, http.StatusUnsupportedMediaType, "invalid_request_error", "Seedance requires application/json")
+		return
 	}
 	key, ok := middleware.GetAPIKeyFromContext(c)
-	if !ok || key.Group == nil || (key.Group.Platform != service.PlatformOpenAI && key.Group.Platform != service.PlatformComposite) {
+	if !ok || !seedanceGroupAllowed(key.Group) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", "Seedance requires an OpenAI or composite group")
 		return
 	}

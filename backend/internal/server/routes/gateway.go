@@ -381,6 +381,8 @@ func RegisterGatewayRoutes(
 		rootRoute(http.MethodGet, prefix+"/contents/generations/tasks/:task_id", bodyLimit, h.OpenAIGateway.SeedanceTasks)
 		rootRoute(http.MethodDelete, prefix+"/contents/generations/tasks/:task_id", bodyLimit, h.OpenAIGateway.SeedanceTasks)
 	}
+	// 方舟素材库（管控面 OpenAPI）挂在站点根上：POST /?Action=…&Version=…。GET / 仍是首页（见 web.SPAFallback）。
+	rootRoute(http.MethodPost, "/", bodyLimit, h.OpenAIGateway.SeedanceAssets)
 	rootRoute(http.MethodPost, "/responses", bodyLimit, responsesHandler)
 	rootRoute(http.MethodPost, "/responses/*subpath", bodyLimit, guardResponsesSubpath(responsesHandler))
 	rootRoute(http.MethodPost, "/alpha/search", textBodyLimit, h.OpenAIGateway.AlphaSearch)

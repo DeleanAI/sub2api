@@ -25,6 +25,15 @@ func TestSeedanceNativeRoutes(t *testing.T) {
 	}
 }
 
+// 素材库挂在站点根上：POST /?Action=… 必须到达素材库处理器（这里依赖未装配，回的是它自己的方舟格式错误，
+// 而不是 404 或页面）。
+func TestSeedanceAssetRouteReachesHandler(t *testing.T) {
+	w := httptest.NewRecorder()
+	newGatewayRoutesTestRouter(service.PlatformOpenAI).ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/?Action=ListAssetGroups&Version=2024-01-01", strings.NewReader(`{"Filter":{"GroupType":"AIGC"}}`)))
+	require.NotEqual(t, http.StatusNotFound, w.Code)
+	require.Contains(t, w.Body.String(), `"ResponseMetadata"`, w.Body.String())
+}
+
 func TestSeedanceRejectsOtherPlatforms(t *testing.T) {
 	for _, platform := range []string{service.PlatformGrok, service.PlatformAnthropic, service.PlatformGemini} {
 		w := httptest.NewRecorder()

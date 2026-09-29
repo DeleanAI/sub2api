@@ -87,13 +87,22 @@ func ParseSeedanceRequest(body []byte) (GrokMediaRequestInfo, error) {
 	return info, nil
 }
 
-func buildSeedanceURL(base string, endpoint GrokMediaEndpoint, taskID string) (string, error) {
+// splitSeedanceBase 把账号的 base_url 拆成方舟 API 的根与数据面版本段。base_url 可以是源站、代理前缀，
+// 也可以已经带着版本段（/api/v3、/v3）；不带时数据面取 /api/v3。任务接口挂在「根 + 版本段」下，
+// 素材库等管控面 OpenAPI 挂在根上（buildSeedanceAssetURL）。
+func splitSeedanceBase(base string) (root, dataPlane string) {
 	base = strings.TrimRight(base, "/")
-	// Accept an origin, a proxy prefix, or the full Ark API base.
-	if !strings.HasSuffix(base, "/api/v3") && !strings.HasSuffix(base, "/v3") {
-		base += "/api/v3"
+	for _, suffix := range []string{"/api/v3", "/v3"} {
+		if strings.HasSuffix(base, suffix) {
+			return strings.TrimSuffix(base, suffix), suffix
+		}
 	}
-	base += "/contents/generations/tasks"
+	return base, "/api/v3"
+}
+
+func buildSeedanceURL(base string, endpoint GrokMediaEndpoint, taskID string) (string, error) {
+	root, dataPlane := splitSeedanceBase(base)
+	base = root + dataPlane + "/contents/generations/tasks"
 	if endpoint != SeedanceEndpointCreate {
 		if err := validateUpstreamPathSegment("Seedance task ID", taskID); err != nil || strings.TrimSpace(taskID) == "" {
 			return "", fmt.Errorf("invalid Seedance task ID")
@@ -103,19 +112,11 @@ func buildSeedanceURL(base string, endpoint GrokMediaEndpoint, taskID string) (s
 	return base, nil
 }
 
-// seedanceUpstreamCall 执行一次方舟任务接口调用。地址、鉴权、代理与读响应体只写这一处，
-// 请求路径（ForwardSeedance）与后台结算（querySeedanceTask）共用；c 为 nil 时不记 ops 指标。
+// seedanceUpstreamCall 执行一次方舟任务接口调用：请求路径（ForwardSeedance）与后台结算（querySeedanceTask）共用；
+// c 为 nil 时不记 ops 指标。
 func (s *OpenAIGatewayService) seedanceUpstreamCall(ctx context.Context, c *gin.Context, account *Account, endpoint GrokMediaEndpoint, taskKey string, body []byte) (*http.Response, []byte, time.Duration, error) {
-	if !account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilitySeedance) || !endpoint.IsSeedance() {
-		return nil, nil, 0, fmt.Errorf("seedance requires an OpenAI API key account with a custom base URL")
-	}
-	base, err := s.validateUpstreamBaseURL(account.GetCredential("base_url"))
-	if err != nil {
-		return nil, nil, 0, err
-	}
-	target, err := buildSeedanceURL(base, endpoint, seedanceUpstreamTaskID(taskKey))
-	if err != nil {
-		return nil, nil, 0, err
+	if !endpoint.IsSeedance() {
+		return nil, nil, 0, fmt.Errorf("not a Seedance task endpoint: %s", endpoint)
 	}
 	method := http.MethodGet
 	switch endpoint {
@@ -124,12 +125,31 @@ func (s *OpenAIGatewayService) seedanceUpstreamCall(ctx context.Context, c *gin.
 	case SeedanceEndpointDelete:
 		method = http.MethodDelete
 	}
+	return s.seedanceAccountRequest(ctx, c, account, method, func(base string) (string, error) {
+		return buildSeedanceURL(base, endpoint, seedanceUpstreamTaskID(taskKey))
+	}, body)
+}
+
+// seedanceAccountRequest 用 Seedance 账号调一次上游：账号资格、地址校验、鉴权、代理与读响应体只写这一处，
+// 任务接口与素材接口（seedance_asset.go）共用。target 由账号的 base_url 算出具体地址。
+func (s *OpenAIGatewayService) seedanceAccountRequest(ctx context.Context, c *gin.Context, account *Account, method string, target func(base string) (string, error), body []byte) (*http.Response, []byte, time.Duration, error) {
+	if !account.SupportsOpenAIEndpointCapability(OpenAIEndpointCapabilitySeedance) {
+		return nil, nil, 0, fmt.Errorf("seedance requires an OpenAI API key account with a custom base URL")
+	}
+	base, err := s.validateUpstreamBaseURL(account.GetCredential("base_url"))
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	url, err := target(base)
+	if err != nil {
+		return nil, nil, 0, err
+	}
 	token := strings.TrimSpace(account.GetCredential("api_key"))
 	if token == "" {
 		return nil, nil, 0, fmt.Errorf("seedance account missing api_key")
 	}
 	started := time.Now()
-	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, 0, err
 	}

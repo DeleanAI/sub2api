@@ -59,7 +59,8 @@ var spaFallbackProbeMethods = []string{
 
 // 前端中间件在每一条已注册路由的处理链里（它先于 registerRoutes 挂载）。曾有 22 条已注册路由（方法+路径）
 // 因为不在手写放行名单里被当成页面返回 200 HTML（POST /chat/completions、/v3/contents/generations/tasks 等）。
-// 遍历生产的整张路由表：每条路由都必须穿过兜底到达自己的处理链；同一路径换任何方法也不许由页面应答。
+// 遍历生产的整张路由表：每条路由都必须穿过兜底到达自己的处理链；同一路径换任何方法也不许由页面应答——
+// 唯一的例外是站点根的 GET/HEAD，它永远是首页，所以根上也不许注册 GET/HEAD 路由（注册了也永远到不了）。
 // 新加的路由当天就被覆盖。
 func TestSPAFallbackYieldsEveryRegisteredRoute(t *testing.T) {
 	r, reached := spaFallbackRouter(t)
@@ -67,10 +68,15 @@ func TestSPAFallbackYieldsEveryRegisteredRoute(t *testing.T) {
 	require.Greater(t, len(routes), 100, "路由表没注册上，遍历就没有意义")
 	for _, route := range routes {
 		path := concreteRoutePath(route.Path)
+		require.False(t, path == web.SiteRootPath && web.ServesPages(route.Method), "站点根不许注册 %s 路由：GET/HEAD 永远由首页应答", route.Method)
 		for _, method := range spaFallbackProbeMethods {
 			*reached = ""
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+			if path == web.SiteRootPath && web.ServesPages(method) {
+				require.Equal(t, spaFallbackRoutesTestPage, w.Body.String(), "%s %s 必须是首页", method, path)
+				continue
+			}
 			require.NotEqual(t, spaFallbackRoutesTestPage, w.Body.String(), "%s %s（路由 %s %s）被当成页面应答", method, path, route.Method, route.Path)
 			if method == route.Method {
 				require.Equal(t, route.Path, *reached, "%s %s 没有到达自己的处理链", route.Method, route.Path)
