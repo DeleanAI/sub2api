@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 )
@@ -19,8 +20,28 @@ type ModelAvailabilityDiagnosis struct {
 	// the platform plus mixed-scheduled Antigravity accounts).
 	HasAccountsInPool bool
 	// HasModelSupport is true if at least one account's model mapping admits
-	// the requested model.
+	// the requested model and its upstream has not reported, within the
+	// cooldown, that it cannot serve that model.
 	HasModelSupport bool
+	// UpstreamUnservedUntil is set when accounts are configured to serve the
+	// model but their upstream reported that it cannot (a model-not-found
+	// cooldown, see upstreamModelUnservedReasons). Those accounts do not count
+	// toward HasModelSupport; this is the earliest time one of them will be
+	// tried again.
+	UpstreamUnservedUntil *time.Time
+}
+
+// noteConfiguredSupport 记下一个按配置能服务该模型的候选账号，返回它是否算支持者：上游在冷却期内明确答过
+// 服务不了的不算（那不是限流，重试到冷却结束前都不会成功），只记下最早何时重新尝试。两个诊断器共用这一条规则。
+func (d *ModelAvailabilityDiagnosis) noteConfiguredSupport(ctx context.Context, account *Account, requestedModel string) bool {
+	if until := account.upstreamUnservedUntil(ctx, requestedModel); until != nil {
+		if d.UpstreamUnservedUntil == nil || until.Before(*d.UpstreamUnservedUntil) {
+			d.UpstreamUnservedUntil = until
+		}
+		return false
+	}
+	d.HasModelSupport = true
+	return true
 }
 
 // ModelAvailabilityDiagnoser is implemented by gateway services that can
@@ -102,8 +123,7 @@ func (s *GatewayService) DiagnoseModelAvailabilityForPlatform(
 			continue
 		}
 		diag.HasAccountsInPool = true
-		if s.isModelSupportedByAccountWithContext(ctx, &accounts[i], requestedModel) {
-			diag.HasModelSupport = true
+		if s.isModelSupportedByAccountWithContext(ctx, &accounts[i], requestedModel) && diag.noteConfiguredSupport(ctx, &accounts[i], requestedModel) {
 			return diag
 		}
 	}

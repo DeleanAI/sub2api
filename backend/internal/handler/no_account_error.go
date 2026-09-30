@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -123,10 +124,17 @@ func classifyNoAccountError(
 
 	result := diag.DiagnoseModelAvailabilityForPlatform(ctx, apiKey.GroupID, routingModel, platform)
 	if result.HasAccountsInPool && !result.HasModelSupport {
+		message := fmt.Sprintf("Model %q is not supported by any configured account in this group", displayModel)
+		if result.UpstreamUnservedUntil != nil {
+			// 配置上有账号能服务，但它们的上游刚答过服务不了（模型不存在 / 无权使用）：照上游的回答给 404，
+			// 并说明网关何时会再试，而不是把它说成限流。
+			message = fmt.Sprintf("Model %q is not available in this group: the upstream reported it as unsupported (will retry after %s)",
+				displayModel, result.UpstreamUnservedUntil.UTC().Format(time.RFC3339))
+		}
 		return noAccountErrorClassification{
 			Status:        http.StatusNotFound,
 			ErrType:       "model_not_found",
-			Message:       fmt.Sprintf("Model %q is not supported by any configured account in this group", displayModel),
+			Message:       message,
 			ModelNotFound: true,
 		}
 	}

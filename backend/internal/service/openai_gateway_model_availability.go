@@ -60,8 +60,7 @@ func (s *OpenAIGatewayService) DiagnoseModelAvailabilityForPlatform(
 		// (openai_account_scheduler.isAccountRequestCompatible): empty
 		// model_mapping accepts everything; otherwise the explicit / wildcard
 		// mapping must match.
-		if accounts[i].IsModelSupported(requestedModel) {
-			diag.HasModelSupport = true
+		if accounts[i].IsModelSupported(requestedModel) && diag.noteConfiguredSupport(ctx, &accounts[i], requestedModel) {
 			return diag
 		}
 	}

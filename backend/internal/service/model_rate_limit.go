@@ -166,6 +166,36 @@ func antigravityModelRateLimitKeys(model string) []string {
 	return keys
 }
 
+// upstreamUnservedUntil 返回上游在冷却期内明确表示本账号服务不了该模型的冷却截止时间（冷却键与
+// HandleUpstreamModelNotFound 写入时同一口径）；没有这类冷却、或已过期时返回 nil。
+func (a *Account) upstreamUnservedUntil(ctx context.Context, requestedModel string) *time.Time {
+	key := modelRateLimitKeyForUpstreamModelNotFound(ctx, a, requestedModel)
+	if key == "" || !upstreamModelUnservedReasons[a.modelRateLimitReason(key)] {
+		return nil
+	}
+	resetAt := a.modelRateLimitResetAt(key)
+	if resetAt == nil || !time.Now().Before(*resetAt) {
+		return nil
+	}
+	return resetAt
+}
+
+func (a *Account) modelRateLimitReason(scope string) string {
+	if a == nil || a.Extra == nil || scope == "" {
+		return ""
+	}
+	rawLimits, ok := a.Extra[modelRateLimitsKey].(map[string]any)
+	if !ok {
+		return ""
+	}
+	rawLimit, ok := rawLimits[scope].(map[string]any)
+	if !ok {
+		return ""
+	}
+	reason, _ := rawLimit["reason"].(string)
+	return strings.TrimSpace(reason)
+}
+
 func (a *Account) modelRateLimitResetAt(scope string) *time.Time {
 	if a == nil || a.Extra == nil || scope == "" {
 		return nil

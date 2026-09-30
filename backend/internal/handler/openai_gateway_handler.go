@@ -3454,6 +3454,10 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
+	if status, errType, errMsg, ok := service.UpstreamModelUnservedClientError(statusCode, responseBody); ok {
+		h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+		return
+	}
 	// 使用默认的错误映射
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)

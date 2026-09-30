@@ -2482,6 +2482,17 @@ const upstreamModelNotFoundReason = "upstream_404_model_not_found"
 const upstreamModelNotFound401Reason = "upstream_401_model_not_found"
 const upstreamCodexPlanGatedModelCooldown = 30 * time.Minute
 const upstreamCodexPlanGatedModelReason = "upstream_400_codex_plan_gated_model"
+
+// upstreamModelUnservedReasons 声明「上游确定性地表示这个账号服务不了该模型」的冷却原因，只由
+// HandleUpstreamModelNotFound 写入。这类冷却不是限流：冷却期内该（账号, 模型）等同于不支持，模型可用性诊断
+// 不把它算作支持者（Account.upstreamUnservedUntil），于是无账号可用时应答 404 model_not_found——与上游自己的
+// 回答一致——而不是暗示「稍后重试」的 429 / 503。
+var upstreamModelUnservedReasons = map[string]bool{
+	upstreamModelNotFoundReason:       true,
+	upstreamModelNotFound401Reason:    true,
+	upstreamCodexPlanGatedModelReason: true,
+}
+
 const tempUnschedBodyMaxBytes = 64 << 10
 const tempUnschedMessageMaxBytes = 2048
 
@@ -2501,14 +2512,21 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 		return false
 	}
 	var cooldown time.Duration
-	var reason string
-	switch {
-	case isUpstreamModelNotFoundError(statusCode, responseBody):
-		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFoundReason
-	case statusCode == http.StatusUnauthorized && account.Type == AccountTypeAPIKey && account.IsOpenAICompatible() && isOpenAICompatibleModelNotFoundBody(responseBody):
-		cooldown, reason = upstreamModelNotFoundCooldown, upstreamModelNotFound401Reason
-	case isOpenAIOAuthAccount(account) && isOpenAICodexPlanGatedModelError(statusCode, responseBody):
-		cooldown, reason = upstreamCodexPlanGatedModelCooldown, upstreamCodexPlanGatedModelReason
+	reason := upstreamModelUnservedKind(statusCode, responseBody)
+	switch reason {
+	case upstreamModelNotFoundReason:
+		cooldown = upstreamModelNotFoundCooldown
+	case upstreamModelNotFound401Reason:
+		// 401 形态只对 API Key 账号写模型冷却：OAuth 账号的 401 交给认证失败的处理（刷新令牌等），不被模型冷却吞掉。
+		if account.Type != AccountTypeAPIKey || !account.IsOpenAICompatible() {
+			return false
+		}
+		cooldown = upstreamModelNotFoundCooldown
+	case upstreamCodexPlanGatedModelReason:
+		if !isOpenAIOAuthAccount(account) {
+			return false
+		}
+		cooldown = upstreamCodexPlanGatedModelCooldown
 	default:
 		return false
 	}

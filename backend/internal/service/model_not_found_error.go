@@ -18,6 +18,31 @@ func isUpstreamModelNotFoundError(statusCode int, body []byte) bool {
 	return containsModelNotFoundKeyword(normalized)
 }
 
+// upstreamModelUnservedKind 判断上游这次回答是不是「服务不了该模型」，返回对应的冷却原因
+// （见 upstreamModelUnservedReasons）；不是则返回空串。写模型冷却（HandleUpstreamModelNotFound，另按账号类型收窄）
+// 与故障转移用尽时给客户端的回答（UpstreamModelUnservedClientError）共用这一个判定。
+func upstreamModelUnservedKind(statusCode int, body []byte) string {
+	switch {
+	case isUpstreamModelNotFoundError(statusCode, body):
+		return upstreamModelNotFoundReason
+	case statusCode == http.StatusUnauthorized && isOpenAICompatibleModelNotFoundBody(body):
+		return upstreamModelNotFound401Reason
+	case isOpenAICodexPlanGatedModelError(statusCode, body):
+		return upstreamCodexPlanGatedModelReason
+	}
+	return ""
+}
+
+// UpstreamModelUnservedClientError 给出故障转移用尽时应转给客户端的回答：最后一个上游回答若是「服务不了该模型」，
+// 应答 404 model_not_found——官方 API 对不存在或无权使用的模型都回 404——而不是把它说成 502「上游失败」或
+// 「上游认证失败」。冷却期内的后续请求由模型可用性诊断给出同样的 404（ModelAvailabilityDiagnosis.UpstreamUnservedUntil）。
+func UpstreamModelUnservedClientError(statusCode int, body []byte) (status int, errType, message string, ok bool) {
+	if upstreamModelUnservedKind(statusCode, body) == "" {
+		return 0, "", "", false
+	}
+	return http.StatusNotFound, "model_not_found", "The requested model is not available in this group: the upstream reported it as unsupported", true
+}
+
 func isModelNotFoundError(statusCode int, body []byte) bool {
 	return isUpstreamModelNotFoundError(statusCode, body) || statusCode == http.StatusNotFound
 }
