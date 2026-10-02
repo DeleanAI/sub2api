@@ -94,7 +94,7 @@ func TestGatewayAnthropicCompatReasoningPricingUsesForwardedEffort(t *testing.T)
 						require.False(t, OpenAIBodyHasThinkingEnabled(upstream.requestBodies[0]))
 					}
 
-					billing := NewBillingService(&config.Config{}, nil)
+					billing := newTestBillingService()
 					group := &Group{ID: 1, Platform: PlatformAnthropic, ModelPricing: []ChannelModelPricing{{
 						Models: []string{tc.model}, BillingMode: BillingModeToken,
 						InputPrice: testPtrFloat64(1e-6), OutputPrice: testPtrFloat64(2e-6),

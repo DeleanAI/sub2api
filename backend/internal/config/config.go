@@ -702,7 +702,10 @@ type PricingConfig struct {
 	DataDir string `mapstructure:"data_dir"`
 	// 回退文件路径
 	FallbackFile string `mapstructure:"fallback_file"`
-	// 覆盖补丁文件路径（可选）：条目按字段浅合并覆盖目录/回退数据，优先级最高
+	// 官方价目录文件路径：其中每个模型（及别名、快照写法）整条替换目录/回退数据，是这些模型的唯一价格来源；
+	// 配置了就必须存在且通过校验，否则价格服务加载失败。格式见 resources/model-pricing/README.md。
+	OfficialFile string `mapstructure:"official_file"`
+	// 覆盖补丁文件路径（可选）：条目按字段浅合并覆盖目录/回退数据（对官方价目录里的模型不生效）
 	OverrideFile string `mapstructure:"override_file"`
 	// 更新间隔（小时）
 	UpdateIntervalHours int `mapstructure:"update_interval_hours"`
@@ -2447,6 +2450,7 @@ func setDefaults() {
 	// 运行期数据目录跟随 DATA_DIR / /app/data，而不是固定的 CWD 相对路径；见 data_dir.go。
 	viper.SetDefault("pricing.data_dir", DefaultRuntimeDataDir())
 	viper.SetDefault("pricing.fallback_file", "./resources/model-pricing/model_prices_and_context_window.json")
+	viper.SetDefault("pricing.official_file", "./resources/model-pricing/official_prices.json")
 	viper.SetDefault("pricing.override_file", "")
 	viper.SetDefault("pricing.update_interval_hours", 24)
 	viper.SetDefault("pricing.hash_check_interval_minutes", 10)

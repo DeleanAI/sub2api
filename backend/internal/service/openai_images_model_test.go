@@ -84,19 +84,17 @@ func TestOpenAIImagesRejectedDriverDoesNotCoolImageModel(t *testing.T) {
 	}
 }
 
+// GPT Image 2.5 的价来自官方价目录（含带日期快照写法）：目录里只有老 gpt-image-2 时也不会落到老价上。
 func TestGPTImage25PricingDoesNotUseLegacyImageRates(t *testing.T) {
+	svc := newOfficialPricingService(t, `{"gpt-image-2": {"input_cost_per_token": 2.5e-6, "output_cost_per_image_token": 15e-6}}`)
 	for _, model := range []string{"gpt-image-2.5-flare", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare-2026-09-08", "gpt-image-2.5-sunburst-2026-09-08"} {
-		svc := &PricingService{pricingData: map[string]*LiteLLMModelPricing{"gpt-image-2": {InputCostPerToken: 2.5e-6, OutputCostPerImageToken: 15e-6}}}
 		p := svc.GetModelPricing(model)
-		require.NotNil(t, p)
-		require.Equal(t, 5e-6, p.InputCostPerToken)
-		require.Equal(t, 8e-6, p.InputCostPerImageToken)
-		require.Equal(t, 30e-6, p.OutputCostPerImageToken)
-		require.Equal(t, 1.25e-6, p.CacheReadInputTokenCost)
+		require.NotNil(t, p, model)
+		require.InDelta(t, 5e-6, p.InputCostPerToken, 1e-18)
+		require.InDelta(t, 8e-6, p.InputCostPerImageToken, 1e-18)
+		require.InDelta(t, 30e-6, p.OutputCostPerImageToken, 1e-18)
+		require.InDelta(t, 1.25e-6, p.CacheReadInputTokenCost, 1e-18)
 		require.Zero(t, p.OutputCostPerToken)
-		custom := &LiteLLMModelPricing{InputCostPerToken: 7e-6}
-		svc.pricingData[model] = custom
-		require.Same(t, custom, svc.GetModelPricing(model), "explicit pricing must win")
 	}
 }
 

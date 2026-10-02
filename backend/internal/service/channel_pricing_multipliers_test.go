@@ -8,25 +8,35 @@ import (
 
 func pricingMultiplier(value float64) *float64 { return &value }
 
-func TestConfiguredServiceTierMultiplier(t *testing.T) {
+func TestResolveServiceTierMultiplier(t *testing.T) {
+	official := map[string]float64{"fast": 2.5, "flex": 0.5, "ultrafast": 6}
 	tests := []struct {
 		name        string
 		serviceTier string
 		pricing     *ModelPricing
 		want        float64
+		offered     bool
 	}{
-		{name: "gpt-5.5 fast", serviceTier: "fast", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(2.5)}, want: 2.5},
-		{name: "priority alias", serviceTier: "priority", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(2)}, want: 2},
-		{name: "flex configured", serviceTier: "flex", pricing: &ModelPricing{FlexMultiplier: pricingMultiplier(0.4)}, want: 0.4},
-		{name: "legacy fast default", serviceTier: "fast", pricing: &ModelPricing{}, want: 2},
-		{name: "ultrafast default", serviceTier: "ultrafast", pricing: &ModelPricing{}, want: 2},
-		{name: "ultrafast ignores fast multiplier", serviceTier: "ultrafast", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(2.5)}, want: 2},
-		{name: "legacy flex default", serviceTier: "flex", pricing: &ModelPricing{}, want: 0.5},
+		{name: "gpt-5.5 fast", serviceTier: "fast", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(2.5)}, want: 2.5, offered: true},
+		{name: "priority alias", serviceTier: "priority", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(2)}, want: 2, offered: true},
+		{name: "flex configured", serviceTier: "flex", pricing: &ModelPricing{FlexMultiplier: pricingMultiplier(0.4)}, want: 0.4, offered: true},
+		{name: "legacy fast default", serviceTier: "fast", pricing: &ModelPricing{}, want: 2, offered: true},
+		{name: "legacy ultrafast has no basis", serviceTier: "ultrafast", pricing: &ModelPricing{}, want: 1, offered: false},
+		{name: "ultrafast ignores fast multiplier", serviceTier: "ultrafast", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(2.5)}, want: 1, offered: false},
+		{name: "legacy flex default", serviceTier: "flex", pricing: &ModelPricing{}, want: 0.5, offered: true},
+		{name: "official declared ultrafast", serviceTier: "ultrafast", pricing: &ModelPricing{ServiceTierMultipliers: official}, want: 6, offered: true},
+		{name: "official declared fast via priority", serviceTier: "priority", pricing: &ModelPricing{ServiceTierMultipliers: official}, want: 2.5, offered: true},
+		{name: "channel fast beats official", serviceTier: "fast", pricing: &ModelPricing{FastMultiplier: pricingMultiplier(1), ServiceTierMultipliers: official}, want: 1, offered: true},
+		{name: "official undeclared tier bills standard", serviceTier: "flex", pricing: &ModelPricing{ServiceTierMultipliers: map[string]float64{"fast": 2}}, want: 1, offered: false},
+		{name: "official card without tiers", serviceTier: "fast", pricing: &ModelPricing{ServiceTierMultipliers: map[string]float64{}}, want: 1, offered: false},
+		{name: "standard", serviceTier: "default", pricing: &ModelPricing{ServiceTierMultipliers: map[string]float64{}}, want: 1, offered: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.InDelta(t, tt.want, configuredServiceTierMultiplier(tt.serviceTier, tt.pricing), 1e-12)
+			got, offered := resolveServiceTierMultiplier(tt.serviceTier, tt.pricing)
+			require.InDelta(t, tt.want, got, 1e-12)
+			require.Equal(t, tt.offered, offered)
 		})
 	}
 }
@@ -87,25 +97,6 @@ func TestAnthropicFastUsesDefaultMultiplierWithoutCatalogTier(t *testing.T) {
 
 	require.InDelta(t, 10, cost.InputCost, 1e-12)
 	require.InDelta(t, 50, cost.OutputCost, 1e-12)
-}
-
-func TestBuiltInModelFastDefaults(t *testing.T) {
-	service := &BillingService{fallbackPrices: make(map[string]*ModelPricing)}
-	service.initFallbackPricing()
-
-	for _, tt := range []struct {
-		model string
-		want  float64
-	}{
-		{model: "gpt-5.5", want: 2.5},
-		{model: "claude-opus-4.8", want: 2},
-		{model: "claude-opus-5", want: 2},
-	} {
-		pricing := service.fallbackPrices[tt.model]
-		require.NotNil(t, pricing)
-		require.InDelta(t, tt.want, pricing.InputPricePerTokenPriority/pricing.InputPricePerToken, 1e-12)
-		require.InDelta(t, tt.want, pricing.OutputPricePerTokenPriority/pricing.OutputPricePerToken, 1e-12)
-	}
 }
 
 func TestIntervalMultipliersApplyToChannelBase(t *testing.T) {

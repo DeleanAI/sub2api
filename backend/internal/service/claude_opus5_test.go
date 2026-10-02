@@ -50,11 +50,10 @@ func TestClaudeOpus5_FamilyFallbackDoesNotUseOpus4Rates(t *testing.T) {
 	}
 }
 
-// TestClaudeOpus5_HardcodedFallbackPricing 覆盖动态价格服务完全不可用时的
-// 硬编码兜底表。同时锁定不能被 "opus-5" 子串误伤的相邻型号。
-func TestClaudeOpus5_HardcodedFallbackPricing(t *testing.T) {
-	// pricingService 为 nil，强制走硬编码兜底表
-	svc := NewBillingService(&config.Config{}, nil)
+// TestClaudeOpus5_OfficialCatalogPricing 覆盖官方价目录里的 Opus 系列（含带日期的官方 ID），
+// 同时锁定不能被 "opus-5" 子串误伤的相邻型号。
+func TestClaudeOpus5_OfficialCatalogPricing(t *testing.T) {
+	svc := newTestBillingService()
 
 	tests := []struct {
 		model  string
@@ -63,7 +62,7 @@ func TestClaudeOpus5_HardcodedFallbackPricing(t *testing.T) {
 	}{
 		{"claude-opus-5", opus5InputPricePerToken, opus5OutputPricePerToken},
 		{"us.anthropic.claude-opus-5-v1", opus5InputPricePerToken, opus5OutputPricePerToken},
-		// 4.8 与 5 同价；修复前兜底表缺失，会掉到 claude-3-opus 的 $15/$75
+		// 4.8 与 5 同价
 		{"claude-opus-4-8", opus5InputPricePerToken, opus5OutputPricePerToken},
 		// 相邻型号不能被 "opus-5" 误匹配
 		{"claude-opus-4-5-20251101", 5e-6, 25e-6},

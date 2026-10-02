@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/stretchr/testify/require"
 )
@@ -223,7 +222,7 @@ func TestCNProviderAnthropicUsageBillsUncachedInput(t *testing.T) {
 		},
 	}
 
-	billing := NewBillingService(&config.Config{}, nil)
+	billing := newTestBillingService()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			claudeUsage := parseClaudeUsageFromResponseBody([]byte(tt.body))

@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/tidwall/gjson"
@@ -17,6 +18,11 @@ const OllamaCloudMaxTokensCapExtraKey = "ollama_max_tokens_cap"
 // ollamaCloudDefaultMaxTokensCap 是 Ollama Cloud 对输出 token 数的 provider 级硬上限
 // （约 65535），max_tokens 超过该值会被上游直接 400 拒绝；该上限与模型无关，不做模型过滤。
 const ollamaCloudDefaultMaxTokensCap = 65535
+
+// isDeepSeekModel 判断模型名是否 DeepSeek 系模型（deepseek- 前缀，大小写不敏感）。
+func isDeepSeekModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "deepseek-")
+}
 
 // clampOllamaCloudUpstreamMaxTokens 是 raw CC 出站（forwardAsRawChatCompletions 与
 // /v1/responses 降级 forwardResponsesViaRawChatCompletions 共用）的独立 token 钩子，

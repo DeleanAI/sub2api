@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -305,18 +304,12 @@ func scheduleScenarios() []scheduleScenario {
 			},
 		},
 		{
-			name: "gpt-5.6 缺 cache_write 时按策略补 1.25 倍并带阶梯", model: "gpt-5.6-sol", platform: PlatformOpenAI, groupPlatform: PlatformOpenAI,
-			group: enabledGroup(PlatformOpenAI),
-			catalog: mustCatalogFromJSON(`{"gpt-5.6-sol": {"litellm_provider": "openai", "mode": "chat",
-				"input_cost_per_token": 5e-06, "output_cost_per_token": 3e-05, "cache_read_input_token_cost": 5e-07,
-				"input_cost_per_token_above_272k_tokens": 1e-05,
-				"output_cost_per_token_above_272k_tokens": 4.5e-05,
-				"cache_read_input_token_cost_above_272k_tokens": 1e-06}}`),
-			wantBasis: ContextPricingBasisWholeRequest,
+			name: "官方价目录的 gpt-5.6-sol 带缓存写价与 272K 阶梯", model: "gpt-5.6-sol", platform: PlatformOpenAI, groupPlatform: PlatformOpenAI,
+			group: enabledGroup(PlatformOpenAI), wantBasis: ContextPricingBasisWholeRequest,
 			check: func(t *testing.T, s *ContextPricingSchedule) {
 				require.Len(t, s.Tiers, 2)
-				requireTier(t, s.Tiers[0], 0, intPtr(272000), "≤272K", p(5e-6), p(30e-6), p(6.25e-6), p(0.5e-6))
-				requireTier(t, s.Tiers[1], 272000, nil, ">272K", p(10e-6), p(45e-6), p(12.5e-6), p(1e-6))
+				requireTier(t, s.Tiers[0], 0, intPtr(272000), "≤272K", p(4e-6), p(20e-6), p(5e-6), p(0.4e-6))
+				requireTier(t, s.Tiers[1], 272000, nil, ">272K", p(8e-6), p(30e-6), p(10e-6), p(0.8e-6))
 			},
 		},
 		{
@@ -379,7 +372,7 @@ func TestResolveContextPricingSchedule_Scenarios(t *testing.T) {
 }
 
 func TestResolveContextPricingSchedule_NilResolver(t *testing.T) {
-	bs := NewBillingService(&config.Config{}, nil)
+	bs := newTestBillingService()
 	sched, err := bs.ResolveContextPricingSchedule(context.Background(), nil, ContextPricingScheduleInput{Model: "gpt-5.4"})
 	require.Error(t, err)
 	require.Nil(t, sched)

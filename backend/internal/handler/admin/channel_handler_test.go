@@ -4,6 +4,7 @@ package admin
 
 import (
 	"encoding/json"
+	"github.com/Wei-Shaw/sub2api/internal/testutil/pricingtest"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -582,16 +583,16 @@ func TestSyncPricingModels_ValidPlatform_EmptyService(t *testing.T) {
 	}
 }
 
-func setupModelDefaultPricingRouter() *gin.Engine {
+func setupModelDefaultPricingRouter(t *testing.T) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	h := &ChannelHandler{billingService: service.NewBillingService(nil, nil)}
+	h := &ChannelHandler{billingService: service.NewBillingService(nil, pricingtest.OfficialPricingService(t))}
 	router.GET("/channels/model-pricing", h.GetModelDefaultPricing)
 	return router
 }
 
 func TestGetModelDefaultPricing_ReturnsFable51CacheTTLs(t *testing.T) {
-	router := setupModelDefaultPricingRouter()
+	router := setupModelDefaultPricingRouter(t)
 	req := httptest.NewRequest(http.MethodGet, "/channels/model-pricing?model=claude-fable-5-1", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -614,8 +615,9 @@ func TestGetModelDefaultPricing_ReturnsFable51CacheTTLs(t *testing.T) {
 }
 
 func TestGetModelDefaultPricing_OmitsUnsupportedCache1hPrice(t *testing.T) {
-	router := setupModelDefaultPricingRouter()
-	req := httptest.NewRequest(http.MethodGet, "/channels/model-pricing?model=claude-sonnet-4", nil)
+	router := setupModelDefaultPricingRouter(t)
+	// OpenAI 没有 1 小时缓存写入档（官方价目录里没有 cache_write_1h）
+	req := httptest.NewRequest(http.MethodGet, "/channels/model-pricing?model=gpt-5.6-sol", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 

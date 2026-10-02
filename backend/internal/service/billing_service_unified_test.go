@@ -194,7 +194,7 @@ func channelTimeResolvedForTest(base *ModelPricing, intervals []PricingInterval)
 }
 
 func TestCalculateCostUnified_ChannelTimePricingScalesBaseAndActualCost(t *testing.T) {
-	billing := NewBillingService(&config.Config{}, nil)
+	billing := newTestBillingService()
 	resolved := channelTimeResolvedForTest(&ModelPricing{InputPricePerToken: 0.001}, nil)
 
 	cost, err := billing.CalculateCostUnified(CostInput{
@@ -218,7 +218,7 @@ func TestCalculateCostUnified_ChannelTimePricingScalesMatchingInterval(t *testin
 		&ModelPricing{InputPricePerToken: 0.001},
 		[]PricingInterval{{MinTokens: 0, InputPrice: &intervalInputPrice}},
 	)
-	billing := NewBillingService(&config.Config{}, nil)
+	billing := newTestBillingService()
 
 	cost, err := billing.CalculateCostUnified(CostInput{
 		Ctx:       context.Background(),
@@ -239,7 +239,7 @@ func TestCalculateCostUnified_ChannelTimePricingScalesBaseOnUnmatchedInterval(t 
 		&ModelPricing{InputPricePerToken: 0.001},
 		[]PricingInterval{{MinTokens: 2000, InputPrice: &intervalInputPrice}},
 	)
-	billing := NewBillingService(&config.Config{}, nil)
+	billing := newTestBillingService()
 
 	cost, err := billing.CalculateCostUnified(CostInput{
 		Ctx:       context.Background(),
@@ -257,7 +257,7 @@ func TestCalculateCostUnified_ChannelTimePricingScalesBaseOnUnmatchedInterval(t 
 func TestCalculateCostUnified_ChannelTimePricingDoesNotApplyToGroupPricing(t *testing.T) {
 	resolved := channelTimeResolvedForTest(&ModelPricing{InputPricePerToken: 0.001}, nil)
 	resolved.Source = PricingSourceGroup
-	billing := NewBillingService(&config.Config{}, nil)
+	billing := newTestBillingService()
 
 	cost, err := billing.CalculateCostUnified(CostInput{
 		Ctx:       context.Background(),
@@ -273,7 +273,7 @@ func TestCalculateCostUnified_ChannelTimePricingDoesNotApplyToGroupPricing(t *te
 
 func TestCalculateCostUnified_ChannelTimePricingDoesNotApplyOutsideMatchingTime(t *testing.T) {
 	resolved := channelTimeResolvedForTest(&ModelPricing{InputPricePerToken: 0.001}, nil)
-	billing := NewBillingService(&config.Config{}, nil)
+	billing := newTestBillingService()
 
 	for _, pricingAt := range []time.Time{
 		time.Time{},

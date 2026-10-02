@@ -233,7 +233,7 @@ func newOpenAIRecordUsageServiceForTest(usageRepo UsageLogRepository, userRepo U
 		cfg,
 		nil,
 		nil,
-		NewBillingService(cfg, nil),
+		NewBillingService(cfg, sharedOfficialPricingService()),
 		nil,
 		&BillingCacheService{},
 		nil,
@@ -571,20 +571,20 @@ func TestOpenAIGatewayServiceRecordUsage_TimePricingUsesExplicitPricingAt(t *tes
 }
 
 func TestOpenAIGatewayServiceRecordUsage_DeepSeekAccountStatsUsesRequestPricingAtAndUpstreamModel(t *testing.T) {
+	// DeepSeek 一律按官方峰时价（官方价目录），不随计费时点变化。
 	for _, model := range []struct {
-		name        string
-		offPeakCost float64
+		name     string
+		peakCost float64
 	}{
-		{"deepseek-v4-flash", 1000*1.5e-7 + 500*6e-7 + 1000*3e-9},
-		{"deepseek-v4-pro", 1000*6.6e-7 + 500*1.98e-6 + 1000*2.2e-8},
+		{"deepseek-v4-flash", 1000*0.3e-6 + 500*1.2e-6 + 1000*0.006e-6},
+		{"deepseek-v4-pro", 1000*1.32e-6 + 500*3.96e-6 + 1000*0.044e-6},
 	} {
 		for _, slot := range []struct {
-			name       string
-			pricingAt  time.Time
-			multiplier float64
+			name      string
+			pricingAt time.Time
 		}{
-			{"peak", time.Date(2026, time.August, 24, 2, 0, 0, 0, time.UTC), 2},
-			{"off_peak", time.Date(2026, time.August, 24, 12, 0, 0, 0, time.UTC), 1},
+			{"peak_hours", time.Date(2026, time.August, 24, 2, 0, 0, 0, time.UTC)},
+			{"off_peak_hours", time.Date(2026, time.August, 24, 12, 0, 0, 0, time.UTC)},
 		} {
 			t.Run(model.name+"/"+slot.name, func(t *testing.T) {
 				usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
@@ -631,8 +631,8 @@ func TestOpenAIGatewayServiceRecordUsage_DeepSeekAccountStatsUsesRequestPricingA
 				require.Equal(t, 1, userRepo.deductCalls)
 				require.InDelta(t, customerTotal*0.8, userRepo.lastAmount, 1e-12)
 				require.NotNil(t, log.AccountStatsCost)
-				require.InDelta(t, model.offPeakCost*slot.multiplier, *log.AccountStatsCost, 1e-12,
-					"account cost must use the upstream model and historical PricingAt")
+				require.InDelta(t, model.peakCost, *log.AccountStatsCost, 1e-12,
+					"account cost must use the upstream model's official (peak) price")
 			})
 		}
 	}
@@ -1179,13 +1179,7 @@ func TestOpenAIGatewayServiceRecordUsage_GPT56SeparatesCacheWriteForBillingAndSt
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	subRepo := &openAIRecordUsageSubRepoStub{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
-	svc.billingService = NewBillingService(svc.cfg, &PricingService{pricingData: map[string]*LiteLLMModelPricing{
-		"gpt-5.6-sol": {
-			InputCostPerToken:       5e-6,
-			OutputCostPerToken:      30e-6,
-			CacheReadInputTokenCost: 0.5e-6,
-		},
-	}})
+	svc.billingService = NewBillingService(svc.cfg, sharedOfficialPricingService())
 
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
 		Result: &OpenAIForwardResult{
@@ -1204,16 +1198,18 @@ func TestOpenAIGatewayServiceRecordUsage_GPT56SeparatesCacheWriteForBillingAndSt
 		Account: &Account{ID: 3056},
 	})
 
+	// 官方价（gpt-5.6-sol）：未缓存输入 $4、缓存写 $5（1.25 倍输入）、缓存读 $0.40、输出 $20 / 百万 token；
+	// 缓存写 token 从输入里拆出来单独计价。
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.lastLog)
 	require.Equal(t, 700, usageRepo.lastLog.InputTokens)
 	require.Equal(t, 200, usageRepo.lastLog.CacheCreationTokens)
 	require.Equal(t, 100, usageRepo.lastLog.CacheReadTokens)
 	require.Equal(t, 1050, usageRepo.lastLog.TotalTokens())
-	require.InDelta(t, 700*5e-6, usageRepo.lastLog.InputCost, 1e-12)
-	require.InDelta(t, 200*6.25e-6, usageRepo.lastLog.CacheCreationCost, 1e-12)
-	require.InDelta(t, 100*0.5e-6, usageRepo.lastLog.CacheReadCost, 1e-12)
-	require.InDelta(t, 50*30e-6, usageRepo.lastLog.OutputCost, 1e-12)
+	require.InDelta(t, 700*4e-6, usageRepo.lastLog.InputCost, 1e-12)
+	require.InDelta(t, 200*5e-6, usageRepo.lastLog.CacheCreationCost, 1e-12)
+	require.InDelta(t, 100*0.4e-6, usageRepo.lastLog.CacheReadCost, 1e-12)
+	require.InDelta(t, 50*20e-6, usageRepo.lastLog.OutputCost, 1e-12)
 	require.InDelta(t, usageRepo.lastLog.TotalCost*1.1, usageRepo.lastLog.ActualCost, 1e-12)
 }
 
@@ -1252,7 +1248,7 @@ func TestOpenAIGatewayServiceRecordUsage_Gpt54LongContextBillingDisabledWhenGrou
 }
 
 // swapInOpenAILadderCatalog 给测试服务换上带 above_272k 阶梯字段的目录：
-// 静态兜底价已不带阶梯，长上下文相关测试需要目录数据。
+// 用目录里的 above_272k 绝对价字段驱动阶梯（验证远端目录的阶梯折算路径）。
 func swapInOpenAILadderCatalog(t *testing.T, svc *OpenAIGatewayService) {
 	t.Helper()
 	cfg := &config.Config{}
@@ -2805,7 +2801,7 @@ func newOpenAIImageChannelPricingResolverForTest(t *testing.T, groupID int64, mo
 	cache.loadedAt = time.Now()
 	cs := &ChannelService{}
 	cs.cache.Store(cache)
-	return NewModelPricingResolver(cs, NewBillingService(&config.Config{}, nil))
+	return NewModelPricingResolver(cs, newTestBillingService())
 }
 
 func newOpenAITokenImageChannelPricingResolverForTest(t *testing.T, groupID int64, model string) *ModelPricingResolver {
@@ -2825,7 +2821,7 @@ func newOpenAITokenImageChannelPricingResolverForTest(t *testing.T, groupID int6
 	cache.loadedAt = time.Now()
 	cs := &ChannelService{}
 	cs.cache.Store(cache)
-	return NewModelPricingResolver(cs, NewBillingService(&config.Config{}, nil))
+	return NewModelPricingResolver(cs, newTestBillingService())
 }
 
 func newOpenAITokenImageChannelPricingResolverWithTimeForTest(
@@ -2857,7 +2853,7 @@ func (s *openAIMediaPriceGroupRepoStub) GetByIDLite(context.Context, int64) (*Gr
 
 func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingUsesImageCount(t *testing.T) {
 	groupID := int64(126)
-	billingService := NewBillingService(&config.Config{}, nil)
+	billingService := newTestBillingService()
 	svc := &GatewayService{
 		billingService: billingService,
 		resolver:       newOpenAIImageChannelPricingResolverForTest(t, groupID, "gemini-image", 0.25),
@@ -2898,8 +2894,8 @@ func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingUsesSizeTier(
 	channelService.cache.Store(cache)
 
 	svc := &GatewayService{
-		billingService: NewBillingService(&config.Config{}, nil),
-		resolver:       NewModelPricingResolver(channelService, NewBillingService(&config.Config{}, nil)),
+		billingService: newTestBillingService(),
+		resolver:       NewModelPricingResolver(channelService, newTestBillingService()),
 	}
 
 	cost := svc.calculateRecordUsageCost(
@@ -2924,7 +2920,7 @@ func TestGatewayServiceCalculateRecordUsageCost_GroupImagePriceOverridesChannelI
 	groupImagePrice2K := 0.021
 
 	svc := &GatewayService{
-		billingService: NewBillingService(&config.Config{}, nil),
+		billingService: newTestBillingService(),
 		resolver:       newOpenAIImageChannelPricingResolverForTest(t, groupID, "gemini-image", channelPrice),
 	}
 
@@ -3019,8 +3015,8 @@ func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingNormalizesMis
 	channelService.cache.Store(cache)
 
 	svc := &GatewayService{
-		billingService: NewBillingService(&config.Config{}, nil),
-		resolver:       NewModelPricingResolver(channelService, NewBillingService(&config.Config{}, nil)),
+		billingService: newTestBillingService(),
+		resolver:       NewModelPricingResolver(channelService, newTestBillingService()),
 	}
 
 	cost := svc.calculateRecordUsageCost(

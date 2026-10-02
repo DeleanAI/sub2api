@@ -551,3 +551,23 @@ func TestForwardResponsesClampsOllamaCloudMaxOutputTokensForCodexClients(t *test
 		})
 	}
 }
+
+func TestIsDeepSeekModel(t *testing.T) {
+	deepseek := []string{
+		"deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp",
+		"deepseek-chat", "deepseek-reasoner", "deepseek-v3-2-251201",
+		"deepseek-coder", "deepseek-foo", "deepseek-v4-pro-0813",
+		"DEEPSEEK-V4-PRO", " deepseek-v4-flash ",
+	}
+	for _, m := range deepseek {
+		require.True(t, isDeepSeekModel(m), "model %q should be deepseek", m)
+	}
+
+	nonDeepseek := []string{
+		"gpt-5.4", "claude-sonnet-4", "deepseekcoder", // 无连字符不算 deepseek- 前缀
+		"", " deepseek", // 无连字符后缀
+	}
+	for _, m := range nonDeepseek {
+		require.False(t, isDeepSeekModel(m), "model %q should not be deepseek", m)
+	}
+}

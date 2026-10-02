@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -191,7 +190,7 @@ func TestPlazaUsesGroupReasoningEffortMultipliers(t *testing.T) {
 }
 
 func TestReasoningEffortBillingNoResolverPreservesCatalogPolicies(t *testing.T) {
-	bs := NewBillingService(&config.Config{}, nil)
+	bs := newTestBillingService()
 	tokens := UsageTokens{InputTokens: 300000, OutputTokens: 100, CacheCreationTokens: 20, CacheReadTokens: 10}
 	for _, applyLongContext := range []bool{false, true} {
 		for _, serviceTier := range []string{"", "priority", "flex"} {

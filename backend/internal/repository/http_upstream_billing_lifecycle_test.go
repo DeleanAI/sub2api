@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"github.com/Wei-Shaw/sub2api/internal/testutil/pricingtest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -90,7 +91,7 @@ func TestHTTPUpstreamForwardDrainsUsageAfterClientDisconnect(t *testing.T) {
 	billingRepo := &lifecycleBillingRepo{}
 	svc := service.NewOpenAIGatewayService(
 		nil, usageRepo, billingRepo, nil, nil, nil, nil, cfg, nil, nil,
-		service.NewBillingService(cfg, nil), nil, nil, upstream,
+		service.NewBillingService(cfg, pricingtest.OfficialPricingService(t)), nil, nil, upstream,
 		&service.DeferredService{}, nil, nil, nil, nil, nil, nil, nil,
 	)
 	account := &service.Account{

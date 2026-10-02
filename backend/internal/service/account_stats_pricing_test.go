@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -651,53 +650,26 @@ func TestTryModelFilePricing_WithCacheTokens(t *testing.T) {
 	require.InDelta(t, 0.95, *result, 1e-12)
 }
 
-func TestTryModelFilePricing_DeepSeekPeakPricing(t *testing.T) {
-	weekday := func(hour, minute int) time.Time {
-		return time.Date(2026, time.August, 24, hour, minute, 0, 0, time.UTC)
-	}
-	for _, model := range []struct {
-		name                          string
-		input, output, cacheReadPrice float64
-	}{
-		{"deepseek-v4-flash", 1.5e-7, 6e-7, 3e-9},
-		{"deepseek-v4-pro", 6.6e-7, 1.98e-6, 2.2e-8},
+func TestTryModelFilePricing_DeepSeekAlwaysBillsOfficialPeakRates(t *testing.T) {
+	// 业务决定（2026-10-02）：DeepSeek 一律按官方峰时价，不分时段（价在官方价目录里）。
+	bs := newTestBillingService()
+	tokens := UsageTokens{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 1000}
+	for model, peakCost := range map[string]float64{
+		"deepseek-v4-flash":    1000*0.3e-6 + 500*1.2e-6 + 1000*0.006e-6,
+		"deepseek-flash":       1000*0.3e-6 + 500*1.2e-6 + 1000*0.006e-6,
+		"DeepSeek-V4.1-Flash":  1000*0.3e-6 + 500*1.2e-6 + 1000*0.006e-6,
+		"deepseek-v4-pro":      1000*1.32e-6 + 500*3.96e-6 + 1000*0.044e-6,
+		"DeepSeek-V4-Pro-0813": 1000*1.32e-6 + 500*3.96e-6 + 1000*0.044e-6,
 	} {
-		for _, usage := range []struct {
-			name   string
-			tokens UsageTokens
-		}{
-			{"input", UsageTokens{InputTokens: 1000}},
-			{"output", UsageTokens{OutputTokens: 500}},
-			{"cache_read", UsageTokens{CacheReadTokens: 1000}},
-			{"mixed", UsageTokens{InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 1000}},
+		for _, at := range []time.Time{
+			time.Date(2026, time.August, 24, 0, 59, 0, 0, time.UTC), // 工作日官方低谷
+			time.Date(2026, time.August, 24, 2, 0, 0, 0, time.UTC),  // 工作日官方高峰
+			time.Date(2026, time.August, 22, 2, 0, 0, 0, time.UTC),  // 周六
+			{},
 		} {
-			t.Run(model.name+"/"+usage.name, func(t *testing.T) {
-				bs := newTestBillingService()
-				tokens := usage.tokens
-				baseCost := float64(tokens.InputTokens)*model.input +
-					float64(tokens.OutputTokens)*model.output + float64(tokens.CacheReadTokens)*model.cacheReadPrice
-				for _, slot := range []struct {
-					name       string
-					at         time.Time
-					multiplier float64
-				}{
-					{"before_morning_peak", weekday(0, 59), 1},
-					{"morning_peak_start", weekday(1, 0), 2},
-					{"morning_peak_last_minute", weekday(3, 59), 2},
-					{"morning_peak_end", weekday(4, 0), 1},
-					{"afternoon_peak_start", weekday(6, 0), 2},
-					{"afternoon_peak_last_minute", weekday(9, 59), 2},
-					{"afternoon_peak_end", weekday(10, 0), 1},
-					{"saturday", time.Date(2026, time.August, 22, 2, 0, 0, 0, time.UTC), 1},
-					{"sunday", time.Date(2026, time.August, 23, 7, 0, 0, 0, time.UTC), 1},
-				} {
-					t.Run(slot.name, func(t *testing.T) {
-						cost := tryModelFilePricing(bs, model.name, tokens, "", slot.at)
-						require.NotNil(t, cost)
-						require.InDelta(t, baseCost*slot.multiplier, *cost, 1e-12)
-					})
-				}
-			})
+			cost := tryModelFilePricing(bs, model, tokens, "", at)
+			require.NotNil(t, cost, model)
+			require.InDelta(t, peakCost, *cost, 1e-12, "%s at %s", model, at)
 		}
 	}
 }
@@ -924,7 +896,7 @@ func TestResolveAccountStatsCost_Gemini36FlashTierUsesFallbackPricing(t *testing
 		ApplyPricingToAccountStats: false,
 	}
 	cs := newTestChannelServiceForStats(t, channel, 10, "antigravity")
-	bs := NewBillingService(&config.Config{}, nil)
+	bs := newTestBillingService()
 
 	result := resolveAccountStatsCost(
 		context.Background(),

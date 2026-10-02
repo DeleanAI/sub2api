@@ -15,11 +15,10 @@ import (
 //  2. 两者都能被 HasIdentifiedTokenPricing 确定性识别（即价格表里的精确条目），
 //     否则请求会先被"响应模型必须可识别"这道更靠前的门挡掉，成本比较根本走不到。
 //
-// claude-opus-4 / gpt-5.1 之类的名字不满足条件 2（前者不是 fallback 精确键，
-// 后者与 gpt-5.5 共用同一条 gpt-5.4 价格因而也不满足条件 1）。
+// 夹具用官方价目录里的正式模型 ID（官方价目录的名字与别名都是精确条目）。
 const (
 	anthropicCheapFixtureModel  = "claude-sonnet-4"
-	anthropicPriceyFixtureModel = "claude-opus-4.8"
+	anthropicPriceyFixtureModel = "claude-opus-4-8"
 	openAICheapFixtureModel     = "gpt-5.4-nano"
 	openAIPriceyFixtureModel    = "gpt-5.5"
 )
@@ -40,6 +39,9 @@ func orderedResponseBillingModels(t *testing.T, svc *BillingService, tokens Usag
 	}
 	return b, a, costB, costA
 }
+
+// retiredHaikuCatalog 是只含一个已退役 Haiku 的远端目录（不在官方价目录里）。
+const retiredHaikuCatalog = `{"claude-3-haiku-20240307": {"input_cost_per_token": 2.5e-7, "output_cost_per_token": 1.25e-6, "litellm_provider": "anthropic"}}`
 
 // --- Anthropic gateway (GatewayService.RecordUsage) ---
 
@@ -385,6 +387,8 @@ func TestGatewayServiceRecordUsage_ResponseModelRejectsUnidentifiedFamilyName(t 
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{})
 	tokens := UsageTokens{InputTokens: 100, OutputTokens: 50}
+	// 宽松查价能把含系列词的编造名字落到目录里的老 Haiku 条目上（生产的远端目录就有这些条目）。
+	svc.billingService = NewBillingService(svc.cfg, newOfficialPricingService(t, retiredHaikuCatalog))
 	const forged = "totally-made-up-haiku-v9"
 
 	baselineCost, err := svc.billingService.CalculateCost(anthropicPriceyFixtureModel, tokens, 1.1)
@@ -424,6 +428,8 @@ func TestOpenAIGatewayServiceRecordUsage_ResponseModelRejectsUnidentifiedFamilyN
 	userRepo := &openAIRecordUsageUserRepoStub{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, &openAIRecordUsageSubRepoStub{}, nil)
 	tokens := UsageTokens{InputTokens: 20, OutputTokens: 10}
+	// 宽松查价能把含系列词的编造名字落到目录里的老 Haiku 条目上（生产的远端目录就有这些条目）。
+	svc.billingService = NewBillingService(svc.cfg, newOfficialPricingService(t, retiredHaikuCatalog))
 	const forged = "totally-made-up-haiku-v9"
 
 	baselineCost, err := svc.billingService.CalculateCost(openAIPriceyFixtureModel, tokens, 1.1)

@@ -350,6 +350,9 @@ func newPlazaServiceWithBilling(channels []Channel, groups []Group, groupPlatfor
 		},
 	}
 	cs := NewChannelService(repo, nil, nil, nil, nil)
+	if catalog == nil {
+		catalog = sharedOfficialPricingService()
+	}
 	bs := NewBillingService(&config.Config{}, catalog)
 	return NewModelPlazaService(repo, &stubGroupRepoForAvailable{activeGroups: groups}, catalog, bs, NewModelPricingResolver(cs, bs))
 }

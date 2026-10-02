@@ -24,6 +24,10 @@ func TestResolveBillingServiceTier(t *testing.T) {
 		{name: "default echoed for untiered request", requested: "", observed: "default", billing: ""},
 		{name: "unknown response tier ignored", requested: "priority", observed: "turbo", billing: "priority"},
 		{name: "case and whitespace normalised", requested: " Priority ", observed: "DEFAULT", billing: "default", downgraded: true},
+		{name: "ultrafast served as default", requested: "ultrafast", observed: "default", billing: "default", downgraded: true},
+		{name: "ultrafast served as priority", requested: "ultrafast", observed: "priority", billing: "priority", downgraded: true},
+		{name: "ultrafast honoured", requested: "ultrafast", observed: "ultrafast", billing: "ultrafast"},
+		{name: "response never raises to ultrafast", requested: "priority", observed: "ultrafast", billing: "priority"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -171,7 +171,7 @@ func TestGeminiChatCompatReasoningPricingIgnoresUnforwardedEffort(t *testing.T) 
 			require.False(t, gjson.GetBytes(upstream.requestBodies[0], "generationConfig.thinkingConfig").Exists())
 			require.Nil(t, result.ReasoningEffort)
 
-			billing := NewBillingService(&config.Config{}, nil)
+			billing := newTestBillingService()
 			cost, err := billing.CalculateTokenCostForRequest(TokenCostRequest{
 				Ctx: context.Background(), Model: model,
 				Group: &Group{ID: 77, Platform: PlatformGemini, ModelPricing: []ChannelModelPricing{{

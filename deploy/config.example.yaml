@@ -1150,23 +1150,32 @@ pricing:
   # detected by content hash at the next hash check and reloaded without restart.
   # 备用定价文件：只补目录缺失的模型。修改后在下一次哈希检查时按内容哈希自动重载，无需重启。
   fallback_file: "./resources/model-pricing/model_prices_and_context_window.json"
+  # Official price catalog (USD per million tokens, mirrors the vendors' official pricing tables).
+  # Every model it declares (with its aliases and dated snapshots) replaces the catalog/fallback
+  # entry wholesale and is that model's only price source. When set, the file must exist and pass
+  # validation or the pricing service fails to load. Format: resources/model-pricing/README.md.
+  # 官方价目录（美元/百万 token，与各厂商官方定价表一一对应）。其中每个模型（含别名、带日期快照）
+  # 整条替换目录/回退数据，是该模型唯一的价格来源。配置了就必须存在且校验通过，否则价格服务加载失败。
+  official_file: "./resources/model-pricing/official_prices.json"
   # Override patch file (optional, highest priority): entries are shallow-merged
   # field-by-field over catalog/fallback data; a null field value removes that field.
   # Model names must match catalog keys exactly. Edits are detected by content hash
-  # at the next hash check and reloaded without restart.
+  # at the next hash check and reloaded without restart. Models in the official
+  # price catalog are not affected (a warning names them).
   # 覆盖补丁文件（可选，优先级最高）：条目按字段浅合并覆盖目录/回退数据，
   # 字段值为 null 表示删除该字段。模型名须与目录键完全一致。
-  # 修改后在下一次哈希检查时按内容哈希自动重载，无需重启。
+  # 修改后在下一次哈希检查时按内容哈希自动重载，无需重启。对官方价目录里的模型不生效（告警点名）。
   # override_file: "./data/model_pricing_overrides.json"
   # Update interval in hours
   # 更新间隔（小时）
   update_interval_hours: 24
   # Hash check interval in minutes. Each check compares the remote catalog hash and
-  # the local fallback/override file contents. Deleting a local file drops its
-  # entries at the next check; a present but non-JSON file keeps the previous data
-  # and is retried next check.
-  # 哈希检查间隔（分钟）。每次检查同时比对远程目录哈希与本地 fallback/override 文件内容；
-  # 删除本地文件会在下次检查时移除其条目，文件存在但不是 JSON 时保留旧数据、下次检查再试。
+  # the local fallback/official/override file contents. Deleting a fallback/override file
+  # drops its entries at the next check; a present but invalid file (or a missing/invalid
+  # official catalog) keeps the previous data and is retried next check.
+  # 哈希检查间隔（分钟）。每次检查同时比对远程目录哈希与本地 fallback/official/override 文件内容；
+  # 删除 fallback/override 文件会在下次检查时移除其条目；文件存在但不合法（或官方价目录缺失/不合法）
+  # 时保留旧数据、下次检查再试。
   hash_check_interval_minutes: 10
 
 # =============================================================================

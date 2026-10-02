@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"time"
 
@@ -37,7 +38,11 @@ type BuildInfo struct {
 func ProvidePricingService(cfg *config.Config, remoteClient PricingRemoteClient) (*PricingService, error) {
 	svc := NewPricingService(cfg, remoteClient)
 	if err := svc.Initialize(); err != nil {
-		// Pricing service initialization failure should not block startup, use fallback prices
+		// 官方价目录是 OpenAI / Anthropic / DeepSeek 的唯一价格来源：它加载不了就拒绝启动。
+		if errors.Is(err, ErrOfficialPriceCatalog) {
+			return nil, err
+		}
+		// 其余初始化失败（远端目录与本地回退都不可用）不阻塞启动，沿用硬编码回退价。
 		println("[Service] Warning: Pricing service initialization failed:", err.Error())
 	}
 	return svc, nil

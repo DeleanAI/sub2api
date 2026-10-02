@@ -115,7 +115,7 @@ func TestOpenAIMessagesGLMReasoningPricingUsesForwardedEffort(t *testing.T) {
 func assertConvertedReasoningPrice(t *testing.T, result *OpenAIForwardResult, wantCost float64) {
 	t.Helper()
 	require.Equal(t, 1_000_000, result.Usage.InputTokens)
-	billing := NewBillingService(rawChatCompletionsTestConfig(), nil)
+	billing := NewBillingService(rawChatCompletionsTestConfig(), sharedOfficialPricingService())
 	group := &Group{ID: 1, Platform: PlatformOpenAI, ModelPricing: []ChannelModelPricing{{
 		Models: []string{result.BillingModel}, BillingMode: BillingModeToken,
 		InputPrice: testPtrFloat64(1e-6), OutputPrice: testPtrFloat64(0),
