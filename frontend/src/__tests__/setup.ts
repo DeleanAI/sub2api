@@ -95,7 +95,7 @@ config.global.stubs = {
   // 可以在这里添加全局 stub
 }
 
-// 模板全局属性 $currency（站内余额单位的符号，生产里由 utils/balanceCurrency.ts 的 installBalanceCurrency 注册）：
+// 模板全局属性 $currency（站内余额单位的符号，生产里由 utils/balanceCurrencyInstall.ts 的 installBalanceCurrency 注册）：
 // 组件测试不装 pinia，按默认站点（USD）写成 "$"。接线本身由 balanceCurrencyGuard.spec.ts 覆盖。
 config.global.mocks = { ...config.global.mocks, $currency: '$' }
 

@@ -4326,8 +4326,10 @@ import {
 import type { PricingFormEntry } from "@/components/admin/channel/types";
 import {
   apiIntervalsToForm,
+  apiPricingCurrencyToForm,
   createDefaultTimePricingForm,
   formIntervalsToAPI,
+  formPricingCurrencyToAPI,
   formReasoningEffortMultipliersToAPI,
   mTokToPerToken,
   perTokenToMTok,
@@ -4403,6 +4405,7 @@ const supportsLivePlatform = (platform: string): boolean =>
 const emptyGroupPricing = (): PricingFormEntry => ({
   models: [],
   billing_mode: "token",
+  currency: "",
   input_price: null,
   output_price: null,
   cache_write_price: null,
@@ -4425,6 +4428,7 @@ const groupPricingFromAPI = (
   (pricing || []).map((entry) => ({
     models: entry.models || [],
     billing_mode: entry.billing_mode || "token",
+    currency: apiPricingCurrencyToForm(entry.currency),
     input_price: perTokenToMTok(entry.input_price),
     output_price: perTokenToMTok(entry.output_price),
     cache_write_price: perTokenToMTok(entry.cache_write_price),
@@ -4450,6 +4454,7 @@ const groupPricingToAPI = (
       platform,
       models: entry.models,
       billing_mode: entry.billing_mode,
+      currency: formPricingCurrencyToAPI(entry.currency),
       input_price: mTokToPerToken(entry.input_price),
       output_price: mTokToPerToken(entry.output_price),
       cache_write_price: mTokToPerToken(entry.cache_write_price),

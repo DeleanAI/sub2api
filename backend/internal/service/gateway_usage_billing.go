@@ -1261,17 +1261,7 @@ func (s *GatewayService) buildRecordUsageLog(
 	if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = imageMultiplier
 	}
-	if cost != nil {
-		usageLog.InputCost = cost.InputCost
-		usageLog.OutputCost = cost.OutputCost
-		usageLog.ImageOutputCost = cost.ImageOutputCost
-		usageLog.CacheCreationCost = cost.CacheCreationCost
-		usageLog.CacheReadCost = cost.CacheReadCost
-		usageLog.TotalCost = cost.TotalCost
-		usageLog.ActualCost = cost.ActualCost
-		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
-		usageLog.ModelRateMultiplier = usageLogModelRateMultiplier(cost)
-	}
+	usageLog.applyCostBreakdown(cost)
 
 	return usageLog
 }

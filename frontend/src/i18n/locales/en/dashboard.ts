@@ -348,6 +348,7 @@ export default {
     resetPending: 'Pending refresh',
     accountMultiplier: 'Account rate',
     modelMultiplier: 'Model rate',
+    priceCurrency: 'Priced in {currency}, converted at',
     modelMultiplierNotEvaluated: 'Per-model rate not evaluated for this row (treated as 1)',
     avgDuration: 'Avg Duration',
     inSelectedRange: 'in selected range',

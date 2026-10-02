@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -121,7 +122,7 @@ func TestAdminService_UpdateUserBalance_UsesAtomicPrimitives(t *testing.T) {
 				redeemCodeRepo: &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}},
 			}
 
-			user, err := svc.UpdateUserBalance(context.Background(), 7, tt.amount, tt.operation, "")
+			user, err := svc.UpdateUserBalance(context.Background(), 7, tt.amount, "", tt.operation, "")
 			require.NoError(t, err)
 			require.Equal(t, []BalanceChange{tt.want}, repo.changes)
 			require.Equal(t, tt.want.New, user.Balance)
@@ -136,7 +137,7 @@ func TestAdminService_UpdateUserBalance_RejectsNegativeResult(t *testing.T) {
 		redeemCodeRepo: &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}},
 	}
 
-	_, err := svc.UpdateUserBalance(context.Background(), 7, 4, "subtract", "")
+	_, err := svc.UpdateUserBalance(context.Background(), 7, 4, "", "subtract", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "balance cannot be negative")
 	require.Empty(t, repo.changes, "refused adjustment must not be applied")
@@ -150,7 +151,7 @@ func TestAdminService_UpdateUserBalance_RejectsUnknownOperation(t *testing.T) {
 		redeemCodeRepo: &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}},
 	}
 
-	_, err := svc.UpdateUserBalance(context.Background(), 7, 1, "multiply", "")
+	_, err := svc.UpdateUserBalance(context.Background(), 7, 1, "", "multiply", "")
 	require.Error(t, err)
 	require.Empty(t, repo.changes)
 }
@@ -166,7 +167,7 @@ func TestAdminService_UpdateUserBalance_InvalidatesAuthCache(t *testing.T) {
 		authCacheInvalidator: invalidator,
 	}
 
-	_, err := svc.UpdateUserBalance(context.Background(), 7, 5, "add", "")
+	_, err := svc.UpdateUserBalance(context.Background(), 7, 5, "", "add", "")
 	require.NoError(t, err)
 	require.Equal(t, []int64{7}, invalidator.userIDs)
 	require.Len(t, redeemRepo.created, 1)
@@ -183,7 +184,7 @@ func TestAdminService_UpdateUserBalance_NoChangeNoInvalidate(t *testing.T) {
 		authCacheInvalidator: invalidator,
 	}
 
-	_, err := svc.UpdateUserBalance(context.Background(), 7, 10, "set", "")
+	_, err := svc.UpdateUserBalance(context.Background(), 7, 10, "", "set", "")
 	require.NoError(t, err)
 	require.Empty(t, invalidator.userIDs)
 	require.Empty(t, redeemRepo.created)
@@ -236,7 +237,7 @@ func TestAdminService_UpdateUserBalance_AdminRechargeAffiliateRebate(t *testing.
 				affiliateService: affiliate,
 			}
 
-			_, err := svc.UpdateUserBalance(context.Background(), 7, tt.amount, tt.operation, "")
+			_, err := svc.UpdateUserBalance(context.Background(), 7, tt.amount, "", tt.operation, "")
 			require.NoError(t, err)
 			require.Equal(t, tt.wantCalls, affiliate.calls)
 		})
@@ -255,9 +256,66 @@ func TestAdminService_UpdateUserBalance_AffiliateFailureDoesNotRollbackRecharge(
 		affiliateService: affiliate,
 	}
 
-	user, err := svc.UpdateUserBalance(context.Background(), 7, 5, "add", "")
+	user, err := svc.UpdateUserBalance(context.Background(), 7, 5, "", "add", "")
 	require.NoError(t, err)
 	require.Equal(t, 15.0, user.Balance)
 	require.Equal(t, []adminRechargeAffiliateAccrual{{userID: 7, amount: 5}}, affiliate.calls)
 	require.Len(t, redeemRepo.created, 1)
+}
+
+// 管理员按人民币 / 稳定币调整余额：按当前汇率折算成记账币种并取到分，折算依据随调整流水落库；
+// 汇率确认不了、币种不认识都拒绝，余额不动。
+func TestAdminService_UpdateUserBalance_ConvertsForeignCurrencies(t *testing.T) {
+	newSvc := func(balance float64) (*adminServiceImpl, *balanceUserRepoStub, *balanceRedeemRepoStub, *fakeFetcher) {
+		fx, _, fetcher := newTestFX(time.Date(2026, 10, 2, 10, 0, 0, 0, cst), "USD") // 国庆：沿用 09-30 中间价 6.7351
+		repo := &balanceUserRepoStub{userRepoStub: &userRepoStub{user: &User{ID: 7, Balance: balance}}}
+		redeemRepo := &balanceRedeemRepoStub{redeemRepoStub: &redeemRepoStub{}}
+		return &adminServiceImpl{userRepo: repo, redeemCodeRepo: redeemRepo, exchangeRates: fx}, repo, redeemRepo, fetcher
+	}
+
+	t.Run("add CNY", func(t *testing.T) {
+		svc, repo, redeemRepo, _ := newSvc(20)
+		user, err := svc.UpdateUserBalance(context.Background(), 7, 1000, "cny", "add", "1000 元充值")
+		require.NoError(t, err)
+		require.Equal(t, []BalanceChange{{Old: 20, New: 168.48}}, repo.changes)
+		require.Equal(t, 168.48, user.Balance)
+		require.Len(t, redeemRepo.created, 1)
+		record := redeemRepo.created[0]
+		require.InDelta(t, 148.48, record.Value, 1e-9)
+		require.NotNil(t, record.CurrencyConversion)
+		require.Equal(t, "CNY", record.CurrencyConversion.FromCurrency)
+		require.Equal(t, 1000.0, *record.CurrencyConversion.FromAmount)
+		require.Equal(t, 148.48, *record.CurrencyConversion.ToAmount)
+		require.Equal(t, "2026-09-30", record.CurrencyConversion.Legs[0].RateDate)
+	})
+
+	t.Run("subtract CNY", func(t *testing.T) {
+		svc, repo, redeemRepo, _ := newSvc(20)
+		_, err := svc.UpdateUserBalance(context.Background(), 7, 100, "CNY", "subtract", "")
+		require.NoError(t, err)
+		require.InDelta(t, 20-14.85, repo.changes[0].New, 1e-9, "100 CNY = 14.85 USD")
+		require.InDelta(t, -14.85, redeemRepo.created[0].Value, 1e-9)
+	})
+
+	t.Run("accounting currency is taken as is", func(t *testing.T) {
+		svc, repo, redeemRepo, fetcher := newSvc(20)
+		_, err := svc.UpdateUserBalance(context.Background(), 7, 0.123456, " usd ", "add", "")
+		require.NoError(t, err)
+		require.InDelta(t, 20.123456, repo.changes[0].New, 1e-12, "no rounding without a conversion")
+		require.Nil(t, redeemRepo.created[0].CurrencyConversion)
+		require.Zero(t, fetcher.cnyCalls)
+	})
+
+	t.Run("refuses without a confirmed rate or a known currency", func(t *testing.T) {
+		svc, repo, redeemRepo, fetcher := newSvc(20)
+		fetcher.cnyErr = errors.New("chinamoney.com.cn unreachable")
+		delete(fetcher.coinPrices, "USDT|2026-10-02")
+		for _, currency := range []string{"CNY", "USDT", "EUR"} {
+			_, err := svc.UpdateUserBalance(context.Background(), 7, 100, currency, "add", "")
+			require.Error(t, err, currency)
+		}
+		require.Empty(t, repo.changes)
+		require.Empty(t, redeemRepo.created)
+		require.Equal(t, 20.0, repo.userRepoStub.user.Balance)
+	})
 }

@@ -6,7 +6,7 @@ import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
 import { updateFavicon } from '@/utils/branding'
 import { isIOSDevice } from '@/utils/device'
-import { installBalanceCurrency } from '@/utils/balanceCurrency'
+import { installBalanceCurrency } from '@/utils/balanceCurrencyInstall'
 import './style.css'
 
 function initIOSViewportZoomFix() {

@@ -131,8 +131,10 @@ type BatchImageJob struct {
 	BillableUnitPrice       float64
 	HoldUnitPrice           float64
 	PricingSnapshotVersion  int
-	Currency                string
-	HoldID                  *string
+	// CurrencyConversion：快照单价来自非记账币种价卡时的折算依据（batch_image_jobs.currency_conversion）。
+	CurrencyConversion *CurrencyConversion
+	Currency           string
+	HoldID             *string
 
 	IdempotencyKey *string
 	RequestHash    *string
@@ -191,8 +193,10 @@ type CreateBatchImageJobParams struct {
 	BillableUnitPrice       float64
 	HoldUnitPrice           float64
 	PricingSnapshotVersion  int
-	Currency                string
-	HoldID                  *string
+	// CurrencyConversion：快照单价来自非记账币种价卡时的折算依据（batch_image_jobs.currency_conversion）。
+	CurrencyConversion *CurrencyConversion
+	Currency           string
+	HoldID             *string
 
 	IdempotencyKey *string
 	RequestHash    *string

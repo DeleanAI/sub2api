@@ -118,6 +118,14 @@ export default {
     }
   },
 
+  currencyConversion: {
+    source: {
+      cfets: 'CFETS RMB central parity',
+      coingecko: 'CoinGecko daily price',
+    },
+    stale: 'The rate source was unavailable at billing time; the latest published central parity was used',
+  },
+
   adminCompliance: {
     title: 'Deployment and Operation Compliance Acknowledgment',
     blockingNotice: 'Deployment and operation compliance acknowledgment is required before continuing to use the console.',

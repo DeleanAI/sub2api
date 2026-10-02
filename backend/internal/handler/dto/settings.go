@@ -277,7 +277,6 @@ type SystemSettings struct {
 	PaymentEnabledTypes              []string `json:"payment_enabled_types"`
 	PaymentBalanceDisabled           bool     `json:"payment_balance_disabled"`
 	PaymentBalanceRechargeMultiplier float64  `json:"payment_balance_recharge_multiplier"`
-	PaymentSubscriptionUSDToCNYRate  float64  `json:"payment_subscription_usd_to_cny_rate"`
 	PaymentRechargeFeeRate           float64  `json:"payment_recharge_fee_rate"`
 	PaymentLoadBalanceStrat          string   `json:"payment_load_balance_strategy"`
 	PaymentProductNamePrefix         string   `json:"payment_product_name_prefix"`
@@ -305,7 +304,7 @@ type SystemSettings struct {
 	AccountQuotaNotifyEnabled       bool               `json:"account_quota_notify_enabled"`
 	AccountQuotaNotifyEmails        []NotifyEmailEntry `json:"account_quota_notify_emails"`
 
-	// 兑换入口与金额显示（fork）
+	// 兑换入口与记账币种（fork；可选币种见 GET /admin/exchange-rates/currencies）
 	RedeemEnabled         bool   `json:"redeem_enabled"`
 	BalanceCurrency       string `json:"balance_currency"`
 	BalanceCurrencySymbol string `json:"balance_currency_symbol"`

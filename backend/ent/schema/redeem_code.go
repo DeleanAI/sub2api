@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
@@ -72,6 +73,10 @@ func (RedeemCode) Fields() []ent.Field {
 			Nillable(),
 		field.Int("validity_days").
 			Default(30),
+		// currency_conversion: 非记账币种金额的折算依据（service.CurrencyConversion 的 JSON；migration 241，NULL 表示同币种）。
+		field.JSON("currency_conversion", json.RawMessage{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 	}
 }
 

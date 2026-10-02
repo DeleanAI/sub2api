@@ -12,8 +12,7 @@ import (
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
-// normalizePlanCurrency validates and normalizes the display-only currency label.
-// Empty means "no label" and is kept as-is so existing plans stay unchanged.
+// normalizePlanCurrency 校验并归一化套餐价的币种（ISO 三字母代码）。空串保留为空，表示按 DefaultPriceCurrency。
 func normalizePlanCurrency(raw string) (string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", nil

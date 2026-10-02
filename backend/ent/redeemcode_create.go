@@ -4,6 +4,7 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
@@ -167,6 +168,12 @@ func (_c *RedeemCodeCreate) SetNillableValidityDays(v *int) *RedeemCodeCreate {
 	if v != nil {
 		_c.SetValidityDays(*v)
 	}
+	return _c
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (_c *RedeemCodeCreate) SetCurrencyConversion(v jsontext.Value) *RedeemCodeCreate {
+	_c.mutation.SetCurrencyConversion(v)
 	return _c
 }
 
@@ -348,6 +355,10 @@ func (_c *RedeemCodeCreate) createSpec() (*RedeemCode, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ValidityDays(); ok {
 		_spec.SetField(redeemcode.FieldValidityDays, field.TypeInt, value)
 		_node.ValidityDays = value
+	}
+	if value, ok := _c.mutation.CurrencyConversion(); ok {
+		_spec.SetField(redeemcode.FieldCurrencyConversion, field.TypeJSON, value)
+		_node.CurrencyConversion = value
 	}
 	if nodes := _c.mutation.UserIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -597,6 +608,24 @@ func (u *RedeemCodeUpsert) AddValidityDays(v int) *RedeemCodeUpsert {
 	return u
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (u *RedeemCodeUpsert) SetCurrencyConversion(v jsontext.Value) *RedeemCodeUpsert {
+	u.Set(redeemcode.FieldCurrencyConversion, v)
+	return u
+}
+
+// UpdateCurrencyConversion sets the "currency_conversion" field to the value that was provided on create.
+func (u *RedeemCodeUpsert) UpdateCurrencyConversion() *RedeemCodeUpsert {
+	u.SetExcluded(redeemcode.FieldCurrencyConversion)
+	return u
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (u *RedeemCodeUpsert) ClearCurrencyConversion() *RedeemCodeUpsert {
+	u.SetNull(redeemcode.FieldCurrencyConversion)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -828,6 +857,27 @@ func (u *RedeemCodeUpsertOne) AddValidityDays(v int) *RedeemCodeUpsertOne {
 func (u *RedeemCodeUpsertOne) UpdateValidityDays() *RedeemCodeUpsertOne {
 	return u.Update(func(s *RedeemCodeUpsert) {
 		s.UpdateValidityDays()
+	})
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (u *RedeemCodeUpsertOne) SetCurrencyConversion(v jsontext.Value) *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.SetCurrencyConversion(v)
+	})
+}
+
+// UpdateCurrencyConversion sets the "currency_conversion" field to the value that was provided on create.
+func (u *RedeemCodeUpsertOne) UpdateCurrencyConversion() *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.UpdateCurrencyConversion()
+	})
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (u *RedeemCodeUpsertOne) ClearCurrencyConversion() *RedeemCodeUpsertOne {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearCurrencyConversion()
 	})
 }
 
@@ -1228,6 +1278,27 @@ func (u *RedeemCodeUpsertBulk) AddValidityDays(v int) *RedeemCodeUpsertBulk {
 func (u *RedeemCodeUpsertBulk) UpdateValidityDays() *RedeemCodeUpsertBulk {
 	return u.Update(func(s *RedeemCodeUpsert) {
 		s.UpdateValidityDays()
+	})
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (u *RedeemCodeUpsertBulk) SetCurrencyConversion(v jsontext.Value) *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.SetCurrencyConversion(v)
+	})
+}
+
+// UpdateCurrencyConversion sets the "currency_conversion" field to the value that was provided on create.
+func (u *RedeemCodeUpsertBulk) UpdateCurrencyConversion() *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.UpdateCurrencyConversion()
+	})
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (u *RedeemCodeUpsertBulk) ClearCurrencyConversion() *RedeemCodeUpsertBulk {
+	return u.Update(func(s *RedeemCodeUpsert) {
+		s.ClearCurrencyConversion()
 	})
 }
 

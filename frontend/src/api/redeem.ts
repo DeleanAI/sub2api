@@ -4,7 +4,7 @@
  */
 
 import { apiClient } from './client'
-import type { PaginatedResponse, RedeemCodeRequest } from '@/types'
+import type { CurrencyConversion, PaginatedResponse, RedeemCodeRequest } from '@/types'
 
 export interface RedeemHistoryItem {
   id: number
@@ -19,6 +19,8 @@ export interface RedeemHistoryItem {
   // Subscription-specific fields
   group_id?: number
   validity_days?: number
+  /** 按非记账币种入账（如以人民币支付）时的原币金额与汇率 */
+  currency_conversion?: CurrencyConversion | null
   group?: {
     id: number
     name: string

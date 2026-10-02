@@ -601,6 +601,7 @@ func TestGetModelDefaultPricing_ReturnsFable51CacheTTLs(t *testing.T) {
 	var body struct {
 		Data struct {
 			Found                      bool               `json:"found"`
+			Currency                   string             `json:"currency"`
 			CacheWritePrice            float64            `json:"cache_write_price"`
 			CacheWrite1hPrice          *float64           `json:"cache_write_1h_price"`
 			ReasoningEffortMultipliers map[string]float64 `json:"reasoning_effort_multipliers"`
@@ -608,6 +609,7 @@ func TestGetModelDefaultPricing_ReturnsFable51CacheTTLs(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	require.True(t, body.Data.Found)
+	require.Equal(t, service.CatalogPriceCurrency, body.Data.Currency, "the editor only prefills entries priced in the catalog currency")
 	require.InDelta(t, 12.5e-6, body.Data.CacheWritePrice, 1e-12)
 	require.NotNil(t, body.Data.CacheWrite1hPrice)
 	require.InDelta(t, 20e-6, *body.Data.CacheWrite1hPrice, 1e-12)

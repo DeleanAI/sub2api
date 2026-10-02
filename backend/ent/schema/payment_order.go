@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"time"
 
 	"entgo.io/ent"
@@ -162,6 +163,10 @@ func (PaymentOrder) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "text"}),
 
 		// 时间戳
+		// currency_conversion: 非记账币种金额的折算依据（service.CurrencyConversion 的 JSON；migration 241，NULL 表示同币种）。
+		field.JSON("currency_conversion", json.RawMessage{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 		field.Time("created_at").
 			Immutable().
 			Default(time.Now).

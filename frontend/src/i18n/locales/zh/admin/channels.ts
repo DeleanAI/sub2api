@@ -212,6 +212,8 @@ export default {
         noPlatforms: '点击"添加平台"开始配置渠道',
         mappingCount: '条映射',
         pricingEntry: '定价配置',
+        priceCurrency: '标价币种',
+        foreignCurrencyHint: '按 {currency} 标价的条目自成一体、不继承 {catalog} 目录价：token 计费须写明输入价和输出价（可以是 0），缓存价不写按输入价计；计费时按使用时刻的汇率折算成余额单位。',
         noModels: '未添加模型',
         applyPricingToAccountStats: '应用模型定价到账号统计',
         applyPricingToAccountStatsDesc: '启用后，未被自定义规则匹配的请求将使用模型定价文件中的标准价格计算账号统计费用',

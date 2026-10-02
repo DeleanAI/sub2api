@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -23,7 +24,7 @@ func NewRedeemCodeRepository(client *dbent.Client) service.RedeemCodeRepository 
 }
 
 func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemCode) error {
-	created, err := r.client.RedeemCode.Create().
+	create := r.client.RedeemCode.Create().
 		SetCode(code.Code).
 		SetType(code.Type).
 		SetValue(code.Value).
@@ -33,8 +34,15 @@ func (r *redeemCodeRepository) Create(ctx context.Context, code *service.RedeemC
 		SetNillableExpiresAt(code.ExpiresAt).
 		SetNillableUsedBy(code.UsedBy).
 		SetNillableUsedAt(code.UsedAt).
-		SetNillableGroupID(code.GroupID).
-		Save(ctx)
+		SetNillableGroupID(code.GroupID)
+	conversion, err := service.EncodeCurrencyConversion(code.CurrencyConversion)
+	if err != nil {
+		return err
+	}
+	if conversion != nil {
+		create.SetCurrencyConversion(conversion)
+	}
+	created, err := create.Save(ctx)
 	if err == nil {
 		code.ID = created.ID
 		code.CreatedAt = created.CreatedAt
@@ -426,6 +434,7 @@ func redeemCodeEntityToService(m *dbent.RedeemCode) *service.RedeemCode {
 		GroupID:      m.GroupID,
 		ValidityDays: m.ValidityDays,
 	}
+	out.CurrencyConversion = service.DecodeCurrencyConversion(m.CurrencyConversion, fmt.Sprintf("redeem_code %d", m.ID))
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)
 	}

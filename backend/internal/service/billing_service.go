@@ -217,6 +217,9 @@ type CostBreakdown struct {
 	// ServiceTierNotOffered 是请求了、但价卡不提供的服务档（如官方没公布 Ultrafast 价的模型收到
 	// service_tier=ultrafast）；这类请求按标准价计费，由 CalculateCostUnified 记日志。空串表示无此情况。
 	ServiceTierNotOffered string
+	// CurrencyConversion 非空表示价卡不是记账币种：上面各项费用已按其中的汇率折算成记账币种
+	// （落账到 usage_logs.currency_conversion）。nil 表示价卡就是记账币种。
+	CurrencyConversion *CurrencyConversion
 	// RateMultiplier 是本次实际施加的基础倍率（用户覆盖 ?? 分组默认，token 计费已含高峰因子；
 	// 负值已钳为 0），由 CalculateCostUnified 填充，仅供不变式校验与落账快照。
 	RateMultiplier float64
@@ -273,6 +276,9 @@ type BillingService struct {
 	cfg            *config.Config
 	pricingService *PricingService
 	fallbackPrices map[string]*ModelPricing // 硬编码回退价格
+	// fx 把非记账币种的价卡折算成记账币种（见 convertToAccountingCurrency）；未装配时记账币种按 USD，
+	// 遇到非美元价卡按无价处理。
+	fx *ExchangeRateService
 
 	// fallbackWarnSeen 记录已打过 fallback 警告日志的(已小写化)模型名,
 	// 让 "[Billing] Using fallback pricing" 每个模型每进程最多打一条,
@@ -292,6 +298,81 @@ func NewBillingService(cfg *config.Config, pricingService *PricingService) *Bill
 	s.initFallbackPricing()
 
 	return s
+}
+
+// SetExchangeRateService 装配汇率服务（wire 里调用）。
+func (s *BillingService) SetExchangeRateService(fx *ExchangeRateService) {
+	s.fx = fx
+}
+
+// ProvideBillingService 创建装配好汇率服务的计费服务。
+func ProvideBillingService(cfg *config.Config, pricingService *PricingService, fx *ExchangeRateService) *BillingService {
+	s := NewBillingService(cfg, pricingService)
+	s.SetExchangeRateService(fx)
+	return s
+}
+
+// exchangeRates 返回装配的汇率服务（可能为 nil：ExchangeRateService 的方法对 nil 接收者按记账币种 USD 处理）。
+func (s *BillingService) exchangeRates() *ExchangeRateService {
+	if s == nil {
+		return nil
+	}
+	return s.fx
+}
+
+// accountingCurrency 返回站内记账币种。
+func (s *BillingService) accountingCurrency(ctx context.Context) string {
+	if s == nil || s.fx == nil {
+		return DefaultBalanceCurrency
+	}
+	return s.fx.AccountingCurrency(ctx)
+}
+
+// convertToAccountingCurrency 把按 priceCurrency 算出的费用折算成记账币种（使用时刻 at 的汇率），并把折算依据
+// 记在 breakdown 上。这是价格币种折算的唯一施加点：token / 按次 / 图片 / 视频计费都经 CalculateCostUnified 到这里。
+// 取不到汇率时按无价处理（ErrModelPricingUnavailable：零成本落账 + 告警），不按 1:1 悄悄记账。
+func (s *BillingService) convertToAccountingCurrency(ctx context.Context, priceCurrency string, at time.Time, breakdown *CostBreakdown) error {
+	accounting := s.accountingCurrency(ctx)
+	if breakdown == nil || priceCurrency == accounting {
+		return nil
+	}
+	if s == nil || s.fx == nil {
+		return fmt.Errorf("%w: price card is in %s but the accounting currency is %s and no exchange rate service is configured",
+			ErrModelPricingUnavailable, priceCurrency, accounting)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, conversion, err := s.fx.Convert(ctx, 1, priceCurrency, accounting, at, FXBilling)
+	if err != nil {
+		return fmt.Errorf("%w: convert %s price card to %s: %v", ErrModelPricingUnavailable, priceCurrency, accounting, err)
+	}
+	applyCostBreakdownMultiplier(breakdown, conversion.Rate)
+	breakdown.CurrencyConversion = conversion
+	return nil
+}
+
+// ConvertPriceToAccounting 把以 priceCurrency 计的金额折算成记账币种（at 时刻、计费口径的汇率），供不经
+// CalculateCostUnified 的场景（账号统计自定义规则、批量图片单价快照、模型广场展示）使用：与计费同一个折算点。
+// 同币种时折算记录为 nil。
+func (s *BillingService) ConvertPriceToAccounting(ctx context.Context, amount float64, priceCurrency string, at time.Time) (float64, *CurrencyConversion, error) {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	breakdown := &CostBreakdown{TotalCost: amount}
+	if err := s.convertToAccountingCurrency(ctx, priceCurrency, at, breakdown); err != nil {
+		return 0, nil, err
+	}
+	return breakdown.TotalCost, breakdown.CurrencyConversion, nil
+}
+
+// resolvedPriceCurrency 返回解析出的价卡的标价币种：分组 / 渠道条目按其 currency，价格目录为 USD。
+func resolvedPriceCurrency(resolved *ResolvedPricing) string {
+	if resolved != nil && resolved.channelPricing != nil &&
+		(resolved.Source == PricingSourceGroup || resolved.Source == PricingSourceChannel) {
+		return pricingCurrency(resolved.channelPricing)
+	}
+	return CatalogPriceCurrency
 }
 
 // initFallbackPricing 初始化硬编码回退价格（当动态价格不可用时使用）
@@ -1034,9 +1115,16 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 	if input.RateMultiplier < 0 {
 		input.RateMultiplier = 0
 	}
-	breakdown, err := s.calculateBaseCostUnified(input)
+	breakdown, priceCurrency, err := s.calculateBaseCostUnified(input)
 	if err != nil || breakdown == nil {
 		return breakdown, err
+	}
+	pricingAt := input.PricingAt
+	if pricingAt.IsZero() {
+		pricingAt = time.Now()
+	}
+	if err := s.convertToAccountingCurrency(input.Ctx, priceCurrency, pricingAt, breakdown); err != nil {
+		return nil, err
 	}
 	applyGroupModelRateMultiplier(breakdown, input)
 	if breakdown.ServiceTierNotOffered != "" {
@@ -1049,8 +1137,9 @@ func (s *BillingService) CalculateCostUnified(input CostInput) (*CostBreakdown, 
 	return breakdown, nil
 }
 
-// calculateBaseCostUnified 计算不含逐模型因子的基础费用（ActualCost = TotalCost × RateMultiplier）。
-func (s *BillingService) calculateBaseCostUnified(input CostInput) (*CostBreakdown, error) {
+// calculateBaseCostUnified 计算不含逐模型因子的基础费用（ActualCost = TotalCost × RateMultiplier），
+// 金额以价卡的标价币种计，一并返回该币种。
+func (s *BillingService) calculateBaseCostUnified(input CostInput) (*CostBreakdown, string, error) {
 	if input.Resolver == nil {
 		// 无 Resolver：内置定价路径，长上下文阶梯由定价目录驱动
 		// （上游 0.2.x 起网关不再单独传阈值，见 CalculateTokenCostForRequest）。
@@ -1060,12 +1149,12 @@ func (s *BillingService) calculateBaseCostUnified(input CostInput) (*CostBreakdo
 		}
 		pricing, err := s.GetModelPricing(input.Model)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		breakdown := s.computeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongContextBilling)
 		applyCostBreakdownMultiplier(breakdown, reasoningEffortBillingMultiplier(input.ReasoningEffort, pricing.ReasoningEffortMultipliers))
 		breakdown.BillingMode = string(BillingModeToken)
-		return breakdown, nil
+		return breakdown, CatalogPriceCurrency, nil
 	}
 
 	// 优先使用预解析结果，避免重复 Resolve 调用
@@ -1095,7 +1184,7 @@ func (s *BillingService) calculateBaseCostUnified(input CostInput) (*CostBreakdo
 			breakdown.BillingMode = string(BillingModeToken)
 		}
 	}
-	return breakdown, err
+	return breakdown, resolvedPriceCurrency(resolved), err
 }
 
 // applyGroupModelRateMultiplier 是分组逐模型倍率在计费侧的唯一施加点：

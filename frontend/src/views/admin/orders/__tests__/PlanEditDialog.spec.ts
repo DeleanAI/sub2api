@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 
 import PlanEditDialog from '../PlanEditDialog.vue'
 import type { AdminGroup } from '@/types'
@@ -21,6 +21,13 @@ vi.mock('@/stores/app', () => ({
     showSuccess: vi.fn(),
   }),
 }))
+
+const fx = vi.hoisted(() => ({
+  currencies: vi.fn(),
+  convert: vi.fn(),
+}))
+
+vi.mock('@/api/admin', () => ({ adminAPI: { exchangeRates: fx } }))
 
 vi.mock('@/api/admin/payment', () => ({
   adminPaymentAPI: {
@@ -139,34 +146,51 @@ function mountDialog({
 }
 
 describe('PlanEditDialog', () => {
-  it('shows CNY channel charge using the configured subscription rate and fee', async () => {
-    const wrapper = mountDialog({
-      paymentConfig: {
-        subscription_usd_to_cny_rate: 7.15,
-        recharge_fee_rate: 2.5,
-      },
-    })
+  beforeEach(() => {
+    vi.useFakeTimers()
+    fx.currencies.mockResolvedValue({ accounting_currency: 'USD', currencies: ['CNY', 'USD', 'USDC', 'USDT'], fiat_currencies: ['CNY', 'USD'], default_price_currency: 'USD' })
+    fx.convert.mockReset()
+  })
+  afterEach(() => vi.useRealTimers())
+
+  async function settle() {
+    await flushPromises()
+    vi.advanceTimersByTime(300)
+    await flushPromises()
+  }
+
+  it('previews the RMB channel charge of a USD plan at today\'s rate, fee included', async () => {
+    fx.convert.mockResolvedValue({ amount: 9.99, currency: 'USD', to: 'CNY', accounting_currency: 'USD', converted: 67.28, conversion: null })
+    const wrapper = mountDialog({ paymentConfig: { recharge_fee_rate: 2.5 } })
 
     await wrapper.find('input[type="number"]').setValue('9.99')
+    await settle()
 
-    expect(wrapper.text()).toContain('preview')
-    expect(wrapper.text()).toContain('¥71.43')
-    expect(wrapper.text()).toContain('fee 2.5')
-    expect(wrapper.text()).toContain('¥73.22')
+    expect(fx.convert).toHaveBeenLastCalledWith(9.99, 'USD', 'CNY')
+    expect(wrapper.text()).toContain('preview ¥67.28')
+    expect(wrapper.text()).toContain('fee 2.5 ¥68.97')
   })
 
-  it('hides the preview when the subscription rate is not configured', async () => {
-    const wrapper = mountDialog({
-      paymentConfig: {
-        subscription_usd_to_cny_rate: 0,
-        recharge_fee_rate: 2.5,
-      },
-    })
+  it('does not preview a plan already priced in the RMB channel currency', async () => {
+    const wrapper = mountDialog({ paymentConfig: { recharge_fee_rate: 0 } })
+
+    await wrapper.find('input[maxlength="3"]').setValue('cny')
+    await wrapper.find('input[type="number"]').setValue('30')
+    await settle()
+
+    expect(fx.convert).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('preview')
+  })
+
+  it('says so when the rate is unavailable instead of guessing', async () => {
+    fx.convert.mockRejectedValue({})
+    const wrapper = mountDialog({ paymentConfig: { recharge_fee_rate: 0 } })
 
     await wrapper.find('input[type="number"]').setValue('9.99')
+    await settle()
 
     expect(wrapper.text()).not.toContain('preview')
-    expect(wrapper.text()).not.toContain('¥71.43')
+    expect(wrapper.text()).toContain('payment.admin.subscriptionPreviewUnavailable')
   })
 
   it('allows composite subscription groups for payment plans', () => {

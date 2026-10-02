@@ -3,7 +3,8 @@ import { enableAutoUnmount, mount } from '@vue/test-utils'
 import type { PaymentOrder } from '@/types/payment'
 import AdminRefundDialog from '../AdminRefundDialog.vue'
 
-vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
+// 只替换 useI18n：订单金额的写法经 utils/currencyConversion → stores/app 会用到真实的 createI18n。
+vi.mock('vue-i18n', async (importOriginal) => ({ ...(await importOriginal<typeof import('vue-i18n')>()), useI18n: () => ({ t: (key: string) => key }) }))
 enableAutoUnmount(afterEach)
 
 async function openRefund(overrides: Partial<PaymentOrder> = {}) {

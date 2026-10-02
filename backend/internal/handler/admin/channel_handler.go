@@ -60,6 +60,7 @@ type channelModelPricingRequest struct {
 	Platform                   string                     `json:"platform" binding:"omitempty,max=50"`
 	Models                     []string                   `json:"models" binding:"required,min=1,max=100"`
 	BillingMode                string                     `json:"billing_mode" binding:"omitempty,oneof=token per_request image"`
+	Currency                   string                     `json:"currency" binding:"omitempty,max=10"`
 	InputPrice                 *float64                   `json:"input_price" binding:"omitempty,min=0"`
 	OutputPrice                *float64                   `json:"output_price" binding:"omitempty,min=0"`
 	CacheWritePrice            *float64                   `json:"cache_write_price" binding:"omitempty,min=0"`
@@ -134,6 +135,7 @@ type channelModelPricingResponse struct {
 	Platform                   string                      `json:"platform"`
 	Models                     []string                    `json:"models"`
 	BillingMode                string                      `json:"billing_mode"`
+	Currency                   string                      `json:"currency"`
 	InputPrice                 *float64                    `json:"input_price"`
 	OutputPrice                *float64                    `json:"output_price"`
 	CacheWritePrice            *float64                    `json:"cache_write_price"`
@@ -264,6 +266,7 @@ func pricingToResponse(p *service.ChannelModelPricing) channelModelPricingRespon
 		Platform:                   platform,
 		Models:                     models,
 		BillingMode:                billingMode,
+		Currency:                   p.Currency,
 		InputPrice:                 p.InputPrice,
 		OutputPrice:                p.OutputPrice,
 		CacheWritePrice:            p.CacheWritePrice,
@@ -362,6 +365,7 @@ func pricingRequestToService(reqs []channelModelPricingRequest, allowChannelMult
 			Platform:                   platform,
 			Models:                     r.Models,
 			BillingMode:                billingMode,
+			Currency:                   r.Currency,
 			InputPrice:                 r.InputPrice,
 			OutputPrice:                r.OutputPrice,
 			CacheWritePrice:            r.CacheWritePrice,
@@ -618,8 +622,10 @@ func (h *ChannelHandler) GetModelDefaultPricing(c *gin.Context) {
 		cacheWrite1hPrice = &pricing.CacheCreation1hPrice
 	}
 
+	// currency：目录价的标价币种。编辑器只在条目也按这个币种标价时才拿它预填，不把美元数字填进人民币条目。
 	response.Success(c, gin.H{
 		"found":                        true,
+		"currency":                     service.CatalogPriceCurrency,
 		"input_price":                  pricing.InputPricePerToken,
 		"output_price":                 pricing.OutputPricePerToken,
 		"cache_write_price":            cacheWritePrice,

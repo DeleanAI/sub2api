@@ -80,12 +80,16 @@
                   <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
                   <span class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ formatSelectedPaymentAmount(totalAmount) }}</span>
                 </div>
-                <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
+                <div v-if="showCreditedPreview" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }" data-testid="credited-preview">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('payment.creditedBalance') }}</span>
-                  <span class="text-gray-900 dark:text-white">{{ $currency }}{{ creditedAmount.toFixed(2) }}</span>
+                  <span v-if="creditedPreview !== null" class="text-gray-900 dark:text-white">{{ $currency }}{{ creditedPreview.toFixed(2) }}</span>
+                  <span v-else class="text-amber-600 dark:text-amber-300">{{ t('payment.exchangeRateUnavailable') }}</span>
                 </div>
-                <p v-if="balanceRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
+                <p v-if="topUpRateNote" class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400" data-testid="exchange-rate-note">
+                  {{ topUpRateNote }}
+                </p>
+                <p v-if="balanceRechargeMultiplier !== 1" class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('payment.rechargeRatePreview', { multiplier: balanceRechargeMultiplier.toFixed(2) }) }}
                 </p>
               </div>
             </div>
@@ -118,6 +122,7 @@
                   <span :class="['text-3xl font-bold', planTextClass]">{{ formatSelectedSubscriptionPaymentAmount(selectedPlan.price) }}</span>
                   <span class="text-sm text-gray-500 dark:text-gray-400">/ {{ planValiditySuffix }}</span>
                 </div>
+                <p v-if="planConversionNote" class="mt-1 text-xs text-gray-500 dark:text-gray-400" data-testid="plan-conversion-note">{{ planConversionNote }}</p>
                 <!-- Description -->
                 <p v-if="selectedPlan.description" class="mt-2 text-sm leading-relaxed text-gray-500 dark:text-gray-400">
                   {{ selectedPlan.description }}
@@ -296,7 +301,10 @@ import { platformAccentBarClass, platformBadgeLightClass, platformBadgeClass, pl
 import SubscriptionPlanCard from '@/components/payment/SubscriptionPlanCard.vue'
 import PaymentStatusPanel from '@/components/payment/PaymentStatusPanel.vue'
 import Icon from '@/components/icons/Icon.vue'
-import { DEFAULT_PAYMENT_CURRENCY, currencySymbol, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
+import { currencySymbol, formatPaymentAmount, normalizePaymentCurrency } from '@/components/payment/currency'
+import { conversionRate, creditedBalancePreview, subscriptionGatewayBasePreview } from '@/components/payment/exchange'
+import { quoteSourceKey } from '@/utils/currencyConversion'
+import { balanceCurrencyCode } from '@/utils/balanceCurrency'
 import { planValiditySuffix as validitySuffixOf } from '@/components/payment/validity'
 import type { PaymentMethodOption } from '@/components/payment/PaymentMethodSelector.vue'
 import { buildPaymentErrorToastMessage, describePaymentScenarioError } from './paymentUx'
@@ -511,7 +519,7 @@ function onPaymentSettled() {
 // All checkout data from single API call
 const checkout = ref<CheckoutInfoResponse>({
   methods: {}, global_min: 0, global_max: 0,
-  plans: [], balance_disabled: false, balance_recharge_multiplier: 1, subscription_usd_to_cny_rate: 0, recharge_fee_rate: 0, help_text: '', help_image_url: '', stripe_publishable_key: '',
+  plans: [], balance_disabled: false, balance_recharge_multiplier: 1, accounting_currency: '', exchange_rates: {}, recharge_fee_rate: 0, help_text: '', help_image_url: '', stripe_publishable_key: '',
 })
 
 const renderedHelpText = computed(() => DOMPurify.sanitize(
@@ -545,12 +553,9 @@ const balanceRechargeMultiplier = computed(() => {
   const multiplier = checkout.value.balance_recharge_multiplier
   return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1
 })
-// 订阅 CNY 换算汇率（1 USD = X CNY）。0 = 未配置，订阅保持 price 直付（与后端 opt-in 条件严格镜像）。
-const subscriptionUsdToCnyRate = computed(() => {
-  const rate = checkout.value.subscription_usd_to_cny_rate
-  return Number.isFinite(rate) && rate > 0 ? rate : 0
-})
-const creditedAmount = computed(() => Math.round((validAmount.value * balanceRechargeMultiplier.value) * 100) / 100)
+// 余额的记账币种：充值到账 = 支付金额按当天汇率折算成它（components/payment/exchange.ts，与后端下单同一算法），再乘充值倍率。
+const accountingCurrency = computed(() => checkout.value.accounting_currency || balanceCurrencyCode())
+const exchangeRates = computed(() => checkout.value.exchange_rates || {})
 
 // Adaptive grid: center single card, 2-col for 2 plans, 3-col for 3+
 const planGridClass = computed(() => {
@@ -618,10 +623,30 @@ function ceilPaymentAmount(value: number, currency: string): number {
   return Math.ceil(value * factor) / factor
 }
 
-function subscriptionPaymentAmountForCurrency(value: number, currency: string): number {
-  const rate = subscriptionUsdToCnyRate.value
-  if (rate <= 0 || currency !== DEFAULT_PAYMENT_CURRENCY) return roundPaymentAmount(value, currency)
-  return roundPaymentAmount(value * rate, currency)
+// 汇率出处写成「2026-09-30 中国外汇交易中心人民币中间价」，美元本身没有出处。
+function rateSourceLabel(currency: string): string {
+  const rate = exchangeRates.value[currency]
+  if (!rate?.source) return ''
+  const key = quoteSourceKey(rate.source)
+  return `${rate.rate_date || ''} ${key ? t(key) : rate.source}`.trim()
+}
+
+// 充值：支付币种与记账币种不同时，按当天汇率折算后入账。
+const topUpNeedsConversion = computed(() => selectedCurrency.value !== accountingCurrency.value)
+const creditedPreview = computed(() => creditedBalancePreview(validAmount.value, selectedCurrency.value, accountingCurrency.value, balanceRechargeMultiplier.value, exchangeRates.value))
+const showCreditedPreview = computed(() => topUpNeedsConversion.value || balanceRechargeMultiplier.value !== 1)
+const topUpRateNote = computed(() => {
+  if (!topUpNeedsConversion.value) return ''
+  const rate = conversionRate(exchangeRates.value, selectedCurrency.value, accountingCurrency.value)
+  if (rate === null) return ''
+  const source = rateSourceLabel(selectedCurrency.value) || rateSourceLabel(accountingCurrency.value)
+  return t('payment.exchangeRatePreview', { currency: selectedCurrency.value, rate: rate.toFixed(4), source })
+})
+
+/** 套餐价（套餐币种）在网关币种下的扣款基数；缺汇率时为 null（不给预览，也不能下单）。 */
+function subscriptionPaymentAmountForCurrency(value: number, currency: string): number | null {
+  const planCurrency = selectedPlan.value?.currency || accountingCurrency.value
+  return subscriptionGatewayBasePreview(value, planCurrency, currency, currencyFractionDigits(currency), exchangeRates.value)
 }
 
 function formatSelectedPaymentAmount(value: number): string {
@@ -629,8 +654,24 @@ function formatSelectedPaymentAmount(value: number): string {
 }
 
 function formatSelectedSubscriptionPaymentAmount(value: number): string {
-  return formatSelectedPaymentAmount(subscriptionPaymentAmountForCurrency(value, selectedCurrency.value))
+  const converted = subscriptionPaymentAmountForCurrency(value, selectedCurrency.value)
+  if (converted !== null) return formatSelectedPaymentAmount(converted)
+  return formatPaymentAmount(value, selectedPlan.value?.currency || accountingCurrency.value, localeCode.value)
 }
+
+// 套餐币种与网关币种不同时，注明套餐原价与折算依据。
+const planConversionNote = computed(() => {
+  const plan = selectedPlan.value
+  if (!plan) return ''
+  const planCurrency = plan.currency || accountingCurrency.value
+  if (planCurrency === selectedCurrency.value) return ''
+  const price = formatPaymentAmount(plan.price, planCurrency, localeCode.value)
+  if (subscriptionPaymentAmountForCurrency(plan.price, selectedCurrency.value) === null) {
+    return t('payment.planPriceRateUnavailable', { price })
+  }
+  const source = rateSourceLabel(planCurrency) || rateSourceLabel(selectedCurrency.value)
+  return t('payment.planPriceConverted', { price, source })
+})
 
 const methodOptions = computed<PaymentMethodOption[]>(() =>
   enabledMethods.value.map((type) => {
@@ -675,12 +716,16 @@ const canSubmit = computed(() =>
   validAmount.value > 0
     && amountFitsMethod(validAmount.value, selectedMethod.value)
     && selectedLimit.value?.available !== false
+    && creditedPreview.value !== null
 )
 
 const subPaymentAmount = computed(() => {
   const price = selectedPlan.value?.price ?? 0
-  return subscriptionPaymentAmountForCurrency(price, selectedCurrency.value)
+  return subscriptionPaymentAmountForCurrency(price, selectedCurrency.value) ?? 0
 })
+const subRateAvailable = computed(() =>
+  !selectedPlan.value || subscriptionPaymentAmountForCurrency(selectedPlan.value.price, selectedCurrency.value) !== null
+)
 
 const subFeeAmount = computed(() => {
   if (feeRate.value <= 0 || subPaymentAmount.value <= 0) return 0
@@ -692,8 +737,9 @@ const subTotalAmount = computed(() => {
   return roundPaymentAmount(subPaymentAmount.value + subFeeAmount.value, selectedCurrency.value)
 })
 
-function subscriptionTotalAmountForCurrency(value: number, currency: string): number {
+function subscriptionTotalAmountForCurrency(value: number, currency: string): number | null {
   const paymentAmount = subscriptionPaymentAmountForCurrency(value, currency)
+  if (paymentAmount === null) return null
   if (feeRate.value <= 0 || paymentAmount <= 0) return paymentAmount
   const fee = ceilPaymentAmount((paymentAmount * feeRate.value) / 100, currency)
   return roundPaymentAmount(paymentAmount + fee, currency)
@@ -705,17 +751,20 @@ const subMethodOptions = computed<PaymentMethodOption[]>(() => {
   return enabledMethods.value.map((type) => {
     const ml = visibleMethods.value[type]
     const currency = normalizePaymentCurrency(ml?.currency)
+    const total = subscriptionTotalAmountForCurrency(price, currency)
     return {
       type,
       display_name: ml?.display_name,
       fee_rate: ml?.fee_rate ?? 0,
-      available: ml?.available !== false && amountFitsMethod(subscriptionTotalAmountForCurrency(price, currency), type),
+      // 缺这个网关币种的汇率时下单会被拒，这里直接标成不可用
+      available: ml?.available !== false && total !== null && amountFitsMethod(total, type),
     }
   })
 })
 
 const canSubmitSubscription = computed(() =>
   selectedPlan.value !== null
+    && subRateAvailable.value
     && amountFitsMethod(subTotalAmount.value, selectedMethod.value)
     && selectedLimit.value?.available !== false
 )

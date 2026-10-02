@@ -35,7 +35,7 @@
         </div>
         <div class="mt-1 flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.creditedAmount') }}</span>
-          <span class="font-medium text-gray-900 dark:text-white">{{ $currency }}{{ order?.amount?.toFixed(2) }}</span>
+          <span class="font-medium text-gray-900 dark:text-white">{{ formatOrderAmount(order?.amount ?? 0, order?.amount_currency) }}</span>
         </div>
         <div class="mt-1 flex justify-between text-sm">
           <span class="text-gray-500 dark:text-gray-400">{{ t('payment.orders.payAmount') }}</span>
@@ -70,7 +70,7 @@
           </div>
           <div class="rounded-lg bg-gray-50 p-3 text-sm dark:bg-dark-700">
             <div class="text-gray-500 dark:text-gray-400">{{ t('payment.admin.orderAmount') }}</div>
-            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ $currency }}{{ order?.amount?.toFixed(2) }}</div>
+            <div class="mt-1 font-semibold text-gray-900 dark:text-white">{{ formatOrderAmount(order?.amount ?? 0, order?.amount_currency) }}</div>
           </div>
         </div>
 
@@ -170,6 +170,7 @@ import BaseDialog from '@/components/common/BaseDialog.vue'
 import type { PaymentOrder } from '@/types/payment'
 import { formatOrderDateTime } from '@/components/payment/orderUtils'
 import { currencySymbol } from '@/components/payment/currency'
+import { formatOrderAmount } from '@/utils/currencyConversion'
 
 const { t } = useI18n()
 

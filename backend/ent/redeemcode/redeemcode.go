@@ -36,6 +36,8 @@ const (
 	FieldGroupID = "group_id"
 	// FieldValidityDays holds the string denoting the validity_days field in the database.
 	FieldValidityDays = "validity_days"
+	// FieldCurrencyConversion holds the string denoting the currency_conversion field in the database.
+	FieldCurrencyConversion = "currency_conversion"
 	// EdgeUser holds the string denoting the user edge name in mutations.
 	EdgeUser = "user"
 	// EdgeGroup holds the string denoting the group edge name in mutations.
@@ -72,6 +74,7 @@ var Columns = []string{
 	FieldExpiresAt,
 	FieldGroupID,
 	FieldValidityDays,
+	FieldCurrencyConversion,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).

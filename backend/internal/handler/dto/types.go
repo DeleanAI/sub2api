@@ -519,6 +519,10 @@ type RedeemCode struct {
 	GroupID      *int64 `json:"group_id"`
 	ValidityDays int    `json:"validity_days"`
 
+	// CurrencyConversion：按非记账币种入账（管理员按人民币 / USDT 调整、在线支付以人民币付款）时的原币金额与汇率；
+	// Value 已是记账币种。同币种时省略。
+	CurrencyConversion *service.CurrencyConversion `json:"currency_conversion,omitempty"`
+
 	// Notes is only populated for admin_balance/admin_concurrency types
 	// so users can see why they were charged or credited
 	Notes *string `json:"notes,omitempty"`
@@ -666,6 +670,10 @@ type UsageLog struct {
 
 	// BillingMode 计费模式：token/image
 	BillingMode *string `json:"billing_mode,omitempty"`
+
+	// CurrencyConversion：价卡不是记账币种（如方舟按人民币标价）时所用的汇率；上面的费用已是记账币种。
+	// 和倍率一样是用户实际承担的价格构成，用户自己的账单里也展示。
+	CurrencyConversion *service.CurrencyConversion `json:"currency_conversion,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 

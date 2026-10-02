@@ -530,6 +530,11 @@
             <span class="text-gray-400">{{ t('usage.modelMultiplier') }}</span>
             <span class="font-semibold" :class="tooltipData.model_rate_multiplier === 1 ? 'text-blue-400' : 'text-amber-300'">{{ formatMultiplier(tooltipData.model_rate_multiplier) }}x</span>
           </div>
+          <!-- 价卡不是记账币种（如方舟按人民币标价）：上面的费用已按使用时刻的汇率折算 -->
+          <div v-if="tooltipData?.currency_conversion" class="flex items-start justify-between gap-6" data-testid="currency-conversion-row">
+            <span class="text-gray-400">{{ t('usage.priceCurrency', { currency: tooltipData.currency_conversion.from_currency }) }}</span>
+            <CurrencyConversionNote :conversion="tooltipData.currency_conversion" variant="tooltip" class="text-right" />
+          </div>
           <div class="flex items-center justify-between gap-6">
             <span class="text-gray-400">{{ t('usage.original') }}</span>
             <span class="font-medium text-white">{{ $currency }}{{ tooltipData?.total_cost?.toFixed(8) || '0.00000000' }}</span>
@@ -613,6 +618,7 @@ import DataTable from '@/components/common/DataTable.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import IpGeoCell from '@/components/common/IpGeoCell.vue'
 import Icon from '@/components/icons/Icon.vue'
+import CurrencyConversionNote from '@/components/common/CurrencyConversionNote.vue'
 import { fetchBatch, getEntry } from '@/utils/ipGeoLookup'
 import type { AdminUsageLog } from '@/types'
 import type { Column } from '@/components/common/types'

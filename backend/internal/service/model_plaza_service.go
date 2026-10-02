@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // PlazaOfficialPricing 模型广场展示用的官方参考价（USD per token），与计费同源：
@@ -227,6 +228,9 @@ func (s *ModelPlazaService) fillDisplayPricing(ctx context.Context, m *PlazaMode
 	if groupPricing := matchGroupModelPricing(g, m.Name); groupPricing != nil {
 		m.Pricing = groupPricing
 	}
+	// 渠道 / 分组条目的原始价是它的标价币种：先整体折算成记账币种（今天的汇率），再参与展示合成；
+	// 阶梯表本身走真实计费，已经是记账币种；分组图片档位价本来就是记账币种。
+	m.Pricing = s.billingService.exchangeRates().PricingInAccounting(ctx, m.Pricing)
 	if s.billingService != nil && s.resolver != nil {
 		sched, err := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{
 			Model:    m.Name,
@@ -343,16 +347,18 @@ func (s *ModelPlazaService) lookupOfficialPricing(ctx context.Context, modelName
 		return cached
 	}
 	var result *PlazaOfficialPricing
-	if mp, err := s.billingService.GetModelPricing(modelName); err == nil && mp != nil {
+	// 官方价是美元，展示时折算成记账币种（今天的汇率）；折算不了就不展示，不把美元数字当记账币种给人看。
+	rate, _, rateErr := s.billingService.ConvertPriceToAccounting(ctx, 1, CatalogPriceCurrency, time.Now())
+	if mp, err := s.billingService.GetModelPricing(modelName); err == nil && mp != nil && rateErr == nil {
 		result = &PlazaOfficialPricing{
-			InputPrice:      nonZeroPtr(mp.InputPricePerToken),
-			OutputPrice:     nonZeroPtr(mp.OutputPricePerToken),
-			CacheWritePrice: nonZeroPtr(mp.CacheCreationPricePerToken),
-			CacheReadPrice:  nonZeroPtr(mp.CacheReadPricePerToken),
+			InputPrice:      nonZeroPtr(mp.InputPricePerToken * rate),
+			OutputPrice:     nonZeroPtr(mp.OutputPricePerToken * rate),
+			CacheWritePrice: nonZeroPtr(mp.CacheCreationPricePerToken * rate),
+			CacheReadPrice:  nonZeroPtr(mp.CacheReadPricePerToken * rate),
 		}
 		// 计费只在支持 5m/1h 分档时使用 1h 价，其余情况 1h 价对用户无意义。
 		if mp.SupportsCacheBreakdown {
-			result.CacheWrite1hPrice = nonZeroPtr(mp.CacheCreation1hPrice)
+			result.CacheWrite1hPrice = nonZeroPtr(mp.CacheCreation1hPrice * rate)
 		}
 		if s.resolver != nil {
 			sched, schedErr := s.billingService.ResolveContextPricingSchedule(ctx, s.resolver, ContextPricingScheduleInput{Model: modelName})

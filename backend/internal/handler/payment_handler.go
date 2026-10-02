@@ -82,7 +82,7 @@ func (h *PaymentHandler) GetPlans(c *gin.Context) {
 			RateMultiplier: gi.RateMultiplier, PeakRateEnabled: gi.PeakRateEnabled,
 			PeakStart: gi.PeakStart, PeakEnd: gi.PeakEnd, PeakRateMultiplier: gi.PeakRateMultiplier,
 			Name: p.Name, Description: p.Description, Price: p.Price, OriginalPrice: p.OriginalPrice,
-			Currency:     p.Currency,
+			Currency:     service.PriceCurrencyOrDefault(p.Currency),
 			ValidityDays: p.ValidityDays, ValidityUnit: p.ValidityUnit, Features: p.Features,
 			ProductName: p.ProductName, ForSale: p.ForSale, SortOrder: p.SortOrder,
 		})
@@ -122,6 +122,11 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 	plans, _ := h.configService.ListPlansForSale(ctx)
 	groupInfo := h.configService.GetGroupInfoMap(ctx, plans)
 	planList := make([]checkoutPlan, 0, len(plans))
+	// 结算页预览要用到的币种：记账币种（充值到账）、各支付方式的网关币种、各套餐的标价币种。
+	fxCurrencies := make([]string, 0, len(limitsResp.Methods)+len(plans))
+	for _, m := range limitsResp.Methods {
+		fxCurrencies = append(fxCurrencies, m.Currency)
+	}
 	for _, p := range plans {
 		gi := groupInfo[p.GroupID]
 		planList = append(planList, checkoutPlan{
@@ -134,11 +139,13 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 			WeeklyLimitUSD: gi.WeeklyLimitUSD, MonthlyLimitUSD: gi.MonthlyLimitUSD,
 			ModelScopes: gi.ModelScopes,
 			Name:        p.Name, Description: p.Description, Price: p.Price, OriginalPrice: p.OriginalPrice,
-			Currency:     p.Currency,
+			Currency:     service.PriceCurrencyOrDefault(p.Currency),
 			ValidityDays: p.ValidityDays, ValidityUnit: p.ValidityUnit, Features: parseFeatures(p.Features),
 			ProductName: p.ProductName,
 		})
+		fxCurrencies = append(fxCurrencies, service.PriceCurrencyOrDefault(p.Currency))
 	}
+	accountingCurrency, exchangeRates := h.paymentService.CheckoutExchangeRates(ctx, fxCurrencies)
 
 	response.Success(c, checkoutInfoResponse{
 		Methods:                       limitsResp.Methods,
@@ -147,7 +154,8 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 		Plans:                         planList,
 		BalanceDisabled:               cfg.BalanceDisabled,
 		BalanceRechargeMultiplier:     cfg.BalanceRechargeMultiplier,
-		SubscriptionUSDToCNYRate:      cfg.SubscriptionUSDToCNYRate,
+		AccountingCurrency:            accountingCurrency,
+		ExchangeRates:                 exchangeRates,
 		RechargeFeeRate:               cfg.RechargeFeeRate,
 		HelpText:                      cfg.HelpText,
 		HelpImageURL:                  cfg.HelpImageURL,
@@ -158,19 +166,22 @@ func (h *PaymentHandler) GetCheckoutInfo(c *gin.Context) {
 }
 
 type checkoutInfoResponse struct {
-	Methods                       map[string]service.MethodLimits `json:"methods"`
-	GlobalMin                     float64                         `json:"global_min"`
-	GlobalMax                     float64                         `json:"global_max"`
-	Plans                         []checkoutPlan                  `json:"plans"`
-	BalanceDisabled               bool                            `json:"balance_disabled"`
-	BalanceRechargeMultiplier     float64                         `json:"balance_recharge_multiplier"`
-	SubscriptionUSDToCNYRate      float64                         `json:"subscription_usd_to_cny_rate"`
-	RechargeFeeRate               float64                         `json:"recharge_fee_rate"`
-	HelpText                      string                          `json:"help_text"`
-	HelpImageURL                  string                          `json:"help_image_url"`
-	StripePublishableKey          string                          `json:"stripe_publishable_key"`
-	AlipayForceQRCode             bool                            `json:"alipay_force_qrcode"`
-	AlipayMobilePrecreateDeepLink bool                            `json:"alipay_mobile_precreate_deep_link"`
+	Methods                   map[string]service.MethodLimits `json:"methods"`
+	GlobalMin                 float64                         `json:"global_min"`
+	GlobalMax                 float64                         `json:"global_max"`
+	Plans                     []checkoutPlan                  `json:"plans"`
+	BalanceDisabled           bool                            `json:"balance_disabled"`
+	BalanceRechargeMultiplier float64                         `json:"balance_recharge_multiplier"`
+	// AccountingCurrency 是余额的记账币种；充值到账 = 支付金额按当天汇率折算成它，再乘充值倍率。
+	AccountingCurrency string `json:"accounting_currency"`
+	// ExchangeRates 是预览用的当前汇率（1 单位该币值多少美元），与下单同口径；实际金额以下单结果为准。
+	ExchangeRates                 map[string]service.CheckoutExchangeRate `json:"exchange_rates"`
+	RechargeFeeRate               float64                                 `json:"recharge_fee_rate"`
+	HelpText                      string                                  `json:"help_text"`
+	HelpImageURL                  string                                  `json:"help_image_url"`
+	StripePublishableKey          string                                  `json:"stripe_publishable_key"`
+	AlipayForceQRCode             bool                                    `json:"alipay_force_qrcode"`
+	AlipayMobilePrecreateDeepLink bool                                    `json:"alipay_mobile_precreate_deep_link"`
 }
 
 type checkoutPlan struct {
@@ -191,11 +202,12 @@ type checkoutPlan struct {
 	Description        string   `json:"description"`
 	Price              float64  `json:"price"`
 	OriginalPrice      *float64 `json:"original_price,omitempty"`
-	Currency           string   `json:"currency,omitempty"`
-	ValidityDays       int      `json:"validity_days"`
-	ValidityUnit       string   `json:"validity_unit"`
-	Features           []string `json:"features"`
-	ProductName        string   `json:"product_name"`
+	// Currency 是套餐价的币种（未设置时为美元）；与网关币种不同时下单按当天汇率折算。
+	Currency     string   `json:"currency"`
+	ValidityDays int      `json:"validity_days"`
+	ValidityUnit string   `json:"validity_unit"`
+	Features     []string `json:"features"`
+	ProductName  string   `json:"product_name"`
 }
 
 // parseFeatures splits a newline-separated features string into a string slice.
@@ -620,27 +632,30 @@ func isMobile(c *gin.Context) bool {
 }
 
 type PaymentOrderResult struct {
-	ID                  int64      `json:"id"`
-	UserID              int64      `json:"user_id"`
-	Amount              float64    `json:"amount"`
-	PayAmount           float64    `json:"pay_amount"`
-	FeeRate             float64    `json:"fee_rate"`
-	Currency            string     `json:"currency"`
-	PaymentType         string     `json:"payment_type"`
-	OutTradeNo          string     `json:"out_trade_no"`
-	Status              string     `json:"status"`
-	OrderType           string     `json:"order_type"`
-	CreatedAt           time.Time  `json:"created_at"`
-	ExpiresAt           time.Time  `json:"expires_at"`
-	PaidAt              *time.Time `json:"paid_at,omitempty"`
-	CompletedAt         *time.Time `json:"completed_at,omitempty"`
-	RefundAmount        float64    `json:"refund_amount"`
-	RefundReason        *string    `json:"refund_reason,omitempty"`
-	RefundRequestedAt   *time.Time `json:"refund_requested_at,omitempty"`
-	RefundRequestedBy   *string    `json:"refund_requested_by,omitempty"`
-	RefundRequestReason *string    `json:"refund_request_reason,omitempty"`
-	PlanID              *int64     `json:"plan_id,omitempty"`
-	ProviderInstanceID  *string    `json:"provider_instance_id,omitempty"`
+	ID        int64   `json:"id"`
+	UserID    int64   `json:"user_id"`
+	Amount    float64 `json:"amount"`
+	PayAmount float64 `json:"pay_amount"`
+	FeeRate   float64 `json:"fee_rate"`
+	Currency  string  `json:"currency"`
+	// AmountCurrency 是 amount 的币种（空 = 站内余额单位），CurrencyConversion 是跨币种下单时的折算依据。
+	AmountCurrency      string                      `json:"amount_currency,omitempty"`
+	CurrencyConversion  *service.CurrencyConversion `json:"currency_conversion,omitempty"`
+	PaymentType         string                      `json:"payment_type"`
+	OutTradeNo          string                      `json:"out_trade_no"`
+	Status              string                      `json:"status"`
+	OrderType           string                      `json:"order_type"`
+	CreatedAt           time.Time                   `json:"created_at"`
+	ExpiresAt           time.Time                   `json:"expires_at"`
+	PaidAt              *time.Time                  `json:"paid_at,omitempty"`
+	CompletedAt         *time.Time                  `json:"completed_at,omitempty"`
+	RefundAmount        float64                     `json:"refund_amount"`
+	RefundReason        *string                     `json:"refund_reason,omitempty"`
+	RefundRequestedAt   *time.Time                  `json:"refund_requested_at,omitempty"`
+	RefundRequestedBy   *string                     `json:"refund_requested_by,omitempty"`
+	RefundRequestReason *string                     `json:"refund_request_reason,omitempty"`
+	PlanID              *int64                      `json:"plan_id,omitempty"`
+	ProviderInstanceID  *string                     `json:"provider_instance_id,omitempty"`
 }
 
 func sanitizePaymentOrdersForResponse(orders []*dbent.PaymentOrder) []PaymentOrderResult {
@@ -664,6 +679,8 @@ func sanitizePaymentOrderForResponse(order *dbent.PaymentOrder) *PaymentOrderRes
 		PayAmount:           order.PayAmount,
 		FeeRate:             order.FeeRate,
 		Currency:            service.PaymentOrderCurrency(order),
+		AmountCurrency:      service.PaymentOrderAmountCurrency(order),
+		CurrencyConversion:  service.PaymentOrderCurrencyConversion(order),
 		PaymentType:         order.PaymentType,
 		OutTradeNo:          order.OutTradeNo,
 		Status:              order.Status,

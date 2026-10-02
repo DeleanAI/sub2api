@@ -740,6 +740,10 @@ func (r *batchImageRepository) AppendBatchImageEvent(ctx context.Context, batchI
 }
 
 func createBatchImageJobWithSQL(ctx context.Context, sqlq batchImageSQLExecutor, params service.CreateBatchImageJobParams) (*service.BatchImageJob, error) {
+	conversionArg, err := currencyConversionArg(params.CurrencyConversion)
+	if err != nil {
+		return nil, err
+	}
 	return scanBatchImageJob(sqlq.QueryRowContext(ctx, `
 INSERT INTO batch_image_jobs (
     batch_id, user_id, api_key_id, account_id, provider, model, task_name, parent_batch_id, status,
@@ -748,7 +752,7 @@ INSERT INTO batch_image_jobs (
     estimated_cost, hold_amount, actual_cost,
     base_unit_price, group_rate_multiplier, account_rate_multiplier,
     batch_discount_multiplier, hold_multiplier, billable_unit_price, hold_unit_price,
-    pricing_snapshot_version,
+    pricing_snapshot_version, currency_conversion,
     currency, hold_id,
     idempotency_key, request_hash, manifest_hash, retry_count, session_id, output_expires_at
 ) VALUES (
@@ -758,9 +762,9 @@ INSERT INTO batch_image_jobs (
     $19, $20, $21,
     $22, $23, $24,
     $25, $26, $27, $28,
-    $29,
-    $30, $31,
-    $32, $33, $34, $35, $36, $37
+    $29, $30,
+    $31, $32,
+    $33, $34, $35, $36, $37, $38
 )
 RETURNING `+batchImageJobColumns,
 		params.BatchID, params.UserID, params.APIKeyID, params.AccountID, params.Provider, params.Model, params.TaskName, params.ParentBatchID, params.Status,
@@ -769,7 +773,7 @@ RETURNING `+batchImageJobColumns,
 		params.EstimatedCost, params.HoldAmount, params.ActualCost,
 		params.BaseUnitPrice, params.GroupRateMultiplier, params.AccountRateMultiplier,
 		params.BatchDiscountMultiplier, params.HoldMultiplier, params.BillableUnitPrice, params.HoldUnitPrice,
-		params.PricingSnapshotVersion,
+		params.PricingSnapshotVersion, conversionArg,
 		params.Currency, params.HoldID,
 		params.IdempotencyKey, params.RequestHash, params.ManifestHash, params.RetryCount, params.SessionID, params.OutputExpiresAt,
 	))
@@ -822,7 +826,7 @@ item_count, success_count, fail_count, cancelled_count,
 estimated_cost, hold_amount, actual_cost,
 base_unit_price, group_rate_multiplier, account_rate_multiplier,
 batch_discount_multiplier, hold_multiplier, billable_unit_price, hold_unit_price,
-pricing_snapshot_version,
+pricing_snapshot_version, currency_conversion,
 currency, hold_id,
 idempotency_key, request_hash, manifest_hash,
 retry_count, version, session_id, output_expires_at, input_deleted_at, output_deleted_at, downloaded_at, user_deleted_at,
@@ -842,6 +846,7 @@ func scanBatchImageJob(row rowScanner) (*service.BatchImageJob, error) {
 	var outputExpiresAt, inputDeletedAt, outputDeletedAt, downloadedAt, userDeletedAt sql.NullTime
 	var lastErrorCode, lastErrorMessage sql.NullString
 	var submittedAt, startedAt, finishedAt, settledAt sql.NullTime
+	var currencyConversion []byte
 
 	err := row.Scan(
 		&job.ID, &job.BatchID, &job.UserID, &apiKeyID, &accountID, &job.Provider, &job.Model, &job.TaskName, &parentBatchID, &job.Status,
@@ -850,7 +855,7 @@ func scanBatchImageJob(row rowScanner) (*service.BatchImageJob, error) {
 		&job.EstimatedCost, &holdAmount, &actualCost,
 		&job.BaseUnitPrice, &job.GroupRateMultiplier, &job.AccountRateMultiplier,
 		&job.BatchDiscountMultiplier, &job.HoldMultiplier, &job.BillableUnitPrice, &job.HoldUnitPrice,
-		&job.PricingSnapshotVersion,
+		&job.PricingSnapshotVersion, &currencyConversion,
 		&job.Currency, &holdID,
 		&idempotencyKey, &requestHash, &manifestHash,
 		&job.RetryCount, &job.Version, &sessionID, &outputExpiresAt, &inputDeletedAt, &outputDeletedAt, &downloadedAt, &userDeletedAt,
@@ -861,6 +866,7 @@ func scanBatchImageJob(row rowScanner) (*service.BatchImageJob, error) {
 		return nil, err
 	}
 
+	job.CurrencyConversion = service.DecodeCurrencyConversion(currencyConversion, "batch_image_job "+job.BatchID)
 	job.APIKeyID = batchImageNullInt64Ptr(apiKeyID)
 	job.AccountID = batchImageNullInt64Ptr(accountID)
 	job.ProviderJobName = batchImageNullStringPtr(providerJobName)

@@ -92,9 +92,11 @@ type UpdateUserRequest struct {
 
 // UpdateBalanceRequest represents balance update request
 type UpdateBalanceRequest struct {
-	Balance   float64 `json:"balance" binding:"required,gt=0"`
-	Operation string  `json:"operation" binding:"required,oneof=set add subtract"`
-	Notes     string  `json:"notes"`
+	Balance float64 `json:"balance" binding:"required,gt=0"`
+	// Currency 是 Balance 的币种（缺省为站内记账币种）；人民币 / USDT / USDC 按当前汇率折算后入账。
+	Currency  string `json:"currency" binding:"omitempty,max=10"`
+	Operation string `json:"operation" binding:"required,oneof=set add subtract"`
+	Notes     string `json:"notes"`
 }
 
 type BindUserAuthIdentityRequest struct {
@@ -408,7 +410,7 @@ func (h *UserHandler) UpdateBalance(c *gin.Context) {
 		Body:   req,
 	}
 	executeAdminIdempotentJSON(c, "admin.users.balance.update", idempotencyPayload, service.DefaultWriteIdempotencyTTL(), func(ctx context.Context) (any, error) {
-		user, execErr := h.adminService.UpdateUserBalance(ctx, userID, req.Balance, req.Operation, req.Notes)
+		user, execErr := h.adminService.UpdateUserBalance(ctx, userID, req.Balance, req.Currency, req.Operation, req.Notes)
 		if execErr != nil {
 			return nil, execErr
 		}

@@ -126,7 +126,12 @@ function checkoutInfoFixture(overrides: Partial<CheckoutInfoResponse> = {}) {
     plans: [],
     balance_disabled: false,
     balance_recharge_multiplier: 1,
-    subscription_usd_to_cny_rate: 0,
+    accounting_currency: 'USD',
+    // 与后端单测同一组数：国庆期间沿用 09-30 中间价 6.7351。
+    exchange_rates: {
+      USD: { usd_per_unit: 1 },
+      CNY: { usd_per_unit: 1 / 6.7351, rate_date: '2026-09-30', source: 'cfets_central_parity' },
+    },
     recharge_fee_rate: 0,
     help_text: '',
     help_image_url: '',
@@ -375,131 +380,124 @@ describe('PaymentView subscription plan grid', () => {
   })
 })
 
-describe('PaymentView recharge rate preview', () => {
-  it('uses the selected payment method currency in both locale templates', async () => {
-    translate.mockClear()
-    routeState.path = '/purchase'
-    routeState.query = {}
-    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+async function mountRecharge(checkout: Partial<CheckoutInfoResponse>, amount: number) {
+  translate.mockClear()
+  routeState.path = '/purchase'
+  routeState.query = {}
+  getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture(checkout))
+  const wrapper = shallowMount(PaymentView, {
+    global: {
+      stubs: {
+        AppLayout: { template: '<div><slot /></div>' },
+        Teleport: true,
+        Transition: false,
+      },
+    },
+  })
+  await flushPromises()
+  wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', amount)
+  await flushPromises()
+  return wrapper
+}
+
+describe('PaymentView recharge preview', () => {
+  it('converts a CNY top-up at the day\'s central parity before applying the multiplier', async () => {
+    const wrapper = await mountRecharge({}, 1000)
+
+    expect(wrapper.get('[data-testid="credited-preview"]').text()).toContain('148.48')
+    expect(translate).toHaveBeenCalledWith('payment.exchangeRatePreview', {
+      currency: 'CNY',
+      rate: '0.1485',
+      source: '2026-09-30 currencyConversion.source.cfets',
+    })
+    expect(wrapper.find('button.btn.w-full').attributes('disabled')).toBeUndefined()
+  })
+
+  it('applies only the multiplier when the payment currency is the accounting currency', async () => {
+    const wrapper = await mountRecharge({
       balance_recharge_multiplier: 0.5,
-      methods: {
-        stripe: {
-          ...checkoutInfoFixture().data.methods.wxpay,
-          currency: 'USD',
-        },
-      },
-    }))
+      methods: { stripe: { ...checkoutInfoFixture().data.methods.wxpay, currency: 'USD' } },
+    }, 10)
 
-    const wrapper = shallowMount(PaymentView, {
-      global: {
-        stubs: {
-          AppLayout: { template: '<div><slot /></div>' },
-          Teleport: true,
-          Transition: false,
-        },
-      },
-    })
-    await flushPromises()
-    wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 10)
-    await flushPromises()
+    expect(wrapper.get('[data-testid="credited-preview"]').text()).toContain('5.00')
+    expect(wrapper.find('[data-testid="exchange-rate-note"]').exists()).toBe(false)
+    expect(translate).toHaveBeenCalledWith('payment.rechargeRatePreview', { multiplier: '0.50' })
+  })
 
-    expect(translate).toHaveBeenCalledWith('payment.rechargeRatePreview', {
-      currency: 'USD',
-      usd: '0.50',
-    })
-    // 左边是所选支付方式的币种，右边是站内余额单位（跟随站点设置的符号）。
-    expect(en.payment.rechargeRatePreview).toBe(`Current rate: 1 {currency} = ${CURRENCY}{usd}`)
-    expect(zh.payment.rechargeRatePreview).toBe(`当前倍率：1 {currency} = ${CURRENCY}{usd}`)
+  it('refuses to preview or order when the rate is unavailable, like the backend', async () => {
+    const wrapper = await mountRecharge({ exchange_rates: { USD: { usd_per_unit: 1 } } }, 100)
+
+    expect(wrapper.get('[data-testid="credited-preview"]').text()).toContain('payment.exchangeRateUnavailable')
+    expect(wrapper.find('button.btn.w-full').attributes('disabled')).toBeDefined()
+  })
+
+  it('keeps the site unit and the rate placeholders in both locale templates', () => {
+    for (const messages of [en, zh]) {
+      expect(messages.payment.exchangeRatePreview).toContain(CURRENCY)
+      expect(messages.payment.exchangeRatePreview).toContain('{currency}')
+      expect(messages.payment.exchangeRatePreview).toContain('{rate}')
+      expect(messages.payment.rechargeRatePreview).toContain('{multiplier}')
+    }
   })
 })
 
 describe('PaymentView subscription confirmation amounts', () => {
-  it('shows converted CNY pay amount using the subscription rate, not the balance multiplier', async () => {
+  it('charges a USD plan in CNY at the day\'s central parity, not the balance multiplier', async () => {
     const wrapper = await mountSubscriptionConfirm({
-      checkout: {
-        balance_recharge_multiplier: 0.14,
-        subscription_usd_to_cny_rate: 7.15,
-      },
-      method: {
-        currency: 'CNY',
-      },
-      plan: {
-        price: 9.99,
-        original_price: 12.99,
-      },
+      checkout: { balance_recharge_multiplier: 0.14 },
+      method: { currency: 'CNY' },
+      plan: { price: 9.99, original_price: 12.99, currency: 'USD' },
     })
 
     const text = wrapper.text()
-    const convertedPrice = formatPaymentAmount(71.43, 'CNY')
-    const convertedOriginalPrice = formatPaymentAmount(92.88, 'CNY')
-
+    const convertedPrice = formatPaymentAmount(67.28, 'CNY') // 9.99 × 6.7351
     expect(text).toContain(convertedPrice)
-    expect(text).toContain(convertedOriginalPrice)
+    expect(text).toContain(formatPaymentAmount(87.49, 'CNY')) // 12.99 × 6.7351
     expect(text).not.toContain(formatPaymentAmount(9.99, 'CNY'))
-    // 换算必须使用订阅汇率（×7.15），而不是余额倍率（÷0.14 = 71.36）
-    expect(text).not.toContain(formatPaymentAmount(71.36, 'CNY'))
+    expect(text).toContain('payment.planPriceConverted')
     expect(wrapper.findAll('button').some(button => button.text().includes(convertedPrice))).toBe(true)
   })
 
-  it('keeps plan price when the subscription rate is not configured or payment currency is not CNY', async () => {
-    // opt-in 回归锁：即使余额倍率已配置，未配置订阅汇率时 CNY 订阅仍按 price 直付
+  it('charges the plan price as is when the plan is priced in the payment currency', async () => {
     const cnyWrapper = await mountSubscriptionConfirm({
-      checkout: {
-        balance_recharge_multiplier: 0.14,
-        subscription_usd_to_cny_rate: 0,
-      },
-      method: {
-        currency: 'CNY',
-      },
-      plan: {
-        price: 7.99,
-      },
+      method: { currency: 'CNY' },
+      plan: { price: 7.99, currency: 'CNY' },
     })
-
     expect(cnyWrapper.text()).toContain(formatPaymentAmount(7.99, 'CNY'))
-    expect(cnyWrapper.text()).not.toContain(formatPaymentAmount(57.07, 'CNY'))
-    expect(cnyWrapper.text()).not.toContain(formatPaymentAmount(57.13, 'CNY'))
+    expect(cnyWrapper.find('[data-testid="plan-conversion-note"]').exists()).toBe(false)
 
     const usdWrapper = await mountSubscriptionConfirm({
-      checkout: {
-        subscription_usd_to_cny_rate: 7.15,
-      },
-      method: {
-        currency: 'USD',
-      },
-      plan: {
-        price: 7.99,
-        original_price: 9.99,
-      },
+      method: { currency: 'USD' },
+      plan: { price: 7.99, original_price: 9.99, currency: 'USD' },
     })
-
     expect(usdWrapper.text()).toContain(formatPaymentAmount(7.99, 'USD'))
     expect(usdWrapper.text()).toContain(formatPaymentAmount(9.99, 'USD'))
   })
 
-  it('adds fee rate after CNY rate conversion to match backend pay_amount', async () => {
+  it('adds the fee after conversion, matching the backend pay_amount', async () => {
     const wrapper = await mountSubscriptionConfirm({
-      checkout: {
-        subscription_usd_to_cny_rate: 7.15,
-        recharge_fee_rate: 2.5,
-      },
-      method: {
-        currency: 'CNY',
-      },
-      plan: {
-        price: 9.99,
-      },
+      checkout: { recharge_fee_rate: 2.5 },
+      method: { currency: 'CNY' },
+      plan: { price: 9.99, currency: 'USD' },
     })
 
     const text = wrapper.text()
-    const convertedPrice = formatPaymentAmount(71.43, 'CNY')
-    const fee = formatPaymentAmount(1.79, 'CNY')
-    const total = formatPaymentAmount(73.22, 'CNY')
-
-    expect(text).toContain(convertedPrice)
-    expect(text).toContain(fee)
+    const total = formatPaymentAmount(68.97, 'CNY')
+    expect(text).toContain(formatPaymentAmount(67.28, 'CNY'))
+    expect(text).toContain(formatPaymentAmount(1.69, 'CNY'))
     expect(text).toContain(total)
     expect(wrapper.findAll('button').some(button => button.text().includes(total))).toBe(true)
+  })
+
+  it('does not guess a price for a payment currency without a rate', async () => {
+    const wrapper = await mountSubscriptionConfirm({
+      method: { currency: 'HKD' },
+      plan: { price: 9.99, currency: 'USD' },
+    })
+
+    expect(wrapper.text()).toContain('payment.planPriceRateUnavailable')
+    const orderButton = wrapper.findAll('button').find(button => button.text().includes('payment.createOrder'))
+    expect(orderButton?.attributes('disabled')).toBeDefined()
   })
 })
 

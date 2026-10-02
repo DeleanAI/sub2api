@@ -53,15 +53,6 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if s.notificationEmailService != nil {
 		s.notificationEmailService.RememberRecipientLocale(ctx, req.UserID, user.Email, req.Locale)
 	}
-	orderAmount := req.Amount
-	limitAmount := req.Amount
-	if plan != nil {
-		orderAmount = plan.Price
-		limitAmount = plan.Price
-	} else if req.OrderType == payment.OrderTypeBalance {
-		orderAmount = calculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
-	}
-	feeRate := cfg.RechargeFeeRate
 	methodCurrency := payment.DefaultPaymentCurrency
 	if s.configService != nil {
 		methodCurrency, err = s.configService.ValidateMethodCurrencyConsistency(ctx, req.PaymentType)
@@ -69,11 +60,12 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 			return nil, err
 		}
 	}
-	payAmountStr, payAmount, err := calculateCreateOrderPayAmountForOrderType(limitAmount, feeRate, methodCurrency, req.OrderType, cfg.SubscriptionUSDToCNYRate)
+	now := time.Now()
+	amounts, err := s.computeCreateOrderAmounts(ctx, req, plan, cfg, methodCurrency, now)
 	if err != nil {
 		return nil, err
 	}
-	sel, err := s.selectCreateOrderInstance(ctx, req, cfg, payAmount)
+	sel, err := s.selectCreateOrderInstance(ctx, req, cfg, amounts.payAmount)
 	if err != nil {
 		return nil, err
 	}
@@ -85,26 +77,27 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 		selectedCurrency = paymentProviderConfigCurrency(sel.ProviderKey, sel.Config)
 	}
 	if selectedCurrency != methodCurrency {
-		payAmountStr, payAmount, err = calculateCreateOrderPayAmountForOrderType(limitAmount, feeRate, selectedCurrency, req.OrderType, cfg.SubscriptionUSDToCNYRate)
+		amounts, err = s.computeCreateOrderAmounts(ctx, req, plan, cfg, selectedCurrency, now)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if err := validateSelectedCreateOrderAmountCurrency(payAmountStr, sel); err != nil {
+	if err := validateSelectedCreateOrderAmountCurrency(amounts.payAmountStr, sel); err != nil {
 		return nil, err
 	}
-	oauthResp, err := s.maybeBuildWeChatOAuthRequiredResponseForSelection(ctx, req, limitAmount, payAmount, feeRate, sel)
+	feeRate := cfg.RechargeFeeRate
+	oauthResp, err := s.maybeBuildWeChatOAuthRequiredResponseForSelection(ctx, req, amounts.orderAmount, amounts.payAmount, feeRate, sel)
 	if err != nil {
 		return nil, err
 	}
 	if oauthResp != nil {
 		return oauthResp, nil
 	}
-	order, err := s.createOrderInTx(ctx, req, user, plan, cfg, orderAmount, limitAmount, feeRate, payAmount, sel)
+	order, err := s.createOrderInTx(ctx, req, user, plan, cfg, amounts, feeRate, sel)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.invokeProvider(ctx, order, req, cfg, limitAmount, payAmountStr, payAmount, plan, sel)
+	resp, err := s.invokeProvider(ctx, order, req, cfg, amounts.gatewayBase, amounts.payAmountStr, amounts.payAmount, plan, sel)
 	if err != nil {
 		_, _ = s.entClient.PaymentOrder.UpdateOneID(order.ID).
 			SetStatus(OrderStatusFailed).
@@ -149,7 +142,7 @@ func (s *PaymentService) validateSubOrder(ctx context.Context, req CreateOrderRe
 	return plan, nil
 }
 
-func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderRequest, user *User, plan *dbent.SubscriptionPlan, cfg *PaymentConfig, orderAmount, limitAmount, feeRate, payAmount float64, sel *payment.InstanceSelection) (*dbent.PaymentOrder, error) {
+func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderRequest, user *User, plan *dbent.SubscriptionPlan, cfg *PaymentConfig, amounts *createOrderAmounts, feeRate float64, sel *payment.InstanceSelection) (*dbent.PaymentOrder, error) {
 	tx, err := s.entClient.Tx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -158,7 +151,7 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 	if err := s.checkPendingLimit(ctx, tx, req.UserID, cfg.MaxPendingOrders); err != nil {
 		return nil, err
 	}
-	if err := s.checkDailyLimit(ctx, tx, req.UserID, limitAmount, cfg.DailyLimit); err != nil {
+	if err := s.checkDailyLimit(ctx, tx, req.UserID, amounts.gatewayBase, cfg.DailyLimit); err != nil {
 		return nil, err
 	}
 	tm := cfg.OrderTimeoutMin
@@ -182,8 +175,8 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 		SetUserEmail(user.Email).
 		SetUserName(user.Username).
 		SetNillableUserNotes(psNilIfEmpty(user.Notes)).
-		SetAmount(orderAmount).
-		SetPayAmount(payAmount).
+		SetAmount(amounts.orderAmount).
+		SetPayAmount(amounts.payAmount).
 		SetFeeRate(feeRate).
 		SetRechargeCode("").
 		SetOutTradeNo(outTradeNo).
@@ -208,6 +201,13 @@ func (s *PaymentService) createOrderInTx(ctx context.Context, req CreateOrderReq
 	}
 	if plan != nil {
 		b.SetPlanID(plan.ID).SetSubscriptionGroupID(plan.GroupID).SetSubscriptionDays(psComputeValidityDays(plan.ValidityDays, plan.ValidityUnit))
+	}
+	conversion, err := EncodeCurrencyConversion(amounts.conversion)
+	if err != nil {
+		return nil, err
+	}
+	if conversion != nil {
+		b.SetCurrencyConversion(conversion)
 	}
 	order, err := b.Save(ctx)
 	if err != nil {
@@ -331,13 +331,10 @@ func (s *PaymentService) checkDailyLimit(ctx context.Context, tx *dbent.Tx, user
 	if err != nil {
 		return fmt.Errorf("query daily usage: %w", err)
 	}
+	// 每日限额按网关币种计：已付订单累计实付金额（订单金额对余额充值是记账币种、对订阅是套餐币种，不能直接相加）。
 	var used float64
 	for _, o := range orders {
-		if o.OrderType == payment.OrderTypeBalance {
-			used += o.PayAmount
-			continue
-		}
-		used += o.Amount
+		used += o.PayAmount
 	}
 	if used+amount > limit {
 		return infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily_limit_exceeded").
@@ -397,7 +394,7 @@ func (s *PaymentService) usesOfficialWxpayVisibleMethod(ctx context.Context) boo
 	return inst.ProviderKey == payment.TypeWxpay
 }
 
-func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.PaymentOrder, req CreateOrderRequest, cfg *PaymentConfig, limitAmount float64, payAmountStr string, payAmount float64, plan *dbent.SubscriptionPlan, sel *payment.InstanceSelection) (*CreateOrderResponse, error) {
+func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.PaymentOrder, req CreateOrderRequest, cfg *PaymentConfig, gatewayBase float64, payAmountStr string, payAmount float64, plan *dbent.SubscriptionPlan, sel *payment.InstanceSelection) (*CreateOrderResponse, error) {
 	prov, err := provider.CreateProvider(sel.ProviderKey, sel.InstanceID, sel.Config)
 	if err != nil {
 		slog.Error("[PaymentService] CreateProvider failed", "provider", sel.ProviderKey, "instance", sel.InstanceID, "error", err)
@@ -413,7 +410,7 @@ func (s *PaymentService) invokeProvider(ctx context.Context, order *dbent.Paymen
 		return nil, infraerrors.ServiceUnavailable("PAYMENT_PROVIDER_MISCONFIGURED", "provider_misconfigured").
 			WithMetadata(map[string]string{"provider": sel.ProviderKey, "instance_id": sel.InstanceID})
 	}
-	subject := s.buildPaymentSubject(plan, limitAmount, cfg, sel)
+	subject := s.buildPaymentSubject(plan, gatewayBase, cfg, sel)
 	outTradeNo := order.OutTradeNo
 	canonicalReturnURL, err := CanonicalizeReturnURL(req.ReturnURL, req.SrcHost, req.SrcURL)
 	if err != nil {
@@ -531,7 +528,7 @@ func selectedInstanceSupportedTypes(sel *payment.InstanceSelection) string {
 	return sel.SupportedTypes
 }
 
-func (s *PaymentService) buildPaymentSubject(plan *dbent.SubscriptionPlan, limitAmount float64, cfg *PaymentConfig, sel *payment.InstanceSelection) string {
+func (s *PaymentService) buildPaymentSubject(plan *dbent.SubscriptionPlan, gatewayBase float64, cfg *PaymentConfig, sel *payment.InstanceSelection) string {
 	if plan != nil {
 		productName := plan.ProductName
 		if productName == "" {
@@ -543,7 +540,7 @@ func (s *PaymentService) buildPaymentSubject(plan *dbent.SubscriptionPlan, limit
 	if sel != nil {
 		currency = paymentProviderConfigCurrency(sel.ProviderKey, sel.Config)
 	}
-	amountStr := payment.FormatAmountForCurrency(limitAmount, currency)
+	amountStr := payment.FormatAmountForCurrency(gatewayBase, currency)
 	if hasPaymentProductNameAffix(cfg) {
 		return applyPaymentProductNameAffix(amountStr, cfg)
 	}
@@ -626,11 +623,11 @@ func (s *PaymentService) validateSelectedCreateOrderInstance(ctx context.Context
 	return nil
 }
 
-func calculateCreateOrderPayAmount(limitAmount, feeRate float64, currency string) (string, float64, error) {
-	if err := validateCreateOrderAmountCurrency(limitAmount, currency); err != nil {
+func calculateCreateOrderPayAmount(gatewayBase, feeRate float64, currency string) (string, float64, error) {
+	if err := validateCreateOrderAmountCurrency(gatewayBase, currency); err != nil {
 		return "", 0, err
 	}
-	payAmountStr := payment.CalculatePayAmountForCurrency(limitAmount, feeRate, currency)
+	payAmountStr := payment.CalculatePayAmountForCurrency(gatewayBase, feeRate, currency)
 	if _, err := payment.AmountToMinorUnit(payAmountStr, currency); err != nil {
 		return "", 0, infraerrors.BadRequest("INVALID_AMOUNT", err.Error()).
 			WithMetadata(map[string]string{"currency": currency})
@@ -643,26 +640,103 @@ func calculateCreateOrderPayAmount(limitAmount, feeRate float64, currency string
 	return payAmountStr, payAmount, nil
 }
 
-func calculateCreateOrderPayAmountForOrderType(limitAmount, feeRate float64, currency, orderType string, usdToCnyRate float64) (string, float64, error) {
-	paymentAmount := limitAmount
-	if orderType == payment.OrderTypeSubscription {
-		paymentAmount = calculateSubscriptionGatewayBaseAmount(limitAmount, usdToCnyRate, currency)
-	}
-	return calculateCreateOrderPayAmount(paymentAmount, feeRate, currency)
+// CheckoutExchangeRate 是结算页预览用的汇率：1 单位该币值多少美元，以及报价出处（美元本身没有出处）。
+type CheckoutExchangeRate struct {
+	USDPerUnit float64 `json:"usd_per_unit"`
+	RateDate   string  `json:"rate_date,omitempty"`
+	Source     string  `json:"source,omitempty"`
 }
 
-// calculateSubscriptionGatewayBaseAmount 计算订阅订单的网关扣款基数。
-// 换算是显式 opt-in：仅当管理员配置了订阅汇率（rate > 0，1 USD = rate CNY）
-// 且网关币种为 CNY 时，按 price × rate 换算；未配置时保持 price 直付的存量行为。
-func calculateSubscriptionGatewayBaseAmount(amount, usdToCnyRate float64, currency string) float64 {
-	rate := normalizeSubscriptionUSDToCNYRate(usdToCnyRate)
-	if rate <= 0 || currency != payment.DefaultPaymentCurrency {
-		return amount
+// CheckoutExchangeRates 返回记账币种，以及 currencies 中可折算币种此刻的汇率，口径与下单一致（FXStrict）。
+// 不在折算表里或此刻取不到汇率的币种不出现在结果里（记日志）：页面对它不给折算预览，下单时同样会被拒。
+func (s *PaymentService) CheckoutExchangeRates(ctx context.Context, currencies []string) (string, map[string]CheckoutExchangeRate) {
+	accounting := s.exchangeRates.AccountingCurrency(ctx)
+	rates := make(map[string]CheckoutExchangeRate, len(currencies))
+	for _, raw := range currencies {
+		code, err := NormalizeFXCurrency(raw)
+		if err != nil {
+			continue
+		}
+		if _, done := rates[code]; done {
+			continue
+		}
+		usd, conversion, err := s.exchangeRates.Convert(ctx, 1, code, "USD", time.Time{}, FXStrict) // 零值 = 汇率服务的当前时刻
+		if err != nil {
+			slog.Warn("checkout exchange rate unavailable", "currency", code, "error", err)
+			continue
+		}
+		rate := CheckoutExchangeRate{USDPerUnit: usd}
+		if conversion != nil && len(conversion.Legs) > 0 {
+			rate.RateDate, rate.Source = conversion.Legs[0].RateDate, conversion.Legs[0].Source
+		}
+		rates[code] = rate
 	}
-	return decimal.NewFromFloat(amount).
-		Mul(decimal.NewFromFloat(rate)).
-		Round(int32(payment.CurrencyMaxFractionDigits(currency))).
-		InexactFloat64()
+	return accounting, rates
+}
+
+// createOrderAmounts 是一笔订单在某个网关币种下的全部金额。
+type createOrderAmounts struct {
+	// orderAmount 记入 payment_orders.amount：余额充值是入账到余额的记账币种金额，订阅是套餐价（套餐币种）。
+	orderAmount float64
+	// gatewayBase 是网关币种下不含手续费的扣款基数：每日限额、充值订单标题按它算。
+	gatewayBase  float64
+	payAmountStr string
+	payAmount    float64
+	// conversion 是跨币种时的折算依据（余额充值：支付币种→记账币种；订阅：套餐币种→网关币种），记在订单上。
+	conversion *CurrencyConversion
+}
+
+// computeCreateOrderAmounts 按网关币种 currency 计算订单金额，折算用交易时刻 at 的汇率（FXStrict：确认不了
+// 当前汇率就拒绝下单）。
+func (s *PaymentService) computeCreateOrderAmounts(ctx context.Context, req CreateOrderRequest, plan *dbent.SubscriptionPlan, cfg *PaymentConfig, currency string, at time.Time) (*createOrderAmounts, error) {
+	amounts := &createOrderAmounts{orderAmount: req.Amount, gatewayBase: req.Amount}
+	var err error
+	if plan != nil {
+		amounts.orderAmount = plan.Price
+		amounts.gatewayBase, amounts.conversion, err = s.subscriptionGatewayBase(ctx, plan, currency, at)
+	} else {
+		amounts.orderAmount, amounts.conversion, err = s.creditedBalanceForPayment(ctx, req.Amount, currency, cfg.BalanceRechargeMultiplier, at)
+	}
+	if err != nil {
+		return nil, err
+	}
+	amounts.payAmountStr, amounts.payAmount, err = calculateCreateOrderPayAmount(amounts.gatewayBase, cfg.RechargeFeeRate, currency)
+	if err != nil {
+		return nil, err
+	}
+	return amounts, nil
+}
+
+// creditedBalanceForPayment 是余额充值的入账金额：支付金额（payCurrency，不含手续费）按交易时刻汇率折算成
+// 记账币种并取到分，再乘充值倍率。同币种时不折算、折算记录为 nil。
+// 折算记录的 FromAmount 为支付金额、ToAmount 为折算后（乘倍率之前）的记账币种金额。
+func (s *PaymentService) creditedBalanceForPayment(ctx context.Context, paymentAmount float64, payCurrency string, multiplier float64, at time.Time) (float64, *CurrencyConversion, error) {
+	converted, conversion, err := s.exchangeRates.ConvertToAccounting(ctx, paymentAmount, payCurrency, at, FXStrict)
+	if err != nil {
+		return 0, nil, err
+	}
+	if conversion != nil {
+		converted = RoundCreditedAmount(converted)
+		from, to := paymentAmount, converted
+		conversion.FromAmount, conversion.ToAmount = &from, &to
+	}
+	return calculateCreditedBalance(converted, multiplier), conversion, nil
+}
+
+// subscriptionGatewayBase 把套餐价（套餐币种）按交易时刻汇率折算成网关币种，取到网关币种的最小单位。
+// 折算记录的 FromAmount 为套餐价、ToAmount 为网关扣款基数（不含手续费）。
+func (s *PaymentService) subscriptionGatewayBase(ctx context.Context, plan *dbent.SubscriptionPlan, currency string, at time.Time) (float64, *CurrencyConversion, error) {
+	converted, conversion, err := s.exchangeRates.Convert(ctx, plan.Price, PriceCurrencyOrDefault(plan.Currency), currency, at, FXStrict)
+	if err != nil {
+		return 0, nil, err
+	}
+	if conversion == nil {
+		return plan.Price, nil, nil
+	}
+	base := decimal.NewFromFloat(converted).Round(int32(payment.CurrencyMaxFractionDigits(currency))).InexactFloat64()
+	from, to := plan.Price, base
+	conversion.FromAmount, conversion.ToAmount = &from, &to
+	return base, conversion, nil
 }
 
 func validateCreateOrderAmountCurrency(amount float64, currency string) error {

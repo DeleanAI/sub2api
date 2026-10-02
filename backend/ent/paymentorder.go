@@ -4,6 +4,7 @@ package ent
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 	"time"
@@ -93,6 +94,8 @@ type PaymentOrder struct {
 	SrcHost string `json:"src_host,omitempty"`
 	// SrcURL holds the value of the "src_url" field.
 	SrcURL *string `json:"src_url,omitempty"`
+	// CurrencyConversion holds the value of the "currency_conversion" field.
+	CurrencyConversion jsontext.Value `json:"currency_conversion,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -128,7 +131,7 @@ func (*PaymentOrder) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case paymentorder.FieldProviderSnapshot:
+		case paymentorder.FieldProviderSnapshot, paymentorder.FieldCurrencyConversion:
 			values[i] = new([]byte)
 		case paymentorder.FieldForceRefund:
 			values[i] = new(sql.NullBool)
@@ -404,6 +407,14 @@ func (_m *PaymentOrder) assignValues(columns []string, values []any) error {
 				_m.SrcURL = new(string)
 				*_m.SrcURL = value.String
 			}
+		case paymentorder.FieldCurrencyConversion:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field currency_conversion", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.CurrencyConversion); err != nil {
+					return fmt.Errorf("unmarshal field currency_conversion: %w", err)
+				}
+			}
 		case paymentorder.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field created_at", values[i])
@@ -605,6 +616,9 @@ func (_m *PaymentOrder) String() string {
 		builder.WriteString("src_url=")
 		builder.WriteString(*v)
 	}
+	builder.WriteString(", ")
+	builder.WriteString("currency_conversion=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CurrencyConversion))
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(_m.CreatedAt.Format(time.ANSIC))

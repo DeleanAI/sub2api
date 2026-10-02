@@ -634,7 +634,7 @@ import { extractApiErrorMessage } from '@/utils/apiError'
 import { adminAPI } from '@/api/admin'
 import type { Channel, ChannelModelPricing, CreateChannelRequest, UpdateChannelRequest, AccountStatsPricingRule } from '@/api/admin/channels'
 import type { PricingFormEntry } from '@/components/admin/channel/types'
-import { apiIntervalsToForm, apiTimePricingToForm, createDefaultTimePricingForm, findModelConflict, formIntervalsToAPI, formReasoningEffortMultipliersToAPI, formTimePricingToAPI, isValidPositiveMultiplier, mTokToPerToken, perTokenToMTok, validateIntervals, validateReasoningEffortMultipliers, validateTimePricing } from '@/components/admin/channel/types'
+import { apiIntervalsToForm, apiPricingCurrencyToForm, apiTimePricingToForm, createDefaultTimePricingForm, findModelConflict, formIntervalsToAPI, formPricingCurrencyToAPI, formReasoningEffortMultipliersToAPI, formTimePricingToAPI, isValidPositiveMultiplier, mTokToPerToken, perTokenToMTok, validateIntervals, validateReasoningEffortMultipliers, validateTimePricing } from '@/components/admin/channel/types'
 import type { AdminGroup, GroupPlatform } from '@/types'
 import type { Column } from '@/components/common/types'
 import { platformTextClass, platformBadgeLightClass } from '@/utils/platformColors'
@@ -858,6 +858,7 @@ function addPricingEntry(sectionIdx: number) {
   form.platforms[sectionIdx].model_pricing.push({
     models: [],
     billing_mode: 'token',
+    currency: '',
     input_price: null,
     output_price: null,
     cache_write_price: null,
@@ -896,6 +897,7 @@ async function syncLatestModels(sectionIdx: number) {
     form.platforms[sectionIdx].model_pricing.push({
       models: newModels,
       billing_mode: 'token',
+      currency: '',
       input_price: null,
       output_price: null,
       cache_write_price: null,
@@ -966,6 +968,7 @@ function addRulePricingEntry(sectionIdx: number, ruleIndex: number) {
   form.platforms[sectionIdx].account_stats_pricing_rules[ruleIndex].pricing.push({
     models: [],
     billing_mode: 'token',
+    currency: '',
     input_price: null,
     output_price: null,
     cache_write_price: null,
@@ -1084,6 +1087,7 @@ function accountStatsRulesToAPI(): AccountStatsPricingRule[] {
             platform: section.platform,
             models: p.models,
             billing_mode: p.billing_mode,
+            currency: formPricingCurrencyToAPI(p.currency),
             input_price: mTokToPerToken(p.input_price),
             output_price: mTokToPerToken(p.output_price),
             cache_write_price: mTokToPerToken(p.cache_write_price),
@@ -1128,6 +1132,7 @@ function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[
         platform: section.platform,
         models: entry.models,
         billing_mode: entry.billing_mode,
+        currency: formPricingCurrencyToAPI(entry.currency),
         input_price: mTokToPerToken(entry.input_price),
         output_price: mTokToPerToken(entry.output_price),
         cache_write_price: mTokToPerToken(entry.cache_write_price),
@@ -1231,6 +1236,7 @@ function apiToForm(channel: Channel): PlatformSection[] {
       .map(p => ({
         models: p.models || [],
         billing_mode: p.billing_mode,
+        currency: apiPricingCurrencyToForm(p.currency),
         input_price: perTokenToMTok(p.input_price),
         output_price: perTokenToMTok(p.output_price),
         cache_write_price: perTokenToMTok(p.cache_write_price),
@@ -1425,6 +1431,7 @@ function distributeRulesToPlatforms(apiRules: AccountStatsPricingRule[]) {
       pricing: (apiRule.pricing || []).map(p => ({
         models: [...(p.models || [])],
         billing_mode: p.billing_mode,
+        currency: apiPricingCurrencyToForm(p.currency),
         input_price: perTokenToMTok(p.input_price),
         output_price: perTokenToMTok(p.output_price),
         cache_write_price: perTokenToMTok(p.cache_write_price),

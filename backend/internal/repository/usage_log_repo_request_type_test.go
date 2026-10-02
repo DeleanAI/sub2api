@@ -103,6 +103,7 @@ func TestUsageLogRepositoryCreateSyncRequestTypeAndLegacyFields(t *testing.T) {
 			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
+			sqlmock.AnyArg(), // currency_conversion
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(99), createdAt))
@@ -199,6 +200,7 @@ func TestUsageLogRepositoryCreate_PersistsServiceTier(t *testing.T) {
 			sqlmock.AnyArg(), // upstream_request_id
 			sqlmock.AnyArg(), // session_id
 			log.NativeCompactionV2,
+			sqlmock.AnyArg(), // currency_conversion
 			createdAt,
 		).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow(int64(100), createdAt))
@@ -280,9 +282,10 @@ func TestPrepareUsageLogInsert_PersistsNativeCompactionV2WithoutChangingRequestT
 	prepared := prepareUsageLogInsert(log)
 
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
-	require.Equal(t, "boolean", usageLogInsertArgTypes[len(usageLogInsertArgTypes)-2])
-	require.Equal(t, true, prepared.args[len(prepared.args)-2])
-	require.Equal(t, int16(service.RequestTypeStream), prepared.args[31]) // fork 在 account_rate_multiplier 后插入 model_rate_multiplier，其后列 +1
+	nativeIdx := usageLogInsertColumnIndex(t, "native_compaction_v2")
+	require.Equal(t, "boolean", usageLogInsertArgTypes[nativeIdx])
+	require.Equal(t, true, prepared.args[nativeIdx])
+	require.Equal(t, int16(service.RequestTypeStream), prepared.args[usageLogInsertColumnIndex(t, "request_type")])
 	require.Equal(t, service.RequestTypeStream, log.RequestType)
 	require.True(t, log.Stream)
 	require.False(t, log.OpenAIWSMode)
@@ -309,12 +312,11 @@ func TestPrepareUsageLogInsert_PersistsImageSizeMetadata(t *testing.T) {
 		CreatedAt:          time.Date(2025, 1, 6, 12, 0, 0, 0, time.UTC),
 	})
 
-	// 位置以 usageLogInsertArgTypes 为准：image_size 是第 40 个参数（下标 39）。
-	require.Equal(t, sql.NullString{String: imageSize, Valid: true}, prepared.args[39])
-	require.Equal(t, sql.NullString{String: inputSize, Valid: true}, prepared.args[40])
-	require.Equal(t, sql.NullString{String: outputSize, Valid: true}, prepared.args[41])
-	require.Equal(t, sql.NullString{String: source, Valid: true}, prepared.args[42])
-	breakdownJSON, ok := prepared.args[43].(string)
+	require.Equal(t, sql.NullString{String: imageSize, Valid: true}, prepared.args[usageLogInsertColumnIndex(t, "image_size")])
+	require.Equal(t, sql.NullString{String: inputSize, Valid: true}, prepared.args[usageLogInsertColumnIndex(t, "image_input_size")])
+	require.Equal(t, sql.NullString{String: outputSize, Valid: true}, prepared.args[usageLogInsertColumnIndex(t, "image_output_size")])
+	require.Equal(t, sql.NullString{String: source, Valid: true}, prepared.args[usageLogInsertColumnIndex(t, "image_size_source")])
+	breakdownJSON, ok := prepared.args[usageLogInsertColumnIndex(t, "image_size_breakdown")].(string)
 	require.True(t, ok)
 	require.JSONEq(t, `{"1K":1,"4K":1}`, breakdownJSON)
 }
@@ -963,7 +965,8 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullFloat64{},
 			sql.NullString{}, // upstream_request_id
 			sql.NullString{},
-			false, // native_compaction_v2
+			false,            // native_compaction_v2
+			sql.NullString{}, // currency_conversion
 			now,
 		}})
 		require.NoError(t, err)
@@ -1045,6 +1048,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
+			sql.NullString{},  // currency_conversion
 			now,
 		}})
 		require.NoError(t, err)
@@ -1109,6 +1113,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			true,              // native_compaction_v2
+			sql.NullString{},  // currency_conversion
 			now,
 		}})
 		require.NoError(t, err)
@@ -1174,6 +1179,7 @@ func TestScanUsageLogRequestTypeAndLegacyFallback(t *testing.T) {
 			sql.NullString{},  // upstream_request_id
 			sql.NullString{},  // session_id
 			false,             // native_compaction_v2
+			sql.NullString{},  // currency_conversion
 			now,
 		}})
 		require.NoError(t, err)

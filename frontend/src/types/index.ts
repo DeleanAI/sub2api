@@ -272,7 +272,7 @@ export interface PublicSettings {
   balance_low_notify_threshold: number
   /** 用户侧兑换码入口（默认开启）；关闭时侧边栏 / 仪表盘不显示兑换，兑换接口返回 REDEEM_DISABLED。 */
   redeem_enabled?: boolean
-  /** 站内余额单位的币种（ISO 4217，默认 USD）；只决定怎么写、不做换算，见 utils/balanceCurrency.ts。 */
+  /** 站内记账币种（默认 USD）；以其它币种支付或标价的金额由后端按交易时刻汇率折算成它，见 utils/balanceCurrency.ts。 */
   balance_currency?: string
   /** 由 balance_currency 推导的符号（如 $、¥），界面上写在金额前面。 */
   balance_currency_symbol?: string
@@ -1824,6 +1824,8 @@ export interface UsageLog {
 
   // 计费模式
   billing_mode?: string | null
+  /** 价卡不是记账币种（如方舟按人民币标价）时所用的汇率；上面的费用已是记账币种 */
+  currency_conversion?: CurrencyConversion | null
 
   created_at: string
 
@@ -1896,6 +1898,38 @@ export interface UsageCleanupTask {
   updated_at: string
 }
 
+/** 参与折算的一条汇率报价（后端 service.ExchangeRate）：1 单位 currency 值 usd_per_unit 美元。 */
+export interface ExchangeRateLeg {
+  currency: string
+  rate_date: string
+  usd_per_unit: number
+  /** 来源原样的报价，如人民币中间价的「1 美元合多少人民币」 */
+  quote: number
+  quote_unit: string
+  source: string
+  source_url: string
+  published_at: string
+  fetched_at: string
+}
+
+/**
+ * 一笔金额从原币种折算到目标币种的依据（后端 service.CurrencyConversion）：管理员按人民币 / 稳定币调余额、
+ * 在线支付、以人民币标价的模型计费都会带上它，展示见 components/common/CurrencyConversionNote.vue。
+ */
+export interface CurrencyConversion {
+  from_currency: string
+  to_currency: string
+  from_amount?: number
+  to_amount?: number
+  /** 1 单位原币 = rate 单位目标币 */
+  rate: number
+  at: string
+  legs: ExchangeRateLeg[]
+  /** 计费时汇率源刷新失败、沿用了最近一次存档的中间价 */
+  stale?: boolean
+  stale_reason?: string
+}
+
 export interface RedeemCode {
   id: number
   code: string
@@ -1910,6 +1944,8 @@ export interface RedeemCode {
   notes?: string
   group_id?: number | null // 订阅类型专用
   validity_days?: number // 订阅类型专用
+  /** 按非记账币种入账时的原币金额与汇率；value 已是记账币种 */
+  currency_conversion?: CurrencyConversion | null
   user?: User
   group?: Group // 关联的分组
 }

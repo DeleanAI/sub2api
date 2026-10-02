@@ -8,6 +8,17 @@ vi.mock('@/api/admin/channels', () => ({
   default: { getModelDefaultPricing: vi.fn() },
 }))
 
+// 币种选项（GET /admin/exchange-rates/currencies）：目录价按 USD 标价，可选 CNY / USD。
+vi.mock('@/api/admin', () => ({
+  adminAPI: {
+    exchangeRates: {
+      currencies: vi.fn().mockResolvedValue({
+        accounting_currency: 'USD', currencies: ['CNY', 'USD', 'USDC', 'USDT'], fiat_currencies: ['CNY', 'USD'], default_price_currency: 'USD',
+      }),
+    },
+  },
+}))
+
 vi.mock('vue-i18n', async importOriginal => ({
   ...await importOriginal<typeof import('vue-i18n')>(),
   useI18n: () => ({ t: (key: string) => key }),
@@ -17,6 +28,7 @@ function createEntry(billingMode: PricingFormEntry['billing_mode'] = 'token'): P
   return {
     models: [],
     billing_mode: billingMode,
+    currency: '',
     input_price: null,
     output_price: null,
     cache_write_price: null,
@@ -67,7 +79,8 @@ describe('PricingEntryCard time pricing visibility', () => {
       props: { entry, enableTimePricing: true },
     })
 
-    wrapper.findComponent({ name: 'Select' }).vm.$emit('update:modelValue', 'image')
+    wrapper.findAllComponents({ name: 'Select' }).find(select => select.attributes('data-testid') !== 'pricing-currency')!
+      .vm.$emit('update:modelValue', 'image')
 
     expect(wrapper.emitted('update')?.[0]?.[0]).toEqual({
       ...entry,
@@ -146,16 +159,46 @@ describe('PricingEntryCard request multipliers', () => {
 
   it('keeps custom effort multipliers when auto-filling model token prices', async () => {
     vi.mocked(channelsAPI.getModelDefaultPricing).mockResolvedValue({
-      found: true, input_price: 3e-6, output_price: 15e-6,
+      found: true, currency: 'USD', input_price: 3e-6, output_price: 15e-6,
     })
     const wrapper = shallowMount(PricingEntryCard, {
       props: { entry: { ...createEntry(), reasoning_effort_multipliers: { high: 0.5 } } },
     })
+    await flushPromises()
     wrapper.findComponent({ name: 'ModelTagInput' }).vm.$emit('update:models', ['example-model'])
     await flushPromises()
     expect(wrapper.emitted('update')!.at(-1)![0]).toMatchObject({
       models: ['example-model'], input_price: 3, output_price: 15,
       reasoning_effort_multipliers: { high: 0.5 },
     })
+  })
+})
+
+describe('PricingEntryCard price currency', () => {
+  it('lists the fiat currencies from the backend and shows the catalog currency for an unset entry', async () => {
+    const wrapper = shallowMount(PricingEntryCard, { props: { entry: createEntry() } })
+    await flushPromises()
+    const select = wrapper.findAllComponents({ name: 'Select' }).find(s => s.attributes('data-testid') === 'pricing-currency')!
+    expect(select.props('options')).toEqual([{ value: 'CNY', label: 'CNY' }, { value: 'USD', label: 'USD' }])
+    expect(select.props('modelValue')).toBe('USD')
+    expect(wrapper.find('[data-testid="pricing-currency-hint"]').exists()).toBe(false)
+
+    select.vm.$emit('update:modelValue', 'CNY')
+    expect(wrapper.emitted('update')!.at(-1)![0]).toMatchObject({ currency: 'CNY' })
+  })
+
+  it('warns that a CNY entry stands alone and never prefills it with catalog (USD) numbers', async () => {
+    vi.mocked(channelsAPI.getModelDefaultPricing).mockResolvedValue({
+      found: true, currency: 'USD', input_price: 3e-6, output_price: 15e-6,
+    })
+    const wrapper = shallowMount(PricingEntryCard, { props: { entry: { ...createEntry(), currency: 'CNY' } } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="pricing-currency-hint"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('¥/MTok')
+
+    wrapper.findComponent({ name: 'ModelTagInput' }).vm.$emit('update:models', ['gpt-5.4'])
+    await flushPromises()
+    const updates = wrapper.emitted('update')!
+    expect(updates.at(-1)![0]).toMatchObject({ models: ['gpt-5.4'], input_price: null, output_price: null })
   })
 })

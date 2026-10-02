@@ -84,6 +84,18 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "usage_logs", "upstream_model_mismatch", "boolean", 0, true)
 	requireIndex(t, tx, "usage_logs", usageLogsUpstreamModelMismatchIndex)
 
+	// 汇率存档与折算依据（migration 241）：折算依据列都是可空 jsonb（NULL = 同币种），定价条目带标价币种。
+	requireColumn(t, tx, "exchange_rates", "usd_per_unit", "numeric", 0, false)
+	requireColumn(t, tx, "exchange_rates", "rate_date", "date", 0, false)
+	requireIndex(t, tx, "exchange_rates", "idx_exchange_rates_currency_published_at")
+	for _, table := range []string{"usage_logs", "redeem_codes", "payment_orders", "batch_image_jobs"} {
+		requireColumn(t, tx, table, "currency_conversion", "jsonb", 0, true)
+	}
+	for _, table := range []string{"channel_model_pricing", "channel_account_stats_model_pricing"} {
+		requireColumn(t, tx, table, "currency", "character varying", 10, false)
+		requireColumnDefaultContains(t, tx, table, "currency", "'USD'")
+	}
+
 	var mismatchIndexDef string
 	require.NoError(t, tx.QueryRowContext(context.Background(), `
 SELECT pg_get_indexdef(i.indexrelid)

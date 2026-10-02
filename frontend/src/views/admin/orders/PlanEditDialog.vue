@@ -38,12 +38,13 @@
         <div>
           <label class="input-label">{{ t('payment.admin.price') }} <span class="text-red-500">*</span></label>
           <input v-model.number="planForm.price" type="number" step="0.01" min="0.01" class="input" required />
-          <p v-if="subscriptionCnyPreview" class="mt-1 text-xs font-medium text-primary-600 dark:text-primary-400">
+          <p v-if="subscriptionCnyPreview" class="mt-1 text-xs font-medium text-primary-600 dark:text-primary-400" data-testid="plan-cny-preview">
             {{ t('payment.admin.subscriptionCnyPayPreview', { amount: subscriptionCnyPreview.amount }) }}
             <span v-if="subscriptionCnyPreview.feeRate > 0">
               {{ t('payment.admin.subscriptionCnyPayPreviewWithFee', { feeRate: subscriptionCnyPreview.feeRate, total: subscriptionCnyPreview.total }) }}
             </span>
           </p>
+          <p v-else-if="subscriptionPreviewError" class="mt-1 text-xs text-amber-600 dark:text-amber-400">{{ subscriptionPreviewError }}</p>
         </div>
         <div><label class="input-label">{{ t('payment.admin.originalPrice') }}</label><input v-model.number="planForm.original_price" type="number" step="0.01" min="0" class="input" /></div>
       </div>
@@ -55,8 +56,8 @@
         <div><label class="input-label">{{ t('payment.admin.sortOrder') }}</label><input v-model.number="planForm.sort_order" type="number" min="0" class="input" /></div>
         <div>
           <label class="input-label">{{ t('payment.admin.currency') }}</label>
-          <input v-model="planForm.currency" type="text" maxlength="3" class="input uppercase" :placeholder="t('payment.admin.currencyPlaceholder')" />
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.currencyHint') }}</p>
+          <input v-model="planForm.currency" type="text" maxlength="3" class="input uppercase" :placeholder="currencyOptions?.default_price_currency || t('payment.admin.currencyPlaceholder')" />
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('payment.admin.currencyHint', { default: currencyOptions?.default_price_currency || '' }) }}</p>
         </div>
       </div>
       <div>
@@ -94,10 +95,12 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { adminAPI } from '@/api/admin'
 import { adminPaymentAPI } from '@/api/admin/payment'
 import type { AdminPaymentConfig } from '@/api/admin/payment'
 import { extractApiErrorMessage } from '@/utils/apiError'
-import { formatPaymentAmount } from '@/components/payment/currency'
+import { DEFAULT_PAYMENT_CURRENCY, formatPaymentAmount } from '@/components/payment/currency'
+import { useCurrencyOptions } from '@/composables/useCurrencyOptions'
 import type { SubscriptionPlan } from '@/types/payment'
 import type { AdminGroup } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -120,6 +123,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const { options: currencyOptions } = useCurrencyOptions()
 
 const saving = ref(false)
 const planForm = reactive({ name: '', group_id: null as number | null, description: '', price: 0, original_price: 0, currency: '', validity_days: 30, validity_unit: 'days', sort_order: 0, for_sale: true })
@@ -146,30 +150,37 @@ const selectedGroupInfo = computed(() => {
   return props.groups.find(g => g.id === planForm.group_id) || null
 })
 
-function roundCnyAmount(value: number): number {
-  return Math.round(value * 100) / 100
-}
+// 套餐价按套餐币种计（留空即默认标价币种），下单时按当天汇率折算成支付币种收款。这里按今天的汇率预览
+// 人民币通道（支付宝 / 微信）的扣款；同币种不折算、不预览。实际金额以下单时的汇率为准。
+const subscriptionCnyPreview = ref<{ amount: string, feeRate: number, total: string } | null>(null)
+const subscriptionPreviewError = ref('')
+let previewSeq = 0
+let previewTimer: ReturnType<typeof setTimeout> | null = null
 
-function ceilCnyAmount(value: number): number {
-  return Math.ceil(value * 100) / 100
-}
-
-const subscriptionCnyPreview = computed(() => {
+watch(() => [props.show, planForm.price, planForm.currency, props.paymentConfig?.recharge_fee_rate, currencyOptions.value?.default_price_currency] as const, () => {
+  if (previewTimer) clearTimeout(previewTimer)
+  subscriptionCnyPreview.value = null
+  subscriptionPreviewError.value = ''
   const price = Number(planForm.price) || 0
-  const rate = Number(props.paymentConfig?.subscription_usd_to_cny_rate) || 0
-  if (price <= 0 || rate <= 0) return null
-
-  const amount = roundCnyAmount(price * rate)
-  const feeRate = Number(props.paymentConfig?.recharge_fee_rate) || 0
-  const fee = feeRate > 0 ? ceilCnyAmount((amount * feeRate) / 100) : 0
-  const total = feeRate > 0 ? roundCnyAmount(amount + fee) : amount
-
-  return {
-    amount: formatPaymentAmount(amount, 'CNY'),
-    feeRate,
-    total: formatPaymentAmount(total, 'CNY'),
-  }
-})
+  const planCurrency = planForm.currency.trim().toUpperCase() || currencyOptions.value?.default_price_currency || ''
+  if (!props.show || price <= 0 || !planCurrency || planCurrency === DEFAULT_PAYMENT_CURRENCY) return
+  const seq = ++previewSeq
+  previewTimer = setTimeout(async () => {
+    try {
+      const result = await adminAPI.exchangeRates.convert(price, planCurrency, DEFAULT_PAYMENT_CURRENCY)
+      if (seq !== previewSeq) return
+      const feeRate = Number(props.paymentConfig?.recharge_fee_rate) || 0
+      const fee = feeRate > 0 ? Math.ceil(((result.converted * feeRate) / 100) * 100) / 100 : 0
+      subscriptionCnyPreview.value = {
+        amount: formatPaymentAmount(result.converted, DEFAULT_PAYMENT_CURRENCY),
+        feeRate,
+        total: formatPaymentAmount(Math.round((result.converted + fee) * 100) / 100, DEFAULT_PAYMENT_CURRENCY),
+      }
+    } catch (e: unknown) {
+      if (seq === previewSeq) subscriptionPreviewError.value = extractApiErrorMessage(e, t('payment.admin.subscriptionPreviewUnavailable'))
+    }
+  }, 300)
+}, { immediate: true })
 
 // Reset form when dialog opens
 watch(() => props.show, (visible) => {

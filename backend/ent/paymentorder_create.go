@@ -4,6 +4,7 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
@@ -445,6 +446,12 @@ func (_c *PaymentOrderCreate) SetNillableSrcURL(v *string) *PaymentOrderCreate {
 	return _c
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (_c *PaymentOrderCreate) SetCurrencyConversion(v jsontext.Value) *PaymentOrderCreate {
+	_c.mutation.SetCurrencyConversion(v)
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *PaymentOrderCreate) SetCreatedAt(v time.Time) *PaymentOrderCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -844,6 +851,10 @@ func (_c *PaymentOrderCreate) createSpec() (*PaymentOrder, *sqlgraph.CreateSpec)
 	if value, ok := _c.mutation.SrcURL(); ok {
 		_spec.SetField(paymentorder.FieldSrcURL, field.TypeString, value)
 		_node.SrcURL = &value
+	}
+	if value, ok := _c.mutation.CurrencyConversion(); ok {
+		_spec.SetField(paymentorder.FieldCurrencyConversion, field.TypeJSON, value)
+		_node.CurrencyConversion = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(paymentorder.FieldCreatedAt, field.TypeTime, value)
@@ -1525,6 +1536,24 @@ func (u *PaymentOrderUpsert) UpdateSrcURL() *PaymentOrderUpsert {
 // ClearSrcURL clears the value of the "src_url" field.
 func (u *PaymentOrderUpsert) ClearSrcURL() *PaymentOrderUpsert {
 	u.SetNull(paymentorder.FieldSrcURL)
+	return u
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (u *PaymentOrderUpsert) SetCurrencyConversion(v jsontext.Value) *PaymentOrderUpsert {
+	u.Set(paymentorder.FieldCurrencyConversion, v)
+	return u
+}
+
+// UpdateCurrencyConversion sets the "currency_conversion" field to the value that was provided on create.
+func (u *PaymentOrderUpsert) UpdateCurrencyConversion() *PaymentOrderUpsert {
+	u.SetExcluded(paymentorder.FieldCurrencyConversion)
+	return u
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (u *PaymentOrderUpsert) ClearCurrencyConversion() *PaymentOrderUpsert {
+	u.SetNull(paymentorder.FieldCurrencyConversion)
 	return u
 }
 
@@ -2289,6 +2318,27 @@ func (u *PaymentOrderUpsertOne) UpdateSrcURL() *PaymentOrderUpsertOne {
 func (u *PaymentOrderUpsertOne) ClearSrcURL() *PaymentOrderUpsertOne {
 	return u.Update(func(s *PaymentOrderUpsert) {
 		s.ClearSrcURL()
+	})
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (u *PaymentOrderUpsertOne) SetCurrencyConversion(v jsontext.Value) *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetCurrencyConversion(v)
+	})
+}
+
+// UpdateCurrencyConversion sets the "currency_conversion" field to the value that was provided on create.
+func (u *PaymentOrderUpsertOne) UpdateCurrencyConversion() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateCurrencyConversion()
+	})
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (u *PaymentOrderUpsertOne) ClearCurrencyConversion() *PaymentOrderUpsertOne {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearCurrencyConversion()
 	})
 }
 
@@ -3221,6 +3271,27 @@ func (u *PaymentOrderUpsertBulk) UpdateSrcURL() *PaymentOrderUpsertBulk {
 func (u *PaymentOrderUpsertBulk) ClearSrcURL() *PaymentOrderUpsertBulk {
 	return u.Update(func(s *PaymentOrderUpsert) {
 		s.ClearSrcURL()
+	})
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (u *PaymentOrderUpsertBulk) SetCurrencyConversion(v jsontext.Value) *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.SetCurrencyConversion(v)
+	})
+}
+
+// UpdateCurrencyConversion sets the "currency_conversion" field to the value that was provided on create.
+func (u *PaymentOrderUpsertBulk) UpdateCurrencyConversion() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.UpdateCurrencyConversion()
+	})
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (u *PaymentOrderUpsertBulk) ClearCurrencyConversion() *PaymentOrderUpsertBulk {
+	return u.Update(func(s *PaymentOrderUpsert) {
+		s.ClearCurrencyConversion()
 	})
 }
 

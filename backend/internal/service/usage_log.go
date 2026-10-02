@@ -177,6 +177,9 @@ type UsageLog struct {
 	ModelRateMultiplier *float64
 	// AccountStatsCost 账号统计定价预计算费用（nil = 使用默认公式 total_cost × account_rate_multiplier）
 	AccountStatsCost *float64
+	// CurrencyConversion 价卡不是记账币种时的折算依据（usage_logs.currency_conversion）；上面的费用已是记账币种。
+	// nil 表示价卡就是记账币种。
+	CurrencyConversion *CurrencyConversion
 
 	BillingType        int8
 	RequestType        RequestType
@@ -245,8 +248,27 @@ func (u *UsageLog) SyncRequestTypeAndLegacyFields() {
 	u.Stream, u.OpenAIWSMode = ApplyLegacyRequestFields(requestType, u.Stream, u.OpenAIWSMode)
 }
 
+// applyCostBreakdown 把计费结果落进用量日志：各分项费用、总价、实扣、长上下文标记、逐模型倍率与币种折算依据。
+// 两条网关的落账路径都经这里，计费结果新增的字段只需在这里接一次。
+func (l *UsageLog) applyCostBreakdown(cost *CostBreakdown) {
+	if cost == nil {
+		return
+	}
+	l.InputCost = cost.InputCost
+	l.ImageInputCost = cost.ImageInputCost
+	l.OutputCost = cost.OutputCost
+	l.ImageOutputCost = cost.ImageOutputCost
+	l.CacheCreationCost = cost.CacheCreationCost
+	l.CacheReadCost = cost.CacheReadCost
+	l.TotalCost = cost.TotalCost
+	l.ActualCost = cost.ActualCost
+	l.LongContextBillingApplied = cost.LongContextBillingApplied
+	l.ModelRateMultiplier = usageLogModelRateMultiplier(cost)
+	l.CurrencyConversion = cost.CurrencyConversion
+}
+
 // usageLogModelRateMultiplier 把计费结果里的逐模型倍率因子快照进 usage_logs.model_rate_multiplier。
-// 两条网关的落账路径共用：只有经 CalculateCostUnified 评估过的结果才有值（含 1），
+// 只有经 CalculateCostUnified 评估过的结果才有值（含 1），
 // 未经统一入口的结果（CalculateImageCost 等直接构造，ModelRateMultiplier 为零值）留 NULL。
 func usageLogModelRateMultiplier(cost *CostBreakdown) *float64 {
 	if cost == nil || cost.ModelRateMultiplier <= 0 {

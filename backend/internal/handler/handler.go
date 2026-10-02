@@ -45,6 +45,7 @@ type AdminHandlers struct {
 	Compliance             *admin.ComplianceHandler
 	AuditLog               *admin.AuditLogHandler
 	CustomPage             *admin.CustomPageHandler
+	ExchangeRate           *admin.ExchangeRateHandler
 }
 
 // Handlers contains all HTTP handlers

@@ -13,10 +13,11 @@ import (
 // 两者按同一个变体语法（billingVariantPattern）校验。
 const billingVariantSeparator = "@"
 
-// billingVariantPattern 是变体后缀的唯一语法：<分辨率>[+video]，如 "720p"、"1080p+video"。
+// billingVariantPattern 是变体后缀的唯一语法：<分辨率>[+video]，分辨率写作 "<数字>p" 或 "<数字>k"
+// （方舟的写法：480p / 720p / 1080p / 4k），如 "720p"、"1080p+video"、"4k+video"。
 // "@" 本身也出现在真实模型名里（Vertex 上的 Claude 写作 "claude-sonnet-4@20250514"），见 "@" 就当变体
 // 会让这类模型悄悄套用别的模型的倍率——所以只有符合这个语法的后缀才算变体。
-var billingVariantPattern = regexp.MustCompile(`^[0-9]+p(\+video)?$`)
+var billingVariantPattern = regexp.MustCompile(`^[0-9]+[pk](\+video)?$`)
 
 // BillingVariantModel 返回 model 的计费变体名；variant 为空或不符合变体语法时返回 model 本身。
 func BillingVariantModel(model, variant string) string {

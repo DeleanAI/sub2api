@@ -660,6 +660,16 @@ func ValidityDaysLTE(v int) predicate.RedeemCode {
 	return predicate.RedeemCode(sql.FieldLTE(FieldValidityDays, v))
 }
 
+// CurrencyConversionIsNil applies the IsNil predicate on the "currency_conversion" field.
+func CurrencyConversionIsNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldIsNull(FieldCurrencyConversion))
+}
+
+// CurrencyConversionNotNil applies the NotNil predicate on the "currency_conversion" field.
+func CurrencyConversionNotNil() predicate.RedeemCode {
+	return predicate.RedeemCode(sql.FieldNotNull(FieldCurrencyConversion))
+}
+
 // HasUser applies the HasEdge predicate on the "user" edge.
 func HasUser() predicate.RedeemCode {
 	return predicate.RedeemCode(func(s *sql.Selector) {

@@ -4,6 +4,7 @@ package ent
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 	"time"
@@ -85,6 +86,8 @@ type UsageLog struct {
 	AccountRateMultiplier *float64 `json:"account_rate_multiplier,omitempty"`
 	// ModelRateMultiplier holds the value of the "model_rate_multiplier" field.
 	ModelRateMultiplier *float64 `json:"model_rate_multiplier,omitempty"`
+	// CurrencyConversion holds the value of the "currency_conversion" field.
+	CurrencyConversion jsontext.Value `json:"currency_conversion,omitempty"`
 	// BillingType holds the value of the "billing_type" field.
 	BillingType int8 `json:"billing_type,omitempty"`
 	// Stream holds the value of the "stream" field.
@@ -202,7 +205,7 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case usagelog.FieldImageSizeBreakdown:
+		case usagelog.FieldCurrencyConversion, usagelog.FieldImageSizeBreakdown:
 			values[i] = new([]byte)
 		case usagelog.FieldUpstreamModelMismatch, usagelog.FieldLongContextBillingApplied, usagelog.FieldStream, usagelog.FieldCacheTTLOverridden:
 			values[i] = new(sql.NullBool)
@@ -432,6 +435,14 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.ModelRateMultiplier = new(float64)
 				*_m.ModelRateMultiplier = value.Float64
+			}
+		case usagelog.FieldCurrencyConversion:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field currency_conversion", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.CurrencyConversion); err != nil {
+					return fmt.Errorf("unmarshal field currency_conversion: %w", err)
+				}
 			}
 		case usagelog.FieldBillingType:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -724,6 +735,9 @@ func (_m *UsageLog) String() string {
 		builder.WriteString("model_rate_multiplier=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("currency_conversion=")
+	builder.WriteString(fmt.Sprintf("%v", _m.CurrencyConversion))
 	builder.WriteString(", ")
 	builder.WriteString("billing_type=")
 	builder.WriteString(fmt.Sprintf("%v", _m.BillingType))

@@ -123,6 +123,8 @@
                 <p class="mt-0.5 text-xs text-gray-400 dark:text-dark-500">
                   {{ formatDateTime(item.used_at || item.created_at) }}
                 </p>
+                <!-- 按非记账币种入账：原币金额与汇率出处 -->
+                <CurrencyConversionNote v-if="item.currency_conversion" :conversion="item.currency_conversion" class="mt-1" />
               </div>
             </div>
             <!-- Right: value -->
@@ -180,6 +182,7 @@ import type { AdminUser } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
+import CurrencyConversionNote from '@/components/common/CurrencyConversionNote.vue'
 import { balanceCurrencySymbol } from '@/utils/balanceCurrency'
 
 const props = defineProps<{ show: boolean; user: AdminUser | null; hideActions?: boolean }>()

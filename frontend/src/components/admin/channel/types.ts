@@ -23,6 +23,8 @@ export interface IntervalFormEntry {
 export interface PricingFormEntry {
   models: string[]
   billing_mode: BillingMode
+  /** 标价币种；'' 表示没写（后端按默认标价币种存），见 apiPricingCurrencyToForm / formPricingCurrencyToAPI */
+  currency: string
   input_price: number | string | null
   output_price: number | string | null
   cache_write_price: number | string | null
@@ -168,7 +170,17 @@ export function formatTimezoneOffset(timezone: string, at = new Date()): string 
   }
 }
 
-// 价格转换：后端存 per-token，前端显示 per-MTok（站内单位 / 1M tokens）
+/** 后端条目的标价币种 → 表单值（大写；没写为 ''）。 */
+export function apiPricingCurrencyToForm(currency?: string | null): string {
+  return (currency || '').trim().toUpperCase()
+}
+
+/** 表单的标价币种 → 请求值（'' 不发送，由后端按默认标价币种存）。 */
+export function formPricingCurrencyToAPI(currency?: string | null): string | undefined {
+  return apiPricingCurrencyToForm(currency) || undefined
+}
+
+// 价格转换：后端存 per-token，前端显示 per-MTok（条目标价币种 / 1M tokens）
 const MTOK = 1_000_000
 
 export function toNullableNumber(val: number | string | null | undefined): number | null {

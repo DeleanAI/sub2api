@@ -76,6 +76,8 @@ const (
 	FieldAccountRateMultiplier = "account_rate_multiplier"
 	// FieldModelRateMultiplier holds the string denoting the model_rate_multiplier field in the database.
 	FieldModelRateMultiplier = "model_rate_multiplier"
+	// FieldCurrencyConversion holds the string denoting the currency_conversion field in the database.
+	FieldCurrencyConversion = "currency_conversion"
 	// FieldBillingType holds the string denoting the billing_type field in the database.
 	FieldBillingType = "billing_type"
 	// FieldStream holds the string denoting the stream field in the database.
@@ -193,6 +195,7 @@ var Columns = []string{
 	FieldLongContextBillingApplied,
 	FieldAccountRateMultiplier,
 	FieldModelRateMultiplier,
+	FieldCurrencyConversion,
 	FieldBillingType,
 	FieldStream,
 	FieldDurationMs,

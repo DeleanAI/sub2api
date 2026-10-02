@@ -105,8 +105,11 @@ func (r *ModelPricingResolver) Resolve(ctx context.Context, input PricingInput) 
 		}
 	}
 
-	// 1. 获取基础定价
+	// 1. 获取基础定价（非美元标价的渠道条目自成一体，不取美元目录价，见 inheritsCatalogPricing）
 	basePricing, source := r.resolveBasePricing(input.Model)
+	if chPricing != nil && !inheritsCatalogPricing(chPricing) {
+		basePricing = nil
+	}
 
 	resolved := &ResolvedPricing{
 		Mode:                   BillingModeToken,
@@ -138,7 +141,9 @@ func (r *ModelPricingResolver) resolveConfiguredPricing(config *ChannelModelPric
 		r.applyRequestTierOverrides(config, resolved)
 		return resolved
 	}
-	resolved.BasePricing, _ = r.resolveBasePricing(model)
+	if inheritsCatalogPricing(config) {
+		resolved.BasePricing, _ = r.resolveBasePricing(model)
+	}
 	resolved.SupportsCacheBreakdown = resolved.BasePricing != nil && resolved.BasePricing.SupportsCacheBreakdown
 	r.applyTokenOverrides(config, resolved)
 	return resolved
@@ -256,6 +261,10 @@ func (r *ModelPricingResolver) applyChannelOverrides(ctx context.Context, groupI
 	if resolved.Mode == "" {
 		resolved.Mode = BillingModeToken
 	}
+	if !inheritsCatalogPricing(chPricing) {
+		resolved.BasePricing = nil
+		resolved.SupportsCacheBreakdown = false
+	}
 
 	switch resolved.Mode {
 	case BillingModeToken:
@@ -267,7 +276,8 @@ func (r *ModelPricingResolver) applyChannelOverrides(ctx context.Context, groupI
 
 // applyTokenOverrides 应用 token 模式的渠道覆盖
 func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricing, resolved *ResolvedPricing) {
-	if resolved.BasePricing == nil {
+	selfContained := resolved.BasePricing == nil
+	if selfContained {
 		resolved.BasePricing = &ModelPricing{}
 	} else {
 		// 防止修改 fallbackPrices 中的共享指针
@@ -276,6 +286,9 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 	}
 
 	applyChannelTokenPriceOverrides(resolved.BasePricing, chPricing)
+	if selfContained {
+		applySelfContainedCacheDefaults(resolved.BasePricing, chPricing)
+	}
 	if chPricing.CacheWrite1hPrice != nil {
 		resolved.SupportsCacheBreakdown = true
 		resolved.BasePricing.SupportsCacheBreakdown = true
@@ -301,6 +314,23 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 
 	// 区间未命中时回退到上面已经应用渠道覆盖的基础价。
 	resolved.Intervals = filterValidIntervals(chPricing.Intervals)
+}
+
+// applySelfContainedCacheDefaults：没有目录价可继承的价卡（非美元条目、目录里没有的模型）上没写的缓存读 / 缓存写价
+// 按该卡的输入价计——缓存 token 也是输入，没配折扣就不打折，不能按 0 白送（与官方价目录「缓存价缺省 = 输入价」同一口径）。
+func applySelfContainedCacheDefaults(pricing *ModelPricing, chPricing *ChannelModelPricing) {
+	if chPricing.CacheReadPrice == nil {
+		pricing.CacheReadPricePerToken = pricing.InputPricePerToken
+		pricing.CacheReadPricePerTokenPriority = pricing.InputPricePerTokenPriority
+	}
+	if chPricing.CacheWritePrice == nil {
+		pricing.CacheCreationPricePerToken = pricing.InputPricePerToken
+		pricing.CacheCreationPricePerTokenPriority = pricing.InputPricePerTokenPriority
+		pricing.CacheCreation5mPrice = pricing.InputPricePerToken
+		if chPricing.CacheWrite1hPrice == nil {
+			pricing.CacheCreation1hPrice = pricing.InputPricePerToken
+		}
+	}
 }
 
 // applyChannelImageInputPrice 应用渠道图片输入价：显式配置则用配置值；

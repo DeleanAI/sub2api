@@ -133,6 +133,19 @@ func RegisterAdminRoutes(
 
 		// 自定义页面（Markdown + 附件，存数据库）
 		registerCustomPageRoutes(admin, h)
+
+		// 汇率（调整余额前的折算预览与汇率存档）
+		registerExchangeRateRoutes(admin, h)
+	}
+}
+
+// registerExchangeRateRoutes 注册汇率接口：折算预览与存档查询都是只读的。
+func registerExchangeRateRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	rates := admin.Group("/exchange-rates")
+	{
+		rates.GET("", h.Admin.ExchangeRate.List)
+		rates.GET("/currencies", h.Admin.ExchangeRate.Currencies)
+		rates.GET("/convert", h.Admin.ExchangeRate.Convert)
 	}
 }
 

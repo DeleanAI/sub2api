@@ -2,6 +2,8 @@
  * Payment System Type Definitions
  */
 
+import type { CurrencyConversion } from '@/types'
+
 // ==================== Enums / Union Types ====================
 
 export type OrderStatus =
@@ -34,7 +36,6 @@ export interface PaymentConfig {
   order_timeout_minutes: number
   balance_disabled: boolean
   balance_recharge_multiplier: number
-  subscription_usd_to_cny_rate: number
   enabled_payment_types: PaymentType[]
   help_image_url: string
   help_text: string
@@ -60,6 +61,13 @@ export interface MethodLimitsResponse {
   global_max: number  // widest max across all methods; 0 = no maximum
 }
 
+/** 结算页预览用的汇率（后端 service.CheckoutExchangeRate）。 */
+export interface CheckoutExchangeRate {
+  usd_per_unit: number
+  rate_date?: string
+  source?: string
+}
+
 /** Response from /payment/checkout-info API — single call for the payment page */
 export interface CheckoutInfoResponse {
   methods: Record<string, MethodLimit>
@@ -67,9 +75,12 @@ export interface CheckoutInfoResponse {
   global_max: number
   plans: SubscriptionPlan[]
   balance_disabled: boolean
+  /** 支付金额按下单当天汇率折算成余额单位之后再乘的倍率（1 = 等值入账） */
   balance_recharge_multiplier: number
-  /** Subscription CNY conversion rate (1 USD = X CNY); 0 = disabled, plan price is charged as-is */
-  subscription_usd_to_cny_rate: number
+  /** 余额的记账币种：充值到账 = 支付金额按当天汇率折算成它，再乘充值倍率 */
+  accounting_currency: string
+  /** 预览用的当前汇率（1 单位该币值多少美元），与下单同口径；取不到的币种不在表里，页面不给折算预览 */
+  exchange_rates: Record<string, CheckoutExchangeRate>
   recharge_fee_rate: number
   help_text: string
   help_image_url: string
@@ -85,9 +96,15 @@ export interface CheckoutInfoResponse {
 export interface PaymentOrder {
   id: number
   user_id: number
+  /** 余额充值是入账金额，订阅是套餐价；币种见 amount_currency */
   amount: number
   pay_amount: number
+  /** 支付币种（pay_amount 的币种） */
   currency?: string
+  /** amount 的币种；不给表示站内余额单位（展示用 formatOrderAmount） */
+  amount_currency?: string
+  /** 跨币种下单时的折算依据 */
+  currency_conversion?: CurrencyConversion | null
   fee_rate: number
   payment_type: string
   out_trade_no: string
@@ -126,7 +143,7 @@ export interface SubscriptionPlan {
   description: string
   price: number
   original_price?: number
-  /** Display-only ISO 4217 currency label (e.g. "NZD"); empty means no label */
+  /** 套餐价的币种（ISO 4217）。结算页拿到的已解析（未设置时为默认标价币种）；与支付币种不同时下单按当天汇率折算收款 */
   currency?: string
   validity_days: number
   validity_unit: string

@@ -164,9 +164,17 @@ type ChannelService struct {
 	authCacheInvalidator APIKeyAuthCacheInvalidator
 	pricingService       *PricingService // 用于「可用渠道」展示时回落到全局定价；可为 nil（测试场景）
 	cachePubSub          ChannelCachePubSub
+	fx                   *ExchangeRateService // 「可用渠道」展示价折算成记账币种；可为 nil（记账币种按 USD）
 
 	cache   atomic.Value // *channelCache
 	cacheSF singleflight.Group
+}
+
+// ProvideChannelService 创建装配好汇率服务的渠道服务（可用渠道的展示价折算成记账币种）。
+func ProvideChannelService(repo ChannelRepository, groupRepo GroupRepository, authCacheInvalidator APIKeyAuthCacheInvalidator, pricingService *PricingService, cachePubSub ChannelCachePubSub, fx *ExchangeRateService) *ChannelService {
+	s := NewChannelService(repo, groupRepo, authCacheInvalidator, pricingService, cachePubSub)
+	s.fx = fx
+	return s
 }
 
 // NewChannelService 创建渠道服务实例。
@@ -679,6 +687,9 @@ func validateChannelConfig(pricing []ChannelModelPricing, mapping map[string]map
 // validatePricingEntries 校验定价条目（冲突检测 + 区间校验 + 计费模式校验），
 // 同时用于主渠道定价和 account_stats_pricing_rules 的内部定价。
 func validatePricingEntries(pricing []ChannelModelPricing) error {
+	if err := normalizePricingCurrencies(pricing); err != nil {
+		return err
+	}
 	if err := validateNoConflictingModels(pricing); err != nil {
 		return err
 	}
@@ -692,6 +703,31 @@ func validatePricingEntries(pricing []ChannelModelPricing) error {
 		return err
 	}
 	return validatePricingTimePricing(pricing)
+}
+
+// normalizePricingCurrencies 是定价条目标价币种的唯一归一化入口：缺省 DefaultPriceCurrency，只认可折算的法币。
+// 非目录币种的条目不继承目录价（inheritsCatalogPricing），token 计费的条目必须自己写明输入价和输出价（可以是 0），
+// 未写的缓存价按输入价计（applySelfContainedCacheDefaults）。
+func normalizePricingCurrencies(pricing []ChannelModelPricing) error {
+	for i := range pricing {
+		code := DefaultPriceCurrency
+		if strings.TrimSpace(pricing[i].Currency) != "" {
+			normalized, err := NormalizeFiatCurrency(pricing[i].Currency)
+			if err != nil {
+				return infraerrors.BadRequest("INVALID_PRICING_CURRENCY",
+					fmt.Sprintf("pricing for models %v: %s", pricing[i].Models, infraerrors.Message(err)))
+			}
+			code = normalized
+		}
+		pricing[i].Currency = code
+		mode := pricing[i].BillingMode
+		if code != CatalogPriceCurrency && (mode == "" || mode == BillingModeToken) &&
+			(pricing[i].InputPrice == nil || pricing[i].OutputPrice == nil) && len(pricing[i].Intervals) == 0 {
+			return infraerrors.BadRequest("PRICING_CURRENCY_REQUIRES_PRICES",
+				fmt.Sprintf("pricing for models %v is in %s and does not inherit the USD catalog price: set both input_price and output_price (0 is allowed), or intervals", pricing[i].Models, code))
+		}
+	}
+	return nil
 }
 
 func validateReasoningEffortMultipliers(pricing []ChannelModelPricing) error {

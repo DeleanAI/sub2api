@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
 // resolveAccountStatsCost 计算账号统计定价费用。
@@ -48,9 +50,16 @@ func resolveAccountStatsCost(
 
 	platform := channelService.GetGroupPlatform(ctx, groupID)
 
-	// 优先级 1：自定义规则（始终尝试）
-	if cost := tryCustomRules(channel, accountID, groupID, platform, upstreamModel, tokens, requestCount, reasoningEffort); cost != nil {
-		return cost
+	// 优先级 1：自定义规则（始终尝试）。规则价不是记账币种时按使用时刻的汇率折算；折算不了就不覆盖
+	// （走默认公式），不把外币数字当记账币种记。
+	if cost, currency := tryCustomRules(channel, accountID, groupID, platform, upstreamModel, tokens, requestCount, reasoningEffort); cost != nil {
+		converted, _, err := billingService.ConvertPriceToAccounting(ctx, *cost, currency, pricingAt)
+		if err != nil {
+			logger.LegacyPrintf("service.account_stats", "account stats rule price in %s not converted (default formula used): account=%d model=%s err=%v",
+				currency, accountID, upstreamModel, err)
+			return nil
+		}
+		return &converted
 	}
 
 	// 优先级 2：渠道开启"应用模型定价到账号统计"时，直接使用客户计费（倍率前）
@@ -95,12 +104,12 @@ func tryModelFilePricing(billingService *BillingService, model string, tokens Us
 	return &breakdown.TotalCost
 }
 
-// tryCustomRules 遍历自定义规则，按数组顺序先命中为准。
+// tryCustomRules 遍历自定义规则，按数组顺序先命中为准；返回规则标价币种下的费用与该币种。
 func tryCustomRules(
 	channel *Channel, accountID, groupID int64,
 	platform, model string, tokens UsageTokens, requestCount int,
 	reasoningEfforts ...string,
-) *float64 {
+) (*float64, string) {
 	reasoningEffort := ""
 	if len(reasoningEfforts) > 0 {
 		reasoningEffort = reasoningEfforts[0]
@@ -118,9 +127,9 @@ func tryCustomRules(
 		if cost != nil {
 			*cost *= reasoningEffortBillingMultiplier(reasoningEffort, pricing.ReasoningEffortMultipliers)
 		}
-		return cost
+		return cost, pricingCurrency(pricing)
 	}
-	return nil
+	return nil, ""
 }
 
 // matchAccountStatsRule 检查规则是否匹配指定的 accountID 和 groupID。

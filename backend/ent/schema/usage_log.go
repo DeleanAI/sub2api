@@ -2,6 +2,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"time"
 
 	"entgo.io/ent"
@@ -126,6 +127,10 @@ func (UsageLog) Fields() []ent.Field {
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "numeric(12,6)"}),
+		// currency_conversion: 非记账币种金额的折算依据（service.CurrencyConversion 的 JSON；migration 241，NULL 表示同币种）。
+		field.JSON("currency_conversion", json.RawMessage{}).
+			Optional().
+			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
 		// 其他字段
 		field.Int8("billing_type").

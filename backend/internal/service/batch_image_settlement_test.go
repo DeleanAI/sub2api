@@ -175,9 +175,15 @@ func TestBatchImageSettlementService_UsesSubmittedPricingSnapshot(t *testing.T) 
 	holdAmount := 0.55
 	job.HoldAmount = &holdAmount
 	job.EstimatedCost = 0.5
+	submitted := &CurrencyConversion{FromCurrency: "CNY", ToCurrency: "USD", Rate: 1 / 6.7351,
+		Legs: []ExchangeRate{{Currency: "CNY", RateDate: "2026-09-30", Quote: 6.7351, Source: FXSourceCFETSCentralParity}}}
+	job.CurrencyConversion = submitted
 	repo.jobs[job.BatchID] = job
 	billing := &fakeBatchImageBillingRepo{}
-	svc := &BatchImageSettlementService{Repo: repo, BillingRepo: billing, Pricing: &fakeBatchImagePricingResolver{unitPrice: 0.50}}
+	usageLogs := &openAIRecordUsageLogRepoStub{}
+	settleTime := &CurrencyConversion{FromCurrency: "CNY", ToCurrency: "USD", Rate: 1 / 7.0}
+	svc := &BatchImageSettlementService{Repo: repo, BillingRepo: billing, UsageLogRepo: usageLogs,
+		Pricing: &fakeBatchImagePricingResolver{unitPrice: 0.50, conversion: settleTime}}
 
 	result, err := svc.Settle(context.Background(), job.BatchID)
 	require.NoError(t, err)
@@ -185,6 +191,22 @@ func TestBatchImageSettlementService_UsesSubmittedPricingSnapshot(t *testing.T) 
 	require.Len(t, billing.captures, 1)
 	require.InDelta(t, 0.5, billing.captures[0].ActualAmount, 1e-12)
 	require.InDelta(t, 0.55, billing.captures[0].HoldAmount, 1e-12)
+	require.Same(t, submitted, usageLogs.lastLog.CurrencyConversion, "the usage log carries the rate the snapshot price was converted with")
+}
+
+func TestBatchImageSettlementService_LegacyJobRecordsTheSettlementTimeConversion(t *testing.T) {
+	repo := newFakeBatchImageRepository()
+	job := testSettlingBatchImageJob("imgbatch_legacy_fx")
+	job.SuccessCount, job.FailCount, job.ItemCount = 1, 0, 1
+	repo.jobs[job.BatchID] = job
+	usageLogs := &openAIRecordUsageLogRepoStub{}
+	settleTime := &CurrencyConversion{FromCurrency: "CNY", ToCurrency: "USD", Rate: 1 / 6.7351}
+	svc := &BatchImageSettlementService{Repo: repo, BillingRepo: &fakeBatchImageBillingRepo{}, UsageLogRepo: usageLogs,
+		Pricing: &fakeBatchImagePricingResolver{unitPrice: 0.25, conversion: settleTime}}
+
+	_, err := svc.Settle(context.Background(), job.BatchID)
+	require.NoError(t, err)
+	require.Same(t, settleTime, usageLogs.lastLog.CurrencyConversion)
 }
 
 func TestBatchImageSettlementService_BillingFailureLeavesSettlingAndRecordsError(t *testing.T) {
@@ -417,18 +439,19 @@ func testSettlingBatchImageJob(batchID string) *BatchImageJob {
 
 type fakeBatchImagePricingResolver struct {
 	unitPrice     float64
+	conversion    *CurrencyConversion
 	missingModels map[string]bool
 	err           error
 }
 
-func (r *fakeBatchImagePricingResolver) BatchImageUnitPrice(_ context.Context, job *BatchImageJob) (float64, error) {
+func (r *fakeBatchImagePricingResolver) BatchImageUnitPrice(_ context.Context, job *BatchImageJob) (float64, *CurrencyConversion, error) {
 	if r.err != nil {
-		return 0, r.err
+		return 0, nil, r.err
 	}
 	if job != nil && r.missingModels[job.Model] {
-		return 0, ErrBatchImageSettlementPricingMissing
+		return 0, nil, ErrBatchImageSettlementPricingMissing
 	}
-	return r.unitPrice, nil
+	return r.unitPrice, r.conversion, nil
 }
 
 type fakeBatchImageBillingRepo struct {

@@ -118,6 +118,14 @@ export default {
     }
   },
 
+  currencyConversion: {
+    source: {
+      cfets: '中国外汇交易中心人民币中间价',
+      coingecko: 'CoinGecko 当日价',
+    },
+    stale: '计费时汇率源暂时不可用，沿用了最近一次公布的中间价',
+  },
+
   adminCompliance: {
     title: '部署与运营合规确认',
     blockingNotice: '继续使用控制台前，须完成部署与运营合规确认。',

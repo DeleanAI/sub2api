@@ -21,7 +21,7 @@ import zh from '../i18n/locales/zh'
 import { i18n, loadLocaleMessages } from '../i18n'
 import { SITE_MESSAGE_NAMESPACE } from '../i18n/siteMessages'
 import { useAppStore } from '../stores/app'
-import { installBalanceCurrency } from '../utils/balanceCurrency'
+import { installBalanceCurrency } from '../utils/balanceCurrencyInstall'
 import type { PublicSettings } from '../types'
 
 // ---------------------------------------------------------------- 源码
@@ -76,8 +76,6 @@ interface MessageExemption {
 
 const MESSAGE_EXEMPTIONS: MessageExemption[] = [
   { key: 'payment.admin.currencyPlaceholder', reason: '支付通道的币种代码示例（真实货币）' },
-  { key: 'admin.settings.payment.subscriptionUsdToCnyRate', reason: '套餐价与支付币种之间的换算（真实货币）' },
-  { key: 'admin.settings.payment.subscriptionUsdToCnyRateHint', reason: '套餐价与支付币种之间的换算（真实货币）' },
   { key: 'admin.settings.payment.field_paymentCurrencyHint', reason: '支付通道可选的币种（真实货币）' },
   { key: 'admin.accounts.usageWindow.grokUsed', reason: 'xAI 账单的真实美元' },
   { key: 'admin.accounts.usageWindow.grokBalance', reason: 'xAI 账单的真实美元' },
@@ -85,7 +83,6 @@ const MESSAGE_EXEMPTIONS: MessageExemption[] = [
   { key: 'admin.accounts.usageWindow.grokOverageShort', reason: 'xAI 账单的真实美元' },
   { key: 'admin.accounts.headerOverride.invalidName', reason: 'HTTP 头名允许的字符集，不是金额' },
   { key: 'admin.groups.webSearchPricing.pricePerCallHint', allow: ['$10'], reason: 'OpenAI 官方价格以美元标价' },
-  { key: 'admin.settings.features.balanceCurrency.hint', allow: ['USD'], reason: '币种代码的填写示例' }
 ]
 
 type Tree = Record<string, unknown>

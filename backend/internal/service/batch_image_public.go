@@ -106,6 +106,8 @@ type BatchImagePricingSnapshot struct {
 	HoldUnitPrice           float64
 	EstimatedCost           float64
 	HoldAmount              float64
+	// CurrencyConversion：单价来自非记账币种价卡时的折算依据（分组配置的图片单价已是记账币种，为 nil）。
+	CurrencyConversion *CurrencyConversion
 }
 
 type BatchImagePublicBatch struct {
@@ -281,6 +283,7 @@ func (s *BatchImagePublicService) Submit(ctx context.Context, owner BatchImageOw
 		BillableUnitPrice:       pricingSnapshot.BillableUnitPrice,
 		HoldUnitPrice:           pricingSnapshot.HoldUnitPrice,
 		PricingSnapshotVersion:  1,
+		CurrencyConversion:      pricingSnapshot.CurrencyConversion,
 		Currency:                ReadBalanceCurrency(ctx, s.SettingRepo).Code,
 		HoldID:                  &holdID,
 		IdempotencyKey:          batchImageOptionalStringPtr(idempotencyKey),
@@ -644,7 +647,7 @@ func (s *BatchImagePublicService) ListModels(ctx context.Context, owner BatchIma
 				continue
 			}
 			for _, model := range batchImageModelsFromAccountMapping(&account) {
-				if _, err := s.Pricing.BatchImageUnitPrice(ctx, &BatchImageJob{Provider: providerName, Model: model}); err != nil {
+				if _, _, err := s.Pricing.BatchImageUnitPrice(ctx, &BatchImageJob{Provider: providerName, Model: model}); err != nil {
 					continue
 				}
 				if !account.IsModelSupported(model) {
@@ -1002,6 +1005,7 @@ func (s *BatchImagePublicService) ensureGroupAllowsBatchImage(ctx context.Contex
 
 func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, owner BatchImageOwner, req BatchImageSubmitRequest, provider string, account *Account) (*BatchImagePricingSnapshot, error) {
 	unit := -1.0
+	var conversion *CurrencyConversion
 	groupMultiplier := 1.0
 	discountMultiplier := defaultBatchImageDiscountMultiplier
 	holdMultiplier := defaultBatchImageHoldMultiplier
@@ -1052,11 +1056,11 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 		if s.Pricing == nil {
 			return nil, ErrBatchImageSettlementPricingMissing
 		}
-		resolvedUnit, err := s.Pricing.BatchImageUnitPrice(ctx, &BatchImageJob{Provider: provider, Model: req.Model})
+		resolvedUnit, resolvedConversion, err := s.Pricing.BatchImageUnitPrice(ctx, &BatchImageJob{Provider: provider, Model: req.Model})
 		if err != nil || resolvedUnit < 0 {
 			return nil, ErrBatchImageSettlementPricingMissing
 		}
-		unit = resolvedUnit
+		unit, conversion = resolvedUnit, resolvedConversion
 	}
 	// 定价不变式：hold 比例不得低于 discount 比例，否则成功率足够高时
 	// actualCost > holdAmount，结算永远失败、冻结余额无法解冻。
@@ -1088,6 +1092,7 @@ func (s *BatchImagePublicService) resolvePricingSnapshot(ctx context.Context, ow
 		HoldUnitPrice:           holdUnitPrice,
 		EstimatedCost:           billableUnitPrice * float64(len(req.Items)),
 		HoldAmount:              holdUnitPrice * float64(len(req.Items)),
+		CurrencyConversion:      conversion,
 	}, nil
 }
 

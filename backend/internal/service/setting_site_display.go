@@ -27,18 +27,20 @@ type BalanceCurrency struct {
 }
 
 // NormalizeBalanceCurrency 是 balance_currency 的唯一校验与归一化入口（设置写入路径调用）：
-// 去首尾空白、按 ISO 4217 解析并转成大写代码；空值回到默认。
+// 去首尾空白、转成大写代码；空值回到默认。记账币种决定一切折算（美元官方价、人民币价卡、各币种充值），
+// 所以只认有汇率来源的法币（fxCurrencies 里的 fiat），否则每笔计费都会因折算不了而按无价处理。
 func NormalizeBalanceCurrency(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return DefaultBalanceCurrency, nil
 	}
-	unit, err := currency.ParseISO(value)
+	code, err := NormalizeFiatCurrency(value)
 	if err != nil {
 		return "", infraerrors.BadRequest("INVALID_BALANCE_CURRENCY",
-			fmt.Sprintf("balance_currency must be an ISO 4217 currency code such as USD or CNY, got %q", value))
+			fmt.Sprintf("balance_currency must be one of %s (currencies with an exchange rate source), got %q",
+				strings.Join(SupportedFXCurrencies(true), ", "), value))
 	}
-	return unit.String(), nil
+	return code, nil
 }
 
 // Format 把站内金额写成给人看的样子：符号 + 两位小数，负数的负号写在符号前（"-¥1.00"）。

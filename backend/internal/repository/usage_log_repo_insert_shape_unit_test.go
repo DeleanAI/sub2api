@@ -16,24 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	usageLogStaticInsertShapeRe = regexp.MustCompile(`(?s)INSERT INTO usage_logs \((.*?)\) VALUES \((.*?)\)`)
-	usageLogPlaceholderRe       = regexp.MustCompile(`\$(\d+)`)
-)
-
-// newSQLCapturingMock 返回把实际下发 SQL 记录到 captured 的 sqlmock；语句一律视为匹配，
-// 参数仍由 WithArgs 校验。
-func newSQLCapturingMock(t *testing.T, captured *[]string) (*sql.DB, sqlmock.Sqlmock) {
-	t.Helper()
-	matcher := sqlmock.QueryMatcherFunc(func(_, actualSQL string) error {
-		*captured = append(*captured, actualSQL)
-		return nil
-	})
-	db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(matcher))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = db.Close() })
-	return db, mock
-}
+var usageLogPlaceholderRe = regexp.MustCompile(`\$(\d+)`)
 
 // requireStaticInsertMatchesArgTypes 断言手写的 INSERT：列清单长度与 VALUES 占位符数量
 // 都等于 usageLogInsertArgTypes，且占位符恰为 $1..$N 各出现一次。
@@ -64,6 +47,25 @@ func requireStaticInsertMatchesArgTypes(t *testing.T, query string) {
 		_, ok := seen[i]
 		require.True(t, ok, "missing placeholder $%d", i)
 	}
+}
+
+// TestPrepareUsageLogInsert_CurrencyConversionArgWiring：折算依据以 JSON 文本写进 jsonb 列，没有时写 NULL。
+func TestPrepareUsageLogInsert_CurrencyConversionArgWiring(t *testing.T) {
+	idx := usageLogInsertColumnIndex(t, "currency_conversion")
+	require.Equal(t, "jsonb", usageLogInsertArgTypes[idx])
+
+	conversion := &service.CurrencyConversion{FromCurrency: "CNY", ToCurrency: "USD", Rate: 1 / 6.7351,
+		Legs: []service.ExchangeRate{{Currency: "CNY", RateDate: "2026-09-30", Quote: 6.7351, Source: service.FXSourceCFETSCentralParity}}}
+	prepared := prepareUsageLogInsert(&service.UsageLog{UserID: 1, APIKeyID: 2, RequestID: "client:fx", Model: "doubao-seedance-2-5",
+		CurrencyConversion: conversion, CreatedAt: time.Now().UTC()})
+	raw, ok := prepared.args[idx].(string)
+	require.True(t, ok, "currency_conversion arg should be JSON text, got %T", prepared.args[idx])
+	require.Equal(t, conversion, service.DecodeCurrencyConversion([]byte(raw), "test"))
+
+	absent := prepareUsageLogInsert(&service.UsageLog{UserID: 1, APIKeyID: 2, RequestID: "client:usd", Model: "gpt-5.4", CreatedAt: time.Now().UTC()})
+	require.Nil(t, absent.args[idx], "priced in the accounting currency: NULL")
+
+	require.Contains(t, usageLogSelectColumns, "currency_conversion")
 }
 
 // TestUsageLogStaticInsertShape_PlaceholdersMatchArgTypes 覆盖两条不经占位符生成器、
@@ -129,7 +131,7 @@ func TestPrepareUsageLogInsert_UpstreamRequestIDArgWiring(t *testing.T) {
 	})
 	require.Len(t, prepared.args, len(usageLogInsertArgTypes))
 
-	idx := len(prepared.args) - 4
+	idx := usageLogInsertColumnIndex(t, "upstream_request_id")
 	arg, ok := prepared.args[idx].(sql.NullString)
 	require.True(t, ok, "upstream_request_id arg should be sql.NullString, got %T", prepared.args[idx])
 	require.True(t, arg.Valid)

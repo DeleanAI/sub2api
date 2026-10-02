@@ -13,12 +13,13 @@ import (
 )
 
 func TestNormalizeBalanceCurrency(t *testing.T) {
-	for in, want := range map[string]string{"": "USD", "  ": "USD", "USD": "USD", " cny ": "CNY", "eur": "EUR"} {
+	for in, want := range map[string]string{"": "USD", "  ": "USD", "USD": "USD", " cny ": "CNY"} {
 		got, err := NormalizeBalanceCurrency(in)
 		require.NoError(t, err, in)
 		require.Equal(t, want, got, in)
 	}
-	for _, bad := range []string{"RMB", "US", "¥", "$", "CNY1", "人民币"} {
+	// EUR 是合法 ISO 代码，但没有汇率来源：记账币种只能是能折算的法币；稳定币不能当记账币种。
+	for _, bad := range []string{"EUR", "USDT", "RMB", "US", "¥", "$", "CNY1", "人民币"} {
 		_, err := NormalizeBalanceCurrency(bad)
 		require.Error(t, err, bad)
 		require.Equal(t, "INVALID_BALANCE_CURRENCY", infraerrors.Reason(err), bad)

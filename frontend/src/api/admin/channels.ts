@@ -43,6 +43,9 @@ export interface ChannelModelPricing {
   platform: string
   models: string[]
   billing_mode: BillingMode
+  /** 标价币种（USD / CNY，可选项见 GET /admin/exchange-rates/currencies）；计费按使用时刻汇率折算成记账币种。
+   *  非目录币种的条目不继承目录价。不写时后端按默认标价币种存。 */
+  currency?: string
   input_price: number | null
   output_price: number | null
   cache_write_price: number | null
@@ -173,6 +176,8 @@ export async function remove(id: number): Promise<void> {
 
 export interface ModelDefaultPricing {
   found: boolean
+  /** 目录价的标价币种；编辑器只在条目也按这个币种标价时预填 */
+  currency?: string
   input_price?: number    // per-token price
   output_price?: number
   cache_write_price?: number

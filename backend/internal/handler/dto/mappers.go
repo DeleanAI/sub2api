@@ -656,6 +656,8 @@ func redeemCodeFromServiceBase(rc *service.RedeemCode) RedeemCode {
 		ValidityDays: rc.ValidityDays,
 		User:         UserFromServiceShallow(rc.User),
 		Group:        GroupFromServiceShallow(rc.Group),
+
+		CurrencyConversion: rc.CurrencyConversion,
 	}
 	if rc.IsExpired() {
 		out.Status = service.StatusExpired
@@ -740,6 +742,7 @@ func usageLogFromServiceUser(l *service.UsageLog) UsageLog {
 		SessionID:                 l.SessionID,
 		CacheTTLOverridden:        l.CacheTTLOverridden,
 		BillingMode:               l.BillingMode,
+		CurrencyConversion:        l.CurrencyConversion,
 		CreatedAt:                 l.CreatedAt,
 		User:                      UserFromServiceShallow(l.User),
 		APIKey:                    APIKeyFromService(l.APIKey),

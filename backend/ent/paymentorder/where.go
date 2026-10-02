@@ -2360,6 +2360,16 @@ func SrcURLContainsFold(v string) predicate.PaymentOrder {
 	return predicate.PaymentOrder(sql.FieldContainsFold(FieldSrcURL, v))
 }
 
+// CurrencyConversionIsNil applies the IsNil predicate on the "currency_conversion" field.
+func CurrencyConversionIsNil() predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldIsNull(FieldCurrencyConversion))
+}
+
+// CurrencyConversionNotNil applies the NotNil predicate on the "currency_conversion" field.
+func CurrencyConversionNotNil() predicate.PaymentOrder {
+	return predicate.PaymentOrder(sql.FieldNotNull(FieldCurrencyConversion))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.PaymentOrder {
 	return predicate.PaymentOrder(sql.FieldEQ(FieldCreatedAt, v))

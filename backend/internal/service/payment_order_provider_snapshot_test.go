@@ -65,6 +65,9 @@ func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 	require.NoError(t, err)
 
 	svc := &PaymentService{entClient: client}
+	from, to := 88.0, 13.07
+	conversion := &CurrencyConversion{FromCurrency: "CNY", ToCurrency: "USD", FromAmount: &from, ToAmount: &to, Rate: 1 / 6.7351,
+		Legs: []ExchangeRate{{Currency: "CNY", RateDate: "2026-09-30", Quote: 6.7351, Source: FXSourceCFETSCentralParity}}}
 	order, err := svc.createOrderInTx(
 		ctx,
 		CreateOrderRequest{
@@ -84,10 +87,8 @@ func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 			MaxPendingOrders: 3,
 			OrderTimeoutMin:  30,
 		},
-		88,
-		88,
+		&createOrderAmounts{orderAmount: 13.07, gatewayBase: 88, payAmountStr: "88.00", payAmount: 88, conversion: conversion},
 		0,
-		88,
 		&payment.InstanceSelection{
 			InstanceID:     strconv.FormatInt(instance.ID, 10),
 			ProviderKey:    payment.TypeAlipay,
@@ -99,6 +100,10 @@ func TestCreateOrderInTx_WritesProviderSnapshot(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
+	require.Equal(t, 13.07, order.Amount)
+	require.Equal(t, 88.0, order.PayAmount)
+	require.Equal(t, conversion, DecodeCurrencyConversion(order.CurrencyConversion, "test order"), "the order keeps the conversion it was credited with")
+	require.Equal(t, conversion, PaymentOrderCurrencyConversion(order), "fulfillment hands the same record to the balance history")
 	require.Equal(t, strconv.FormatInt(instance.ID, 10), valueOrEmpty(order.ProviderInstanceID))
 	require.Equal(t, payment.TypeAlipay, valueOrEmpty(order.ProviderKey))
 	require.Equal(t, float64(2), order.ProviderSnapshot["schema_version"])

@@ -215,10 +215,10 @@ const seedanceVideoInputVariantSuffix = "+video"
 
 // seedanceBillingVariant 返回 Seedance 任务的计价档（计费变体，见 BillingVariantModel）。
 //
-// 方舟按「输出视频分辨率 × 输入是否包含视频」给 token 单价分档（模型价格文档，2026-09-24 版：
-// doubao-seedance-2.5 输出 480p/720p 不含视频 70、含视频 42，1080p 不含视频 77、含视频 46 元/百万 token）。
-// 档位名是 "<分辨率>" 或 "<分辨率>+video"，价格由运营在分组 / 渠道定价里按 "<模型>@<档位>" 配置。
-// 分辨率未知、或不是变体语法认得的 "<数字>p"（billingVariantPattern）时返回空，由调用方告警并按模型本身的价格计。
+// 方舟按「输出视频分辨率 × 输入是否包含视频」给 token 单价分档（模型价格文档：doubao-seedance-2.5 输出
+// 480p/720p 不含视频 70、含视频 42，1080p 不含视频 77、含视频 46；doubao-seedance-2.0 另有 4k 档 26 / 16 元/百万 token）。
+// 档位名是 "<分辨率>" 或 "<分辨率>+video"，价格由运营在分组 / 渠道定价里按 "<模型>@<档位>" 配置（标价币种 CNY）。
+// 分辨率未知、或不是变体语法认得的 "<数字>p" / "<数字>k"（billingVariantPattern）时返回空，由调用方告警并按模型本身的价格计。
 func seedanceBillingVariant(resolution string, inputVideo bool) string {
 	variant := strings.ToLower(strings.TrimSpace(resolution))
 	if variant != "" && inputVideo {

@@ -1690,6 +1690,16 @@ func ModelRateMultiplierNotNil() predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNotNull(FieldModelRateMultiplier))
 }
 
+// CurrencyConversionIsNil applies the IsNil predicate on the "currency_conversion" field.
+func CurrencyConversionIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldCurrencyConversion))
+}
+
+// CurrencyConversionNotNil applies the NotNil predicate on the "currency_conversion" field.
+func CurrencyConversionNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldCurrencyConversion))
+}
+
 // BillingTypeEQ applies the EQ predicate on the "billing_type" field.
 func BillingTypeEQ(v int8) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldBillingType, v))

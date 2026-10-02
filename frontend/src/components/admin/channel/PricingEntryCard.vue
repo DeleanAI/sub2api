@@ -81,6 +81,18 @@
               class="mt-1"
             />
           </div>
+          <div class="w-28">
+            <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('admin.channels.form.priceCurrency') }}
+            </label>
+            <Select
+              :modelValue="priceCurrency"
+              @update:modelValue="emit('update', { ...entry, currency: String($event ?? '') })"
+              :options="currencySelectOptions"
+              class="mt-1"
+              data-testid="pricing-currency"
+            />
+          </div>
           <div class="w-40">
             <label class="text-xs font-medium text-gray-500 dark:text-gray-400">
               {{ t('admin.channels.form.billingMode') }}
@@ -99,12 +111,16 @@
           </div>
         </div>
 
+        <p v-if="!inheritsCatalog" class="mt-2 text-xs text-amber-600 dark:text-amber-400" data-testid="pricing-currency-hint">
+          {{ t('admin.channels.form.foreignCurrencyHint', { currency: priceCurrency, catalog: catalogCurrency }) }}
+        </p>
+
         <!-- Token mode -->
         <div v-if="entry.billing_mode === 'token'">
           <!-- Default prices (fallback when no interval matches) -->
           <label class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400">
             {{ t('admin.channels.form.defaultPrices') }}
-            <span class="ml-1 font-normal text-gray-400">{{ $currency }}/MTok</span>
+            <span class="ml-1 font-normal text-gray-400">{{ priceSymbol }}/MTok</span>
           </label>
           <div class="pricing-default-grid mt-1 grid gap-2">
             <div>
@@ -193,7 +209,7 @@
           <!-- Default per-request price -->
           <label class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400">
             {{ t('admin.channels.form.defaultPerRequestPrice') }}
-            <span class="ml-1 font-normal text-gray-400">{{ $currency }}</span>
+            <span class="ml-1 font-normal text-gray-400">{{ priceSymbol }}</span>
           </label>
           <div class="mt-1 w-48">
             <input :value="entry.per_request_price" @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
@@ -229,7 +245,7 @@
           <!-- Default image price (per-request, same as per_request mode) -->
           <label class="mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400">
             {{ entry.billing_mode === 'video' ? t('admin.channels.form.defaultVideoPrice') : t('admin.channels.form.defaultImagePrice') }}
-            <span class="ml-1 font-normal text-gray-400">{{ $currency }}</span>
+            <span class="ml-1 font-normal text-gray-400">{{ priceSymbol }}</span>
           </label>
           <div class="mt-1 w-48">
             <input :value="entry.per_request_price" @input="emitField('per_request_price', ($event.target as HTMLInputElement).value)"
@@ -311,6 +327,8 @@ import { perTokenToMTok, getPlatformTagClass, isValidPositiveMultiplier, validat
 import { REASONING_EFFORT_LEVELS, type ReasoningEffortLevel } from '@/constants/channel'
 import type { BillingMode } from '@/api/admin/channels'
 import channelsAPI from '@/api/admin/channels'
+import { currencySymbol } from '@/components/payment/currency'
+import { useCurrencyOptions } from '@/composables/useCurrencyOptions'
 
 const { t } = useI18n()
 
@@ -333,6 +351,17 @@ const emit = defineEmits<{
 
 // Collapse state: entries with existing models default to collapsed
 const collapsed = ref(props.entry.models.length > 0)
+
+// 标价币种：选项、默认值都来自后端（GET /admin/exchange-rates/currencies）。'' 表示没写，按默认标价币种存。
+// 目录价（官方价目录等）以默认标价币种标价；条目换成别的币种后不再继承目录价，价格单位符号跟着条目币种走。
+const { options: currencyOptions } = useCurrencyOptions()
+const catalogCurrency = computed(() => currencyOptions.value?.default_price_currency || '')
+const priceCurrency = computed(() => props.entry.currency || catalogCurrency.value)
+const inheritsCatalog = computed(() => !props.entry.currency || props.entry.currency === catalogCurrency.value)
+const priceSymbol = computed(() => (priceCurrency.value ? currencySymbol(priceCurrency.value) : ''))
+const currencySelectOptions = computed(() =>
+  (currencyOptions.value?.fiat_currencies || []).map(code => ({ value: code, label: code }))
+)
 
 const billingModeOptions = computed(() => [
   { value: 'token', label: t('admin.channels.billingMode.token') },
@@ -421,10 +450,10 @@ async function onModelsUpdate(newModels: string[]) {
                    e.cache_write_price != null || e.cache_write_1h_price != null || e.cache_read_price != null
   if (hasPrice) return
 
-  // 查询第一个新增模型的默认价格
+  // 查询第一个新增模型的默认价格（目录价）；只在条目也按目录币种标价时预填，不把一种币种的数字填进另一种币种的条目
   try {
     const result = await channelsAPI.getModelDefaultPricing(addedModels[0])
-    if (result.found) {
+    if (result.found && result.currency === priceCurrency.value) {
       emit('update', {
         ...props.entry,
         models: newModels,

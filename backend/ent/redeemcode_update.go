@@ -4,12 +4,14 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
@@ -214,6 +216,24 @@ func (_u *RedeemCodeUpdate) AddValidityDays(v int) *RedeemCodeUpdate {
 	return _u
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (_u *RedeemCodeUpdate) SetCurrencyConversion(v jsontext.Value) *RedeemCodeUpdate {
+	_u.mutation.SetCurrencyConversion(v)
+	return _u
+}
+
+// AppendCurrencyConversion appends value to the "currency_conversion" field.
+func (_u *RedeemCodeUpdate) AppendCurrencyConversion(v jsontext.Value) *RedeemCodeUpdate {
+	_u.mutation.AppendCurrencyConversion(v)
+	return _u
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (_u *RedeemCodeUpdate) ClearCurrencyConversion() *RedeemCodeUpdate {
+	_u.mutation.ClearCurrencyConversion()
+	return _u
+}
+
 // SetUserID sets the "user" edge to the User entity by ID.
 func (_u *RedeemCodeUpdate) SetUserID(id int64) *RedeemCodeUpdate {
 	_u.mutation.SetUserID(id)
@@ -352,6 +372,17 @@ func (_u *RedeemCodeUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	}
 	if value, ok := _u.mutation.AddedValidityDays(); ok {
 		_spec.AddField(redeemcode.FieldValidityDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CurrencyConversion(); ok {
+		_spec.SetField(redeemcode.FieldCurrencyConversion, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCurrencyConversion(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, redeemcode.FieldCurrencyConversion, value)
+		})
+	}
+	if _u.mutation.CurrencyConversionCleared() {
+		_spec.ClearField(redeemcode.FieldCurrencyConversion, field.TypeJSON)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -615,6 +646,24 @@ func (_u *RedeemCodeUpdateOne) AddValidityDays(v int) *RedeemCodeUpdateOne {
 	return _u
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (_u *RedeemCodeUpdateOne) SetCurrencyConversion(v jsontext.Value) *RedeemCodeUpdateOne {
+	_u.mutation.SetCurrencyConversion(v)
+	return _u
+}
+
+// AppendCurrencyConversion appends value to the "currency_conversion" field.
+func (_u *RedeemCodeUpdateOne) AppendCurrencyConversion(v jsontext.Value) *RedeemCodeUpdateOne {
+	_u.mutation.AppendCurrencyConversion(v)
+	return _u
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (_u *RedeemCodeUpdateOne) ClearCurrencyConversion() *RedeemCodeUpdateOne {
+	_u.mutation.ClearCurrencyConversion()
+	return _u
+}
+
 // SetUserID sets the "user" edge to the User entity by ID.
 func (_u *RedeemCodeUpdateOne) SetUserID(id int64) *RedeemCodeUpdateOne {
 	_u.mutation.SetUserID(id)
@@ -783,6 +832,17 @@ func (_u *RedeemCodeUpdateOne) sqlSave(ctx context.Context) (_node *RedeemCode, 
 	}
 	if value, ok := _u.mutation.AddedValidityDays(); ok {
 		_spec.AddField(redeemcode.FieldValidityDays, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.CurrencyConversion(); ok {
+		_spec.SetField(redeemcode.FieldCurrencyConversion, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCurrencyConversion(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, redeemcode.FieldCurrencyConversion, value)
+		})
+	}
+	if _u.mutation.CurrencyConversionCleared() {
+		_spec.ClearField(redeemcode.FieldCurrencyConversion, field.TypeJSON)
 	}
 	if _u.mutation.UserCleared() {
 		edge := &sqlgraph.EdgeSpec{

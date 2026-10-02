@@ -30191,60 +30191,62 @@ func (m *PaymentAuditLogMutation) ResetEdge(name string) error {
 // PaymentOrderMutation represents an operation that mutates the PaymentOrder nodes in the graph.
 type PaymentOrderMutation struct {
 	config
-	op                       Op
-	typ                      string
-	id                       *int64
-	user_email               *string
-	user_name                *string
-	user_notes               *string
-	amount                   *float64
-	addamount                *float64
-	pay_amount               *float64
-	addpay_amount            *float64
-	fee_rate                 *float64
-	addfee_rate              *float64
-	recharge_code            *string
-	out_trade_no             *string
-	payment_type             *string
-	payment_trade_no         *string
-	pay_url                  *string
-	qr_code                  *string
-	qr_code_img              *string
-	order_type               *string
-	plan_id                  *int64
-	addplan_id               *int64
-	subscription_group_id    *int64
-	addsubscription_group_id *int64
-	subscription_days        *int
-	addsubscription_days     *int
-	provider_instance_id     *string
-	provider_key             *string
-	provider_snapshot        *map[string]interface{}
-	status                   *string
-	refund_amount            *float64
-	addrefund_amount         *float64
-	refund_reason            *string
-	refund_at                *time.Time
-	force_refund             *bool
-	refund_requested_at      *time.Time
-	refund_request_reason    *string
-	refund_requested_by      *string
-	expires_at               *time.Time
-	paid_at                  *time.Time
-	completed_at             *time.Time
-	failed_at                *time.Time
-	failed_reason            *string
-	client_ip                *string
-	src_host                 *string
-	src_url                  *string
-	created_at               *time.Time
-	updated_at               *time.Time
-	clearedFields            map[string]struct{}
-	user                     *int64
-	cleareduser              bool
-	done                     bool
-	oldValue                 func(context.Context) (*PaymentOrder, error)
-	predicates               []predicate.PaymentOrder
+	op                        Op
+	typ                       string
+	id                        *int64
+	user_email                *string
+	user_name                 *string
+	user_notes                *string
+	amount                    *float64
+	addamount                 *float64
+	pay_amount                *float64
+	addpay_amount             *float64
+	fee_rate                  *float64
+	addfee_rate               *float64
+	recharge_code             *string
+	out_trade_no              *string
+	payment_type              *string
+	payment_trade_no          *string
+	pay_url                   *string
+	qr_code                   *string
+	qr_code_img               *string
+	order_type                *string
+	plan_id                   *int64
+	addplan_id                *int64
+	subscription_group_id     *int64
+	addsubscription_group_id  *int64
+	subscription_days         *int
+	addsubscription_days      *int
+	provider_instance_id      *string
+	provider_key              *string
+	provider_snapshot         *map[string]interface{}
+	status                    *string
+	refund_amount             *float64
+	addrefund_amount          *float64
+	refund_reason             *string
+	refund_at                 *time.Time
+	force_refund              *bool
+	refund_requested_at       *time.Time
+	refund_request_reason     *string
+	refund_requested_by       *string
+	expires_at                *time.Time
+	paid_at                   *time.Time
+	completed_at              *time.Time
+	failed_at                 *time.Time
+	failed_reason             *string
+	client_ip                 *string
+	src_host                  *string
+	src_url                   *string
+	currency_conversion       *jsontext.Value
+	appendcurrency_conversion jsontext.Value
+	created_at                *time.Time
+	updated_at                *time.Time
+	clearedFields             map[string]struct{}
+	user                      *int64
+	cleareduser               bool
+	done                      bool
+	oldValue                  func(context.Context) (*PaymentOrder, error)
+	predicates                []predicate.PaymentOrder
 }
 
 var _ ent.Mutation = (*PaymentOrderMutation)(nil)
@@ -32080,6 +32082,71 @@ func (m *PaymentOrderMutation) ResetSrcURL() {
 	delete(m.clearedFields, paymentorder.FieldSrcURL)
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (m *PaymentOrderMutation) SetCurrencyConversion(j jsontext.Value) {
+	m.currency_conversion = &j
+	m.appendcurrency_conversion = nil
+}
+
+// CurrencyConversion returns the value of the "currency_conversion" field in the mutation.
+func (m *PaymentOrderMutation) CurrencyConversion() (r jsontext.Value, exists bool) {
+	v := m.currency_conversion
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCurrencyConversion returns the old "currency_conversion" field's value of the PaymentOrder entity.
+// If the PaymentOrder object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PaymentOrderMutation) OldCurrencyConversion(ctx context.Context) (v jsontext.Value, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCurrencyConversion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCurrencyConversion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCurrencyConversion: %w", err)
+	}
+	return oldValue.CurrencyConversion, nil
+}
+
+// AppendCurrencyConversion adds j to the "currency_conversion" field.
+func (m *PaymentOrderMutation) AppendCurrencyConversion(j jsontext.Value) {
+	m.appendcurrency_conversion = append(m.appendcurrency_conversion, j...)
+}
+
+// AppendedCurrencyConversion returns the list of values that were appended to the "currency_conversion" field in this mutation.
+func (m *PaymentOrderMutation) AppendedCurrencyConversion() (jsontext.Value, bool) {
+	if len(m.appendcurrency_conversion) == 0 {
+		return nil, false
+	}
+	return m.appendcurrency_conversion, true
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (m *PaymentOrderMutation) ClearCurrencyConversion() {
+	m.currency_conversion = nil
+	m.appendcurrency_conversion = nil
+	m.clearedFields[paymentorder.FieldCurrencyConversion] = struct{}{}
+}
+
+// CurrencyConversionCleared returns if the "currency_conversion" field was cleared in this mutation.
+func (m *PaymentOrderMutation) CurrencyConversionCleared() bool {
+	_, ok := m.clearedFields[paymentorder.FieldCurrencyConversion]
+	return ok
+}
+
+// ResetCurrencyConversion resets all changes to the "currency_conversion" field.
+func (m *PaymentOrderMutation) ResetCurrencyConversion() {
+	m.currency_conversion = nil
+	m.appendcurrency_conversion = nil
+	delete(m.clearedFields, paymentorder.FieldCurrencyConversion)
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *PaymentOrderMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -32213,7 +32280,7 @@ func (m *PaymentOrderMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *PaymentOrderMutation) Fields() []string {
-	fields := make([]string, 0, 39)
+	fields := make([]string, 0, 40)
 	if m.user != nil {
 		fields = append(fields, paymentorder.FieldUserID)
 	}
@@ -32325,6 +32392,9 @@ func (m *PaymentOrderMutation) Fields() []string {
 	if m.src_url != nil {
 		fields = append(fields, paymentorder.FieldSrcURL)
 	}
+	if m.currency_conversion != nil {
+		fields = append(fields, paymentorder.FieldCurrencyConversion)
+	}
 	if m.created_at != nil {
 		fields = append(fields, paymentorder.FieldCreatedAt)
 	}
@@ -32413,6 +32483,8 @@ func (m *PaymentOrderMutation) Field(name string) (ent.Value, bool) {
 		return m.SrcHost()
 	case paymentorder.FieldSrcURL:
 		return m.SrcURL()
+	case paymentorder.FieldCurrencyConversion:
+		return m.CurrencyConversion()
 	case paymentorder.FieldCreatedAt:
 		return m.CreatedAt()
 	case paymentorder.FieldUpdatedAt:
@@ -32500,6 +32572,8 @@ func (m *PaymentOrderMutation) OldField(ctx context.Context, name string) (ent.V
 		return m.OldSrcHost(ctx)
 	case paymentorder.FieldSrcURL:
 		return m.OldSrcURL(ctx)
+	case paymentorder.FieldCurrencyConversion:
+		return m.OldCurrencyConversion(ctx)
 	case paymentorder.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case paymentorder.FieldUpdatedAt:
@@ -32772,6 +32846,13 @@ func (m *PaymentOrderMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetSrcURL(v)
 		return nil
+	case paymentorder.FieldCurrencyConversion:
+		v, ok := value.(jsontext.Value)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCurrencyConversion(v)
+		return nil
 	case paymentorder.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -32963,6 +33044,9 @@ func (m *PaymentOrderMutation) ClearedFields() []string {
 	if m.FieldCleared(paymentorder.FieldSrcURL) {
 		fields = append(fields, paymentorder.FieldSrcURL)
 	}
+	if m.FieldCleared(paymentorder.FieldCurrencyConversion) {
+		fields = append(fields, paymentorder.FieldCurrencyConversion)
+	}
 	return fields
 }
 
@@ -33036,6 +33120,9 @@ func (m *PaymentOrderMutation) ClearField(name string) error {
 		return nil
 	case paymentorder.FieldSrcURL:
 		m.ClearSrcURL()
+		return nil
+	case paymentorder.FieldCurrencyConversion:
+		m.ClearCurrencyConversion()
 		return nil
 	}
 	return fmt.Errorf("unknown PaymentOrder nullable field %s", name)
@@ -33155,6 +33242,9 @@ func (m *PaymentOrderMutation) ResetField(name string) error {
 		return nil
 	case paymentorder.FieldSrcURL:
 		m.ResetSrcURL()
+		return nil
+	case paymentorder.FieldCurrencyConversion:
+		m.ResetCurrencyConversion()
 		return nil
 	case paymentorder.FieldCreatedAt:
 		m.ResetCreatedAt()
@@ -38873,28 +38963,30 @@ func (m *ProxyMutation) ResetEdge(name string) error {
 // RedeemCodeMutation represents an operation that mutates the RedeemCode nodes in the graph.
 type RedeemCodeMutation struct {
 	config
-	op               Op
-	typ              string
-	id               *int64
-	code             *string
-	_type            *string
-	value            *float64
-	addvalue         *float64
-	status           *string
-	used_at          *time.Time
-	notes            *string
-	created_at       *time.Time
-	expires_at       *time.Time
-	validity_days    *int
-	addvalidity_days *int
-	clearedFields    map[string]struct{}
-	user             *int64
-	cleareduser      bool
-	group            *int64
-	clearedgroup     bool
-	done             bool
-	oldValue         func(context.Context) (*RedeemCode, error)
-	predicates       []predicate.RedeemCode
+	op                        Op
+	typ                       string
+	id                        *int64
+	code                      *string
+	_type                     *string
+	value                     *float64
+	addvalue                  *float64
+	status                    *string
+	used_at                   *time.Time
+	notes                     *string
+	created_at                *time.Time
+	expires_at                *time.Time
+	validity_days             *int
+	addvalidity_days          *int
+	currency_conversion       *jsontext.Value
+	appendcurrency_conversion jsontext.Value
+	clearedFields             map[string]struct{}
+	user                      *int64
+	cleareduser               bool
+	group                     *int64
+	clearedgroup              bool
+	done                      bool
+	oldValue                  func(context.Context) (*RedeemCode, error)
+	predicates                []predicate.RedeemCode
 }
 
 var _ ent.Mutation = (*RedeemCodeMutation)(nil)
@@ -39496,6 +39588,71 @@ func (m *RedeemCodeMutation) ResetValidityDays() {
 	m.addvalidity_days = nil
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (m *RedeemCodeMutation) SetCurrencyConversion(j jsontext.Value) {
+	m.currency_conversion = &j
+	m.appendcurrency_conversion = nil
+}
+
+// CurrencyConversion returns the value of the "currency_conversion" field in the mutation.
+func (m *RedeemCodeMutation) CurrencyConversion() (r jsontext.Value, exists bool) {
+	v := m.currency_conversion
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCurrencyConversion returns the old "currency_conversion" field's value of the RedeemCode entity.
+// If the RedeemCode object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RedeemCodeMutation) OldCurrencyConversion(ctx context.Context) (v jsontext.Value, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCurrencyConversion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCurrencyConversion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCurrencyConversion: %w", err)
+	}
+	return oldValue.CurrencyConversion, nil
+}
+
+// AppendCurrencyConversion adds j to the "currency_conversion" field.
+func (m *RedeemCodeMutation) AppendCurrencyConversion(j jsontext.Value) {
+	m.appendcurrency_conversion = append(m.appendcurrency_conversion, j...)
+}
+
+// AppendedCurrencyConversion returns the list of values that were appended to the "currency_conversion" field in this mutation.
+func (m *RedeemCodeMutation) AppendedCurrencyConversion() (jsontext.Value, bool) {
+	if len(m.appendcurrency_conversion) == 0 {
+		return nil, false
+	}
+	return m.appendcurrency_conversion, true
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (m *RedeemCodeMutation) ClearCurrencyConversion() {
+	m.currency_conversion = nil
+	m.appendcurrency_conversion = nil
+	m.clearedFields[redeemcode.FieldCurrencyConversion] = struct{}{}
+}
+
+// CurrencyConversionCleared returns if the "currency_conversion" field was cleared in this mutation.
+func (m *RedeemCodeMutation) CurrencyConversionCleared() bool {
+	_, ok := m.clearedFields[redeemcode.FieldCurrencyConversion]
+	return ok
+}
+
+// ResetCurrencyConversion resets all changes to the "currency_conversion" field.
+func (m *RedeemCodeMutation) ResetCurrencyConversion() {
+	m.currency_conversion = nil
+	m.appendcurrency_conversion = nil
+	delete(m.clearedFields, redeemcode.FieldCurrencyConversion)
+}
+
 // SetUserID sets the "user" edge to the User entity by id.
 func (m *RedeemCodeMutation) SetUserID(id int64) {
 	m.user = &id
@@ -39597,7 +39754,7 @@ func (m *RedeemCodeMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RedeemCodeMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 12)
 	if m.code != nil {
 		fields = append(fields, redeemcode.FieldCode)
 	}
@@ -39631,6 +39788,9 @@ func (m *RedeemCodeMutation) Fields() []string {
 	if m.validity_days != nil {
 		fields = append(fields, redeemcode.FieldValidityDays)
 	}
+	if m.currency_conversion != nil {
+		fields = append(fields, redeemcode.FieldCurrencyConversion)
+	}
 	return fields
 }
 
@@ -39661,6 +39821,8 @@ func (m *RedeemCodeMutation) Field(name string) (ent.Value, bool) {
 		return m.GroupID()
 	case redeemcode.FieldValidityDays:
 		return m.ValidityDays()
+	case redeemcode.FieldCurrencyConversion:
+		return m.CurrencyConversion()
 	}
 	return nil, false
 }
@@ -39692,6 +39854,8 @@ func (m *RedeemCodeMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldGroupID(ctx)
 	case redeemcode.FieldValidityDays:
 		return m.OldValidityDays(ctx)
+	case redeemcode.FieldCurrencyConversion:
+		return m.OldCurrencyConversion(ctx)
 	}
 	return nil, fmt.Errorf("unknown RedeemCode field %s", name)
 }
@@ -39778,6 +39942,13 @@ func (m *RedeemCodeMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetValidityDays(v)
 		return nil
+	case redeemcode.FieldCurrencyConversion:
+		v, ok := value.(jsontext.Value)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCurrencyConversion(v)
+		return nil
 	}
 	return fmt.Errorf("unknown RedeemCode field %s", name)
 }
@@ -39850,6 +40021,9 @@ func (m *RedeemCodeMutation) ClearedFields() []string {
 	if m.FieldCleared(redeemcode.FieldGroupID) {
 		fields = append(fields, redeemcode.FieldGroupID)
 	}
+	if m.FieldCleared(redeemcode.FieldCurrencyConversion) {
+		fields = append(fields, redeemcode.FieldCurrencyConversion)
+	}
 	return fields
 }
 
@@ -39878,6 +40052,9 @@ func (m *RedeemCodeMutation) ClearField(name string) error {
 		return nil
 	case redeemcode.FieldGroupID:
 		m.ClearGroupID()
+		return nil
+	case redeemcode.FieldCurrencyConversion:
+		m.ClearCurrencyConversion()
 		return nil
 	}
 	return fmt.Errorf("unknown RedeemCode nullable field %s", name)
@@ -39919,6 +40096,9 @@ func (m *RedeemCodeMutation) ResetField(name string) error {
 		return nil
 	case redeemcode.FieldValidityDays:
 		m.ResetValidityDays()
+		return nil
+	case redeemcode.FieldCurrencyConversion:
+		m.ResetCurrencyConversion()
 		return nil
 	}
 	return fmt.Errorf("unknown RedeemCode field %s", name)
@@ -44662,6 +44842,8 @@ type UsageLogMutation struct {
 	addaccount_rate_multiplier   *float64
 	model_rate_multiplier        *float64
 	addmodel_rate_multiplier     *float64
+	currency_conversion          *jsontext.Value
+	appendcurrency_conversion    jsontext.Value
 	billing_type                 *int8
 	addbilling_type              *int8
 	stream                       *bool
@@ -46394,6 +46576,71 @@ func (m *UsageLogMutation) ResetModelRateMultiplier() {
 	delete(m.clearedFields, usagelog.FieldModelRateMultiplier)
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (m *UsageLogMutation) SetCurrencyConversion(j jsontext.Value) {
+	m.currency_conversion = &j
+	m.appendcurrency_conversion = nil
+}
+
+// CurrencyConversion returns the value of the "currency_conversion" field in the mutation.
+func (m *UsageLogMutation) CurrencyConversion() (r jsontext.Value, exists bool) {
+	v := m.currency_conversion
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCurrencyConversion returns the old "currency_conversion" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldCurrencyConversion(ctx context.Context) (v jsontext.Value, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCurrencyConversion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCurrencyConversion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCurrencyConversion: %w", err)
+	}
+	return oldValue.CurrencyConversion, nil
+}
+
+// AppendCurrencyConversion adds j to the "currency_conversion" field.
+func (m *UsageLogMutation) AppendCurrencyConversion(j jsontext.Value) {
+	m.appendcurrency_conversion = append(m.appendcurrency_conversion, j...)
+}
+
+// AppendedCurrencyConversion returns the list of values that were appended to the "currency_conversion" field in this mutation.
+func (m *UsageLogMutation) AppendedCurrencyConversion() (jsontext.Value, bool) {
+	if len(m.appendcurrency_conversion) == 0 {
+		return nil, false
+	}
+	return m.appendcurrency_conversion, true
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (m *UsageLogMutation) ClearCurrencyConversion() {
+	m.currency_conversion = nil
+	m.appendcurrency_conversion = nil
+	m.clearedFields[usagelog.FieldCurrencyConversion] = struct{}{}
+}
+
+// CurrencyConversionCleared returns if the "currency_conversion" field was cleared in this mutation.
+func (m *UsageLogMutation) CurrencyConversionCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldCurrencyConversion]
+	return ok
+}
+
+// ResetCurrencyConversion resets all changes to the "currency_conversion" field.
+func (m *UsageLogMutation) ResetCurrencyConversion() {
+	m.currency_conversion = nil
+	m.appendcurrency_conversion = nil
+	delete(m.clearedFields, usagelog.FieldCurrencyConversion)
+}
+
 // SetBillingType sets the "billing_type" field.
 func (m *UsageLogMutation) SetBillingType(i int8) {
 	m.billing_type = &i
@@ -47441,7 +47688,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 48)
+	fields := make([]string, 0, 49)
 	if m.user != nil {
 		fields = append(fields, usagelog.FieldUserID)
 	}
@@ -47534,6 +47781,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.model_rate_multiplier != nil {
 		fields = append(fields, usagelog.FieldModelRateMultiplier)
+	}
+	if m.currency_conversion != nil {
+		fields = append(fields, usagelog.FieldCurrencyConversion)
 	}
 	if m.billing_type != nil {
 		fields = append(fields, usagelog.FieldBillingType)
@@ -47656,6 +47906,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.AccountRateMultiplier()
 	case usagelog.FieldModelRateMultiplier:
 		return m.ModelRateMultiplier()
+	case usagelog.FieldCurrencyConversion:
+		return m.CurrencyConversion()
 	case usagelog.FieldBillingType:
 		return m.BillingType()
 	case usagelog.FieldStream:
@@ -47761,6 +48013,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldAccountRateMultiplier(ctx)
 	case usagelog.FieldModelRateMultiplier:
 		return m.OldModelRateMultiplier(ctx)
+	case usagelog.FieldCurrencyConversion:
+		return m.OldCurrencyConversion(ctx)
 	case usagelog.FieldBillingType:
 		return m.OldBillingType(ctx)
 	case usagelog.FieldStream:
@@ -48020,6 +48274,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetModelRateMultiplier(v)
+		return nil
+	case usagelog.FieldCurrencyConversion:
+		v, ok := value.(jsontext.Value)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCurrencyConversion(v)
 		return nil
 	case usagelog.FieldBillingType:
 		v, ok := value.(int8)
@@ -48473,6 +48734,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldModelRateMultiplier) {
 		fields = append(fields, usagelog.FieldModelRateMultiplier)
 	}
+	if m.FieldCleared(usagelog.FieldCurrencyConversion) {
+		fields = append(fields, usagelog.FieldCurrencyConversion)
+	}
 	if m.FieldCleared(usagelog.FieldDurationMs) {
 		fields = append(fields, usagelog.FieldDurationMs)
 	}
@@ -48555,6 +48819,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldModelRateMultiplier:
 		m.ClearModelRateMultiplier()
+		return nil
+	case usagelog.FieldCurrencyConversion:
+		m.ClearCurrencyConversion()
 		return nil
 	case usagelog.FieldDurationMs:
 		m.ClearDurationMs()
@@ -48689,6 +48956,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldModelRateMultiplier:
 		m.ResetModelRateMultiplier()
+		return nil
+	case usagelog.FieldCurrencyConversion:
+		m.ResetCurrencyConversion()
 		return nil
 	case usagelog.FieldBillingType:
 		m.ResetBillingType()

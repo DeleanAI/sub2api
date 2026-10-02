@@ -4,11 +4,13 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
@@ -647,6 +649,24 @@ func (_u *UsageLogUpdate) AddModelRateMultiplier(v float64) *UsageLogUpdate {
 // ClearModelRateMultiplier clears the value of the "model_rate_multiplier" field.
 func (_u *UsageLogUpdate) ClearModelRateMultiplier() *UsageLogUpdate {
 	_u.mutation.ClearModelRateMultiplier()
+	return _u
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (_u *UsageLogUpdate) SetCurrencyConversion(v jsontext.Value) *UsageLogUpdate {
+	_u.mutation.SetCurrencyConversion(v)
+	return _u
+}
+
+// AppendCurrencyConversion appends value to the "currency_conversion" field.
+func (_u *UsageLogUpdate) AppendCurrencyConversion(v jsontext.Value) *UsageLogUpdate {
+	_u.mutation.AppendCurrencyConversion(v)
+	return _u
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (_u *UsageLogUpdate) ClearCurrencyConversion() *UsageLogUpdate {
+	_u.mutation.ClearCurrencyConversion()
 	return _u
 }
 
@@ -1317,6 +1337,17 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.ModelRateMultiplierCleared() {
 		_spec.ClearField(usagelog.FieldModelRateMultiplier, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.CurrencyConversion(); ok {
+		_spec.SetField(usagelog.FieldCurrencyConversion, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCurrencyConversion(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, usagelog.FieldCurrencyConversion, value)
+		})
+	}
+	if _u.mutation.CurrencyConversionCleared() {
+		_spec.ClearField(usagelog.FieldCurrencyConversion, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.BillingType(); ok {
 		_spec.SetField(usagelog.FieldBillingType, field.TypeInt8, value)
@@ -2200,6 +2231,24 @@ func (_u *UsageLogUpdateOne) ClearModelRateMultiplier() *UsageLogUpdateOne {
 	return _u
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (_u *UsageLogUpdateOne) SetCurrencyConversion(v jsontext.Value) *UsageLogUpdateOne {
+	_u.mutation.SetCurrencyConversion(v)
+	return _u
+}
+
+// AppendCurrencyConversion appends value to the "currency_conversion" field.
+func (_u *UsageLogUpdateOne) AppendCurrencyConversion(v jsontext.Value) *UsageLogUpdateOne {
+	_u.mutation.AppendCurrencyConversion(v)
+	return _u
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (_u *UsageLogUpdateOne) ClearCurrencyConversion() *UsageLogUpdateOne {
+	_u.mutation.ClearCurrencyConversion()
+	return _u
+}
+
 // SetBillingType sets the "billing_type" field.
 func (_u *UsageLogUpdateOne) SetBillingType(v int8) *UsageLogUpdateOne {
 	_u.mutation.ResetBillingType()
@@ -2897,6 +2946,17 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if _u.mutation.ModelRateMultiplierCleared() {
 		_spec.ClearField(usagelog.FieldModelRateMultiplier, field.TypeFloat64)
+	}
+	if value, ok := _u.mutation.CurrencyConversion(); ok {
+		_spec.SetField(usagelog.FieldCurrencyConversion, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCurrencyConversion(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, usagelog.FieldCurrencyConversion, value)
+		})
+	}
+	if _u.mutation.CurrencyConversionCleared() {
+		_spec.ClearField(usagelog.FieldCurrencyConversion, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.BillingType(); ok {
 		_spec.SetField(usagelog.FieldBillingType, field.TypeInt8, value)

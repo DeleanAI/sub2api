@@ -212,6 +212,8 @@ export default {
         noPlatforms: 'Click "Add Platform" to start configuring the channel',
         mappingCount: 'mappings',
         pricingEntry: 'Pricing Entry',
+        priceCurrency: 'Price currency',
+        foreignCurrencyHint: 'Entries priced in {currency} stand alone and do not inherit the {catalog} catalog price: token billing needs both an input and an output price (0 is allowed), unset cache prices bill at the input price, and charges are converted into the balance unit at the rate in effect when the request is made.',
         noModels: 'No models added',
         applyPricingToAccountStats: 'Apply Pricing to Account Stats',
         applyPricingToAccountStatsDesc: 'When enabled, requests not matched by custom rules will use standard model pricing for account stats calculation',

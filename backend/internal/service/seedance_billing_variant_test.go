@@ -48,7 +48,10 @@ func TestBillingVariantModelRoundTrip(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "m", base)
 	// "@" 也出现在真实模型名里（Vertex 上的 Claude），只有变体语法的后缀才算变体。
-	for _, notVariant := range []string{"m", "m@", "@720p", "", "claude-sonnet-4@20250514", "m@720", "m@video", "m@2k"} {
+	base, ok = billingVariantBase("doubao-seedance-2-0@4k+video")
+	require.True(t, ok, "方舟的 4k 档")
+	require.Equal(t, "doubao-seedance-2-0", base)
+	for _, notVariant := range []string{"m", "m@", "@720p", "", "claude-sonnet-4@20250514", "m@720", "m@video", "m@2x", "m@k", "m@4kp"} {
 		_, ok := billingVariantBase(notVariant)
 		require.False(t, ok, notVariant)
 	}
@@ -59,7 +62,9 @@ func TestSeedanceBillingVariantFollowsOfficialDimensions(t *testing.T) {
 	require.Equal(t, "720p", seedanceBillingVariant("720p", false))
 	require.Equal(t, "1080p+video", seedanceBillingVariant(" 1080P ", true))
 	require.Empty(t, seedanceBillingVariant("", true), "分辨率未知时不分档")
-	require.Empty(t, seedanceBillingVariant("2k", false), "不是 <数字>p 的分辨率按未知处理（调用方告警、按模型本身价格计）")
+	require.Equal(t, "4k", seedanceBillingVariant("4K", false), "方舟 doubao-seedance-2.0 的 4k 档")
+	require.Equal(t, "4k+video", seedanceBillingVariant("4k", true))
+	require.Empty(t, seedanceBillingVariant("ultra", false), "不是 <数字>p / <数字>k 的分辨率按未知处理（调用方告警、按模型本身价格计）")
 
 	status := parseSeedanceTaskStatus([]byte(`{"status":"succeeded","resolution":"1080p","draft":false,"usage":{"completion_tokens":9}}`))
 	require.Equal(t, "1080p", status.billingResolution())

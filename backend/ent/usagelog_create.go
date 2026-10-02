@@ -4,6 +4,7 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
@@ -418,6 +419,12 @@ func (_c *UsageLogCreate) SetNillableModelRateMultiplier(v *float64) *UsageLogCr
 	if v != nil {
 		_c.SetModelRateMultiplier(*v)
 	}
+	return _c
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (_c *UsageLogCreate) SetCurrencyConversion(v jsontext.Value) *UsageLogCreate {
+	_c.mutation.SetCurrencyConversion(v)
 	return _c
 }
 
@@ -1084,6 +1091,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ModelRateMultiplier(); ok {
 		_spec.SetField(usagelog.FieldModelRateMultiplier, field.TypeFloat64, value)
 		_node.ModelRateMultiplier = &value
+	}
+	if value, ok := _c.mutation.CurrencyConversion(); ok {
+		_spec.SetField(usagelog.FieldCurrencyConversion, field.TypeJSON, value)
+		_node.CurrencyConversion = value
 	}
 	if value, ok := _c.mutation.BillingType(); ok {
 		_spec.SetField(usagelog.FieldBillingType, field.TypeInt8, value)
@@ -1827,6 +1838,24 @@ func (u *UsageLogUpsert) AddModelRateMultiplier(v float64) *UsageLogUpsert {
 // ClearModelRateMultiplier clears the value of the "model_rate_multiplier" field.
 func (u *UsageLogUpsert) ClearModelRateMultiplier() *UsageLogUpsert {
 	u.SetNull(usagelog.FieldModelRateMultiplier)
+	return u
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (u *UsageLogUpsert) SetCurrencyConversion(v jsontext.Value) *UsageLogUpsert {
+	u.Set(usagelog.FieldCurrencyConversion, v)
+	return u
+}
+
+// UpdateCurrencyConversion sets the "currency_conversion" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateCurrencyConversion() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldCurrencyConversion)
+	return u
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (u *UsageLogUpsert) ClearCurrencyConversion() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldCurrencyConversion)
 	return u
 }
 
@@ -2796,6 +2825,27 @@ func (u *UsageLogUpsertOne) UpdateModelRateMultiplier() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearModelRateMultiplier() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearModelRateMultiplier()
+	})
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (u *UsageLogUpsertOne) SetCurrencyConversion(v jsontext.Value) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCurrencyConversion(v)
+	})
+}
+
+// UpdateCurrencyConversion sets the "currency_conversion" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateCurrencyConversion() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCurrencyConversion()
+	})
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (u *UsageLogUpsertOne) ClearCurrencyConversion() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearCurrencyConversion()
 	})
 }
 
@@ -3980,6 +4030,27 @@ func (u *UsageLogUpsertBulk) UpdateModelRateMultiplier() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearModelRateMultiplier() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearModelRateMultiplier()
+	})
+}
+
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (u *UsageLogUpsertBulk) SetCurrencyConversion(v jsontext.Value) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCurrencyConversion(v)
+	})
+}
+
+// UpdateCurrencyConversion sets the "currency_conversion" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateCurrencyConversion() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCurrencyConversion()
+	})
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (u *UsageLogUpsertBulk) ClearCurrencyConversion() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearCurrencyConversion()
 	})
 }
 

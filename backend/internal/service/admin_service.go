@@ -19,7 +19,9 @@ type AdminService interface {
 	CreateUser(ctx context.Context, input *CreateUserInput) (*User, error)
 	UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*User, error)
 	DeleteUser(ctx context.Context, id int64) error
-	UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error)
+	// UpdateUserBalance 调整用户余额：amount 以 currency 计（空 = 记账币种；人民币 / USDT / USDC 按交易时刻的汇率
+	// 折算成记账币种，取不到当前汇率就拒绝），operation 为 set / add / subtract。
+	UpdateUserBalance(ctx context.Context, userID int64, amount float64, currency string, operation string, notes string) (*User, error)
 	BatchUpdateConcurrency(ctx context.Context, userIDs []int64, value int, mode string) (int, error)
 	BatchUpdateLimits(ctx context.Context, userIDs []int64, concurrency, rpmLimit *int) (int, error)
 	GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int, sortBy, sortOrder string) ([]APIKey, int64, error)
@@ -715,6 +717,8 @@ type adminServiceImpl struct {
 	compositeResolver    *CompositeRouteResolver
 	// 分组平台变更后用来失效渠道缓存；可为 nil（缓存会在 TTL 到期后自然重建）
 	channelCacheInvalidator ChannelCacheInvalidator
+	// exchangeRates 把非记账币种的余额调整折算成记账币种；为 nil 时只接受记账币种（默认 USD）。
+	exchangeRates *ExchangeRateService
 }
 
 // ChannelCacheInvalidator 失效渠道缓存。
@@ -756,6 +760,7 @@ func NewAdminService(
 	compositeRouteRepo CompositeModelRouteRepository,
 	compositeResolver *CompositeRouteResolver,
 	channelCacheInvalidator ChannelCacheInvalidator,
+	exchangeRates *ExchangeRateService,
 ) AdminService {
 	return &adminServiceImpl{
 		cfg:                  cfg,
@@ -786,5 +791,6 @@ func NewAdminService(
 		compositeResolver:    compositeResolver,
 
 		channelCacheInvalidator: channelCacheInvalidator,
+		exchangeRates:           exchangeRates,
 	}
 }

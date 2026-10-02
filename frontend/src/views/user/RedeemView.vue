@@ -325,6 +325,8 @@
                 >
                   {{ item.notes }}
                 </p>
+                <!-- 按非记账币种入账（如以人民币支付）：原币金额与汇率出处 -->
+                <CurrencyConversionNote v-if="item.currency_conversion" :conversion="item.currency_conversion" class="mt-1 text-right" />
               </div>
             </div>
           </div>
@@ -379,6 +381,7 @@ import { useSubscriptionStore } from '@/stores/subscriptions'
 import { redeemAPI, authAPI, type RedeemHistoryItem } from '@/api'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import Icon from '@/components/icons/Icon.vue'
+import CurrencyConversionNote from '@/components/common/CurrencyConversionNote.vue'
 import { formatDateTime } from '@/utils/format'
 import { balanceCurrencySymbol } from '@/utils/balanceCurrency'
 import { extractApiErrorCode } from '@/utils/apiError'

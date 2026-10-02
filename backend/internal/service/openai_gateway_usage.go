@@ -412,18 +412,7 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		videoDurationSeconds := NormalizeVideoBillingDurationSecondsOrDefault(result.VideoDurationSeconds)
 		usageLog.VideoDurationSeconds = &videoDurationSeconds
 	}
-	if cost != nil {
-		usageLog.InputCost = cost.InputCost
-		usageLog.ImageInputCost = cost.ImageInputCost
-		usageLog.OutputCost = cost.OutputCost
-		usageLog.ImageOutputCost = cost.ImageOutputCost
-		usageLog.CacheCreationCost = cost.CacheCreationCost
-		usageLog.CacheReadCost = cost.CacheReadCost
-		usageLog.TotalCost = cost.TotalCost
-		usageLog.ActualCost = cost.ActualCost
-		usageLog.LongContextBillingApplied = cost.LongContextBillingApplied
-		usageLog.ModelRateMultiplier = usageLogModelRateMultiplier(cost)
-	}
+	usageLog.applyCostBreakdown(cost)
 	if isVideoUsage && (cost == nil || cost.BillingMode != string(BillingModeToken)) {
 		usageLog.RateMultiplier = videoMultiplier
 	} else if result.ImageCount > 0 && (cost == nil || cost.BillingMode != string(BillingModeToken)) {

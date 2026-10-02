@@ -101,11 +101,14 @@ type AccountStatsPricingRule struct {
 
 // ChannelModelPricing 渠道模型定价条目
 type ChannelModelPricing struct {
-	ID                         int64               `json:"id,omitempty"`
-	ChannelID                  int64               `json:"channel_id,omitempty"`
-	Platform                   string              `json:"platform"` // 所属平台（anthropic/openai/gemini/...）
-	Models                     []string            `json:"models"`
-	BillingMode                BillingMode         `json:"billing_mode"`
+	ID          int64       `json:"id,omitempty"`
+	ChannelID   int64       `json:"channel_id,omitempty"`
+	Platform    string      `json:"platform"` // 所属平台（anthropic/openai/gemini/...）
+	Models      []string    `json:"models"`
+	BillingMode BillingMode `json:"billing_mode"`
+	// Currency 是本条价格的标价币种（USD / CNY，缺省 USD）。与记账币种不同时，计费按使用时刻的汇率折算
+	// （见 BillingService.convertToAccountingCurrency）；非美元条目自成一体，未配置的分项不继承美元官方价。
+	Currency                   string              `json:"currency"`
 	InputPrice                 *float64            `json:"input_price"`
 	OutputPrice                *float64            `json:"output_price"`
 	CacheWritePrice            *float64            `json:"cache_write_price"`
@@ -157,6 +160,36 @@ type PricingInterval struct {
 	SortOrder            int       `json:"sort_order"`
 	CreatedAt            time.Time `json:"created_at,omitempty"`
 	UpdatedAt            time.Time `json:"updated_at,omitempty"`
+}
+
+// CatalogPriceCurrency 是价格目录（官方价目录、远端 / 回退目录、硬编码回退价）的标价币种。
+const CatalogPriceCurrency = "USD"
+
+// DefaultPriceCurrency：没写币种的价格（定价条目、订阅套餐）一律按美元（管理端经汇率元数据接口下发给编辑器）。
+const DefaultPriceCurrency = "USD"
+
+// PriceCurrencyOrDefault 返回写明的标价币种（大写），没写时为 DefaultPriceCurrency。定价条目、订阅套餐、
+// 落库兜底都用这一条。
+func PriceCurrencyOrDefault(code string) string {
+	if normalized := strings.ToUpper(strings.TrimSpace(code)); normalized != "" {
+		return normalized
+	}
+	return DefaultPriceCurrency
+}
+
+// pricingCurrency 返回定价条目的标价币种。保存路径已经归一化（normalizePricingCurrencies），
+// 这里只兜内存里构造、没经过保存的条目。
+func pricingCurrency(p *ChannelModelPricing) string {
+	if p == nil {
+		return DefaultPriceCurrency
+	}
+	return PriceCurrencyOrDefault(p.Currency)
+}
+
+// inheritsCatalogPricing 报告条目未配置的分项能否取价格目录的价：只有与目录同币种（USD）的条目可以，
+// 否则一张价卡里会混着两种币种的数字。
+func inheritsCatalogPricing(p *ChannelModelPricing) bool {
+	return pricingCurrency(p) == CatalogPriceCurrency
 }
 
 // IsActive 判断渠道是否启用

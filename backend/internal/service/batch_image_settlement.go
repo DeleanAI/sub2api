@@ -23,35 +23,50 @@ const (
 )
 
 type BatchImagePricingResolver interface {
-	BatchImageUnitPrice(ctx context.Context, job *BatchImageJob) (float64, error)
+	// BatchImageUnitPrice 返回记账币种的每张单价；价卡不是记账币种时一并返回折算依据（否则为 nil）。
+	BatchImageUnitPrice(ctx context.Context, job *BatchImageJob) (float64, *CurrencyConversion, error)
 }
 
 type BatchImageModelPricingResolver struct {
 	Resolver *ModelPricingResolver
 }
 
-func (r *BatchImageModelPricingResolver) BatchImageUnitPrice(ctx context.Context, job *BatchImageJob) (float64, error) {
+func (r *BatchImageModelPricingResolver) BatchImageUnitPrice(ctx context.Context, job *BatchImageJob) (float64, *CurrencyConversion, error) {
 	if r == nil || r.Resolver == nil || job == nil || strings.TrimSpace(job.Model) == "" {
-		return 0, ErrBatchImageSettlementPricingMissing
+		return 0, nil, ErrBatchImageSettlementPricingMissing
 	}
 	resolved := r.Resolver.Resolve(ctx, PricingInput{Model: job.Model})
 	if resolved == nil {
-		return 0, ErrBatchImageSettlementPricingMissing
+		return 0, nil, ErrBatchImageSettlementPricingMissing
 	}
+	price, ok := batchImageRawUnitPrice(resolved)
+	if !ok {
+		return 0, nil, ErrBatchImageSettlementPricingMissing
+	}
+	// 单价以价卡的标价币种给出，折算成记账币种（当时的汇率）后再快照进任务，折算依据随任务落库。
+	converted, conversion, err := r.Resolver.billingService.ConvertPriceToAccounting(ctx, price, resolvedPriceCurrency(resolved), time.Now())
+	if err != nil {
+		return 0, nil, ErrBatchImageSettlementPricingMissing.WithCause(err)
+	}
+	return converted, conversion, nil
+}
+
+// batchImageRawUnitPrice 取解析出的价卡上每张图的单价（价卡的标价币种）。
+func batchImageRawUnitPrice(resolved *ResolvedPricing) (float64, bool) {
 	switch resolved.Mode {
 	case BillingModeImage, BillingModePerRequest:
 		if resolved.DefaultPerRequestPrice > 0 {
-			return resolved.DefaultPerRequestPrice, nil
+			return resolved.DefaultPerRequestPrice, true
 		}
 		if len(resolved.RequestTiers) == 1 && resolved.RequestTiers[0].PerRequestPrice != nil && *resolved.RequestTiers[0].PerRequestPrice >= 0 {
-			return *resolved.RequestTiers[0].PerRequestPrice, nil
+			return *resolved.RequestTiers[0].PerRequestPrice, true
 		}
 	case BillingModeToken:
 		if resolved.BasePricing != nil && (resolved.BasePricing.ImageOutputPriceExplicit || resolved.BasePricing.ImageOutputPricePerToken > 0) {
-			return resolved.BasePricing.ImageOutputPricePerToken, nil
+			return resolved.BasePricing.ImageOutputPricePerToken, true
 		}
 	}
-	return 0, ErrBatchImageSettlementPricingMissing
+	return 0, false
 }
 
 type BatchImageSettlementService struct {
@@ -125,7 +140,7 @@ func (s *BatchImageSettlementService) Settle(ctx context.Context, batchID string
 		return nil, ErrBatchImageSettlementManifestConflict
 	}
 
-	unitPrice, err := s.settlementUnitPrice(ctx, job)
+	unitPrice, conversion, err := s.settlementUnitPrice(ctx, job)
 	if err == nil && unitPrice < 0 {
 		err = ErrBatchImageSettlementPricingMissing
 	}
@@ -177,7 +192,7 @@ func (s *BatchImageSettlementService) Settle(ctx context.Context, batchID string
 	}); err != nil {
 		return nil, err
 	}
-	s.recordUsageLog(ctx, job, actualCost, result.RequestID, now)
+	s.recordUsageLog(ctx, job, actualCost, conversion, result.RequestID, now)
 
 	return result, nil
 }
@@ -249,7 +264,7 @@ func (s *BatchImageSettlementService) failExhaustedSettlement(ctx context.Contex
 	return ErrBatchImageSettlementBillingFailed
 }
 
-func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *BatchImageJob, actualCost float64, requestID string, createdAt time.Time) {
+func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *BatchImageJob, actualCost float64, conversion *CurrencyConversion, requestID string, createdAt time.Time) {
 	if s == nil || s.UsageLogRepo == nil || job == nil || job.APIKeyID == nil || job.AccountID == nil {
 		return
 	}
@@ -278,6 +293,7 @@ func (s *BatchImageSettlementService) recordUsageLog(ctx context.Context, job *B
 		BillingMode:           &billingMode,
 		ImageSize:             &imageSize,
 		SessionID:             job.SessionID,
+		CurrencyConversion:    conversion,
 		CreatedAt:             createdAt,
 	}
 	writeUsageLogBestEffort(ctx, s.UsageLogRepo, usageLog, "service.batch_image_settlement")
@@ -289,18 +305,16 @@ func (s *BatchImageSettlementService) invalidateAuthCache(ctx context.Context, u
 	}
 }
 
-func (s *BatchImageSettlementService) settlementUnitPrice(ctx context.Context, job *BatchImageJob) (float64, error) {
+// settlementUnitPrice 返回结算单价与其折算依据：提交时快照过价格的任务用快照（含提交时的折算依据），
+// 老任务按结算时的价格与汇率现算。
+func (s *BatchImageSettlementService) settlementUnitPrice(ctx context.Context, job *BatchImageJob) (float64, *CurrencyConversion, error) {
 	if job != nil && job.PricingSnapshotVersion >= 1 {
 		if job.BillableUnitPrice < 0 {
-			return 0, ErrBatchImageSettlementPricingMissing
+			return 0, nil, ErrBatchImageSettlementPricingMissing
 		}
-		return job.BillableUnitPrice, nil
+		return job.BillableUnitPrice, job.CurrencyConversion, nil
 	}
-	unitPrice, err := s.Pricing.BatchImageUnitPrice(ctx, job)
-	if err != nil {
-		return 0, err
-	}
-	return unitPrice, nil
+	return s.Pricing.BatchImageUnitPrice(ctx, job)
 }
 
 func (s *BatchImageSettlementService) outputRetentionAfterTerminal() time.Duration {

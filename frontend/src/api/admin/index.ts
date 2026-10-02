@@ -37,6 +37,7 @@ import adminComplianceAPI from './compliance'
 import auditAPI from './audit'
 import pagesAPI from './pages'
 import pluginsAPI from './plugins'
+import exchangeRatesAPI from './exchangeRates'
 
 /**
  * Unified admin API object for convenient access
@@ -75,7 +76,8 @@ export const adminAPI = {
   compliance: adminComplianceAPI,
   audit: auditAPI,
   pages: pagesAPI,
-  plugins: pluginsAPI
+  plugins: pluginsAPI,
+  exchangeRates: exchangeRatesAPI
 }
 
 export {
@@ -112,7 +114,8 @@ export {
   adminComplianceAPI,
   auditAPI,
   pagesAPI,
-  pluginsAPI
+  pluginsAPI,
+  exchangeRatesAPI
 }
 
 export default adminAPI

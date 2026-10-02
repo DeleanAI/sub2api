@@ -58,7 +58,7 @@
             ({{ row.fee_rate }}%)
           </span>
           <div v-if="row.amount !== row.pay_amount" class="text-xs text-gray-500">
-            {{ t('payment.orders.creditedAmount') }}: {{ $currency }}{{ row.amount.toFixed(2) }}
+            {{ t('payment.orders.creditedAmount') }}: {{ formatOrderAmount(row.amount, row.amount_currency) }}
           </div>
         </div>
       </template>
@@ -144,6 +144,7 @@ import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { statusBadgeClass, canRefund, formatOrderDateTime } from '@/components/payment/orderUtils'
 import { currencySymbol } from '@/components/payment/currency'
+import { formatOrderAmount } from '@/utils/currencyConversion'
 
 const { t } = useI18n()
 

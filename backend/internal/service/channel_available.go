@@ -92,6 +92,9 @@ func (s *ChannelService) ListAvailable(ctx context.Context) ([]AvailableChannel,
 
 		supported := ch.SupportedModels()
 		fillGlobalPricingFallback(s.pricingService, supported)
+		for j := range supported {
+			supported[j].Pricing = s.fx.PricingInAccounting(ctx, supported[j].Pricing)
+		}
 
 		out = append(out, AvailableChannel{
 			ID:                 ch.ID,

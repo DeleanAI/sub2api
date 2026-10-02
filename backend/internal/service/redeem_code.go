@@ -20,6 +20,9 @@ type RedeemCode struct {
 
 	GroupID      *int64
 	ValidityDays int
+	// CurrencyConversion 管理员按非记账币种调整余额（或在线支付以其它币种入账）时的原币金额与汇率；
+	// Value 是折算后的记账币种金额。nil 表示就是记账币种。
+	CurrencyConversion *CurrencyConversion
 
 	User  *User
 	Group *Group

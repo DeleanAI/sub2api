@@ -513,12 +513,18 @@ func (s *adminServiceImpl) BatchUpdateLimits(ctx context.Context, userIDs []int6
 	return affected, nil
 }
 
-func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error) {
+func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, amount float64, currency string, operation string, notes string) (*User, error) {
+	switch operation {
+	case "set", "add", "subtract":
+	default:
+		return nil, fmt.Errorf("unsupported balance operation: %q", operation)
+	}
+	balance, conversion, err := s.balanceAmountInAccounting(ctx, amount, currency)
+	if err != nil {
+		return nil, err
+	}
 	// 余额调整必须走原子接口：先读后整行写回会把并发的计费扣款覆盖掉。
-	var (
-		change BalanceChange
-		err    error
-	)
+	var change BalanceChange
 	switch operation {
 	case "set":
 		change, err = s.userRepo.SetBalance(ctx, userID, balance)
@@ -565,12 +571,13 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 		}
 
 		adjustmentRecord := &RedeemCode{
-			Code:   code,
-			Type:   AdjustmentTypeAdminBalance,
-			Value:  balanceDiff,
-			Status: StatusUsed,
-			UsedBy: &user.ID,
-			Notes:  notes,
+			Code:               code,
+			Type:               AdjustmentTypeAdminBalance,
+			Value:              balanceDiff,
+			Status:             StatusUsed,
+			UsedBy:             &user.ID,
+			Notes:              notes,
+			CurrencyConversion: conversion,
 		}
 		now := time.Now()
 		adjustmentRecord.UsedAt = &now
@@ -581,6 +588,34 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 	}
 
 	return user, nil
+}
+
+// balanceAmountInAccounting 把管理员输入的金额折算成记账币种：currency 为空或等于记账币种时原样返回；否则按当前汇率
+// （FXStrict：确认不了当前有效的汇率就拒绝）折算并取到分，返回的折算记录带原币金额，落进调整流水。
+func (s *adminServiceImpl) balanceAmountInAccounting(ctx context.Context, amount float64, currency string) (float64, *CurrencyConversion, error) {
+	if strings.TrimSpace(currency) == "" {
+		return amount, nil, nil
+	}
+	from, err := NormalizeFXCurrency(currency)
+	if err != nil {
+		return 0, nil, err
+	}
+	accounting := s.exchangeRates.AccountingCurrency(ctx)
+	converted, conversion, err := s.exchangeRates.Convert(ctx, amount, from, accounting, time.Now(), FXStrict)
+	if err != nil {
+		return 0, nil, err
+	}
+	if conversion == nil {
+		return amount, nil, nil
+	}
+	converted = RoundCreditedAmount(converted)
+	if converted <= 0 {
+		return 0, nil, infraerrors.BadRequest("BALANCE_AMOUNT_TOO_SMALL",
+			fmt.Sprintf("%v %s is %v %s after conversion", amount, from, converted, accounting))
+	}
+	conversion.FromAmount = &amount
+	conversion.ToAmount = &converted
+	return converted, conversion, nil
 }
 
 func (s *adminServiceImpl) tryAccrueAffiliateRebateForAdminRecharge(ctx context.Context, userID int64, operation string, amount float64) {

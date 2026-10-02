@@ -995,7 +995,6 @@ func TestAPIContracts(t *testing.T) {
 					"payment_max_pending_orders": 0,
 					"payment_balance_disabled": false,
 					"payment_balance_recharge_multiplier": 0,
-					"payment_subscription_usd_to_cny_rate": 0,
 					"payment_recharge_fee_rate": 0,
 					"payment_load_balance_strategy": "",
 					"payment_product_name_prefix": "",
@@ -1316,7 +1315,6 @@ func TestAPIContracts(t *testing.T) {
 					"payment_enabled_types": null,
 					"payment_balance_disabled": false,
 					"payment_balance_recharge_multiplier": 0,
-					"payment_subscription_usd_to_cny_rate": 0,
 					"payment_recharge_fee_rate": 0,
 					"payment_load_balance_strategy": "",
 					"payment_product_name_prefix": "",
@@ -1516,7 +1514,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
 
-	adminService := service.NewAdminService(nil, userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	adminService := service.NewAdminService(nil, userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService, nil, redeemService, nil, nil)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService, nil, nil)

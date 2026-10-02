@@ -7429,17 +7429,9 @@
                 </p>
               </div>
               <div class="w-full shrink-0 sm:w-56">
-                <input
-                  id="balance-currency"
-                  v-model.trim="form.balance_currency"
-                  type="text"
-                  maxlength="3"
-                  list="balance-currency-suggestions"
-                  class="input font-mono uppercase"
-                />
-                <datalist id="balance-currency-suggestions">
-                  <option v-for="code in BALANCE_CURRENCY_SUGGESTIONS" :key="code" :value="code" />
-                </datalist>
+                <select id="balance-currency" v-model="form.balance_currency" class="input font-mono">
+                  <option v-for="code in balanceCurrencyChoices" :key="code" :value="code">{{ code }}</option>
+                </select>
               </div>
             </div>
           </div>
@@ -8147,34 +8139,6 @@
                             1
                           ).toFixed(2),
                         })
-                      }}
-                    </p>
-                  </div>
-                  <div>
-                    <label class="input-label">{{
-                      t("admin.settings.payment.subscriptionUsdToCnyRate")
-                    }}</label>
-                    <input
-                      :value="form.payment_subscription_usd_to_cny_rate || ''"
-                      @input="
-                        form.payment_subscription_usd_to_cny_rate =
-                          parseFloat(
-                            ($event.target as HTMLInputElement).value,
-                          ) || 0
-                      "
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      class="input"
-                      :placeholder="
-                        t(
-                          'admin.settings.payment.subscriptionUsdToCnyRateDisabled',
-                        )
-                      "
-                    />
-                    <p class="mt-0.5 text-xs text-gray-400">
-                      {{
-                        t("admin.settings.payment.subscriptionUsdToCnyRateHint")
                       }}
                     </p>
                   </div>
@@ -9070,7 +9034,6 @@ import {
 } from "@/utils/balanceCurrency";
 
 // 站内余额单位输入框的候选（只是提示，后端接受任何 ISO 4217 代码）。
-const BALANCE_CURRENCY_SUGGESTIONS = ["USD", "CNY", "EUR", "HKD", "JPY", "GBP"];
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import PaymentProviderList from "@/components/payment/PaymentProviderList.vue";
 import PaymentProviderDialog from "@/components/payment/PaymentProviderDialog.vue";
@@ -9108,9 +9071,19 @@ import {
   defaultFingerprintSignalRows,
   type FingerprintSignalRow,
 } from "./codexFingerprintSignals";
+import { invalidateCurrencyOptions, useCurrencyOptions } from "@/composables/useCurrencyOptions";
 
 const { t, locale } = useI18n();
 const appStore = useAppStore();
+
+// 记账币种只能选有汇率来源的法币（选项来自 GET /admin/exchange-rates/currencies）；当前值不在选项里时也列出来，
+// 不让表单悄悄改掉它。
+const { options: currencyOptions } = useCurrencyOptions();
+const balanceCurrencyChoices = computed(() => {
+  const choices = [...(currencyOptions.value?.fiat_currencies ?? [])];
+  if (form.balance_currency && !choices.includes(form.balance_currency)) choices.unshift(form.balance_currency);
+  return choices;
+});
 // 关闭 step-up 开关是敏感操作：后端返回 STEP_UP_REQUIRED 时弹 TOTP 码重试
 const settingsStepUp = useStepUp();
 const adminSettingsStore = useAdminSettingsStore();
@@ -9859,7 +9832,6 @@ const form = reactive<SettingsForm>({
   payment_order_timeout_minutes: 30,
   payment_balance_disabled: false,
   payment_balance_recharge_multiplier: 1,
-  payment_subscription_usd_to_cny_rate: 0,
   payment_recharge_fee_rate: 0,
   payment_enabled_types: [],
   payment_help_image_url: "",
@@ -11725,8 +11697,6 @@ async function saveSettings() {
       payment_balance_disabled: form.payment_balance_disabled,
       payment_balance_recharge_multiplier:
         Number(form.payment_balance_recharge_multiplier) || 1,
-      payment_subscription_usd_to_cny_rate:
-        Number(form.payment_subscription_usd_to_cny_rate) || 0,
       payment_recharge_fee_rate: Number(form.payment_recharge_fee_rate) || 0,
       payment_enabled_types: form.payment_enabled_types,
       payment_load_balance_strategy: form.payment_load_balance_strategy,
@@ -11853,6 +11823,8 @@ async function saveSettings() {
     const updated = await settingsStepUp.run(() =>
       adminAPI.settings.updateSettings(payload),
     );
+    // 记账币种可能变了：管理端各处的币种选项（调整余额、定价编辑器）重新取一次。
+    invalidateCurrencyOptions();
     for (const [key, value] of Object.entries(updated)) {
       if (key === "openai_fast_policy_settings") continue;
       if (value !== null && value !== undefined) {

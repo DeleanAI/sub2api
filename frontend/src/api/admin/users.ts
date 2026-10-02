@@ -4,7 +4,7 @@
  */
 
 import { apiClient } from '../client'
-import type { AdminUser, UpdateUserRequest, PaginatedResponse, ApiKey } from '@/types'
+import type { AdminUser, UpdateUserRequest, PaginatedResponse, ApiKey, CurrencyConversion } from '@/types'
 
 export interface AdminBindAuthIdentityChannelRequest {
   channel: string
@@ -169,18 +169,22 @@ export async function deleteUser(id: number): Promise<{ message: string }> {
  * @param balance - New balance
  * @param operation - Operation type ('set', 'add', 'subtract')
  * @param notes - Optional notes for the balance adjustment
+ * @param currency - Currency of `balance` (defaults to the site's accounting currency)
  * @returns Updated user
  */
 export async function updateBalance(
   id: number,
   balance: number,
   operation: 'set' | 'add' | 'subtract' = 'set',
-  notes?: string
+  notes?: string,
+  currency?: string
 ): Promise<AdminUser> {
+  // currency 缺省为站内记账币种；人民币 / 稳定币由后端按当前汇率折算后入账（确认不了汇率就拒绝）。
   const { data } = await apiClient.post<AdminUser>(`/admin/users/${id}/balance`, {
     balance,
     operation,
-    notes: notes || ''
+    notes: notes || '',
+    ...(currency ? { currency } : {})
   })
   return data
 }
@@ -265,6 +269,8 @@ export interface BalanceHistoryItem {
   group_id: number | null
   validity_days: number
   notes: string
+  /** 按非记账币种入账（管理员按人民币 / 稳定币调整、在线支付）时的原币金额与汇率 */
+  currency_conversion?: CurrencyConversion | null
   user?: { id: number; email: string } | null
   group?: { id: number; name: string } | null
 }

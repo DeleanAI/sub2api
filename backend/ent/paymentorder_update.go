@@ -4,12 +4,14 @@ package ent
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"entgo.io/ent/dialect/sql/sqljson"
 	"entgo.io/ent/schema/field"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
@@ -708,6 +710,24 @@ func (_u *PaymentOrderUpdate) ClearSrcURL() *PaymentOrderUpdate {
 	return _u
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (_u *PaymentOrderUpdate) SetCurrencyConversion(v jsontext.Value) *PaymentOrderUpdate {
+	_u.mutation.SetCurrencyConversion(v)
+	return _u
+}
+
+// AppendCurrencyConversion appends value to the "currency_conversion" field.
+func (_u *PaymentOrderUpdate) AppendCurrencyConversion(v jsontext.Value) *PaymentOrderUpdate {
+	_u.mutation.AppendCurrencyConversion(v)
+	return _u
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (_u *PaymentOrderUpdate) ClearCurrencyConversion() *PaymentOrderUpdate {
+	_u.mutation.ClearCurrencyConversion()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *PaymentOrderUpdate) SetUpdatedAt(v time.Time) *PaymentOrderUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -1039,6 +1059,17 @@ func (_u *PaymentOrderUpdate) sqlSave(ctx context.Context) (_node int, err error
 	}
 	if _u.mutation.SrcURLCleared() {
 		_spec.ClearField(paymentorder.FieldSrcURL, field.TypeString)
+	}
+	if value, ok := _u.mutation.CurrencyConversion(); ok {
+		_spec.SetField(paymentorder.FieldCurrencyConversion, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCurrencyConversion(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, paymentorder.FieldCurrencyConversion, value)
+		})
+	}
+	if _u.mutation.CurrencyConversionCleared() {
+		_spec.ClearField(paymentorder.FieldCurrencyConversion, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(paymentorder.FieldUpdatedAt, field.TypeTime, value)
@@ -1771,6 +1802,24 @@ func (_u *PaymentOrderUpdateOne) ClearSrcURL() *PaymentOrderUpdateOne {
 	return _u
 }
 
+// SetCurrencyConversion sets the "currency_conversion" field.
+func (_u *PaymentOrderUpdateOne) SetCurrencyConversion(v jsontext.Value) *PaymentOrderUpdateOne {
+	_u.mutation.SetCurrencyConversion(v)
+	return _u
+}
+
+// AppendCurrencyConversion appends value to the "currency_conversion" field.
+func (_u *PaymentOrderUpdateOne) AppendCurrencyConversion(v jsontext.Value) *PaymentOrderUpdateOne {
+	_u.mutation.AppendCurrencyConversion(v)
+	return _u
+}
+
+// ClearCurrencyConversion clears the value of the "currency_conversion" field.
+func (_u *PaymentOrderUpdateOne) ClearCurrencyConversion() *PaymentOrderUpdateOne {
+	_u.mutation.ClearCurrencyConversion()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *PaymentOrderUpdateOne) SetUpdatedAt(v time.Time) *PaymentOrderUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -2132,6 +2181,17 @@ func (_u *PaymentOrderUpdateOne) sqlSave(ctx context.Context) (_node *PaymentOrd
 	}
 	if _u.mutation.SrcURLCleared() {
 		_spec.ClearField(paymentorder.FieldSrcURL, field.TypeString)
+	}
+	if value, ok := _u.mutation.CurrencyConversion(); ok {
+		_spec.SetField(paymentorder.FieldCurrencyConversion, field.TypeJSON, value)
+	}
+	if value, ok := _u.mutation.AppendedCurrencyConversion(); ok {
+		_spec.AddModifier(func(u *sql.UpdateBuilder) {
+			sqljson.Append(u, paymentorder.FieldCurrencyConversion, value)
+		})
+	}
+	if _u.mutation.CurrencyConversionCleared() {
+		_spec.ClearField(paymentorder.FieldCurrencyConversion, field.TypeJSON)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(paymentorder.FieldUpdatedAt, field.TypeTime, value)

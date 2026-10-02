@@ -88,6 +88,8 @@ const (
 	FieldSrcHost = "src_host"
 	// FieldSrcURL holds the string denoting the src_url field in the database.
 	FieldSrcURL = "src_url"
+	// FieldCurrencyConversion holds the string denoting the currency_conversion field in the database.
+	FieldCurrencyConversion = "currency_conversion"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -145,6 +147,7 @@ var Columns = []string{
 	FieldClientIP,
 	FieldSrcHost,
 	FieldSrcURL,
+	FieldCurrencyConversion,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
