@@ -26,6 +26,10 @@ const (
 	cfetsCentralParityPath  = "/ags/ms/cm-u-bk-ccpr/CcprHisNew"
 	cfetsCentralParityPage  = "https://www.chinamoney.com.cn/chinese/bkccpr/"
 	defaultCoinGeckoBaseURL = "https://api.coingecko.com"
+	// cfetsPageSize：每页条数。接口拒绝过大的页（2026-10-03 从 edge 实测 pageSize=100 回 403，≤50 正常），
+	// 所以按页翻完（data.pageTotal）；cfetsMaxPages 防止接口返回异常的页数时无限翻页。
+	cfetsPageSize = 50
+	cfetsMaxPages = 40
 )
 
 // beijing：外汇交易中心的日期按北京时间（与 service 的公布时刻同一时区）。
@@ -81,6 +85,10 @@ type cfetsCentralParityResponse struct {
 		RepCode    string `json:"rep_code"`
 		RepMessage string `json:"rep_message"`
 	} `json:"head"`
+	Data struct {
+		Total     int `json:"total"`
+		PageTotal int `json:"pageTotal"`
+	} `json:"data"`
 	Records []struct {
 		Date   string   `json:"date"`
 		Values []string `json:"values"`
@@ -90,9 +98,31 @@ type cfetsCentralParityResponse struct {
 func (f *exchangeRateFetcher) FetchCNYCentralParity(ctx context.Context, from, to time.Time) ([]service.ExchangeRate, error) {
 	start := from.In(beijing).Format(time.DateOnly)
 	end := to.In(beijing).Format(time.DateOnly)
+	fetchedAt := time.Now()
+	var rates []service.ExchangeRate
+	for page := 1; ; page++ {
+		parsed, err := f.fetchCFETSPage(ctx, start, end, page)
+		if err != nil {
+			return nil, err
+		}
+		pageRates, err := cfetsRecordsToRates(parsed, fetchedAt)
+		if err != nil {
+			return nil, err
+		}
+		rates = append(rates, pageRates...)
+		if page >= parsed.Data.PageTotal || len(parsed.Records) == 0 {
+			return rates, nil
+		}
+		if page >= cfetsMaxPages {
+			return nil, fmt.Errorf("CFETS reports %d pages for %s..%s, more than the %d pages we read", parsed.Data.PageTotal, start, end, cfetsMaxPages)
+		}
+	}
+}
+
+func (f *exchangeRateFetcher) fetchCFETSPage(ctx context.Context, start, end string, page int) (*cfetsCentralParityResponse, error) {
 	query := url.Values{
 		"startDate": {start}, "endDate": {end}, "currency": {"USD/CNY"},
-		"pageNum": {"1"}, "pageSize": {"100"},
+		"pageNum": {strconv.Itoa(page)}, "pageSize": {strconv.Itoa(cfetsPageSize)},
 	}
 	endpoint := f.cfetsBaseURL + cfetsCentralParityPath + "?" + query.Encode()
 	body, err := f.get(ctx, endpoint, map[string]string{"Referer": cfetsCentralParityPage})
@@ -106,7 +136,10 @@ func (f *exchangeRateFetcher) FetchCNYCentralParity(ctx context.Context, from, t
 	if parsed.Head.RepCode != "" && parsed.Head.RepCode != "200" {
 		return nil, fmt.Errorf("CFETS rep_code %s: %s", parsed.Head.RepCode, parsed.Head.RepMessage)
 	}
-	fetchedAt := time.Now()
+	return &parsed, nil
+}
+
+func cfetsRecordsToRates(parsed *cfetsCentralParityResponse, fetchedAt time.Time) ([]service.ExchangeRate, error) {
 	rates := make([]service.ExchangeRate, 0, len(parsed.Records))
 	for _, record := range parsed.Records {
 		day, err := time.ParseInLocation(time.DateOnly, record.Date, beijing)

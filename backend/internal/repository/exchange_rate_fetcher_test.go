@@ -32,6 +32,7 @@ func TestExchangeRateFetcher_ParsesCFETSCentralParity(t *testing.T) {
 	require.Contains(t, gotQuery, "currency=USD%2FCNY")
 	require.Contains(t, gotQuery, "startDate=2026-09-25")
 	require.Contains(t, gotQuery, "endDate=2026-10-03")
+	require.Contains(t, gotQuery, "pageSize=50", "the endpoint answers 403 to pageSize=100")
 	require.Equal(t, cfetsCentralParityPage, gotReferer)
 	require.Len(t, rates, 3)
 
@@ -43,6 +44,35 @@ func TestExchangeRateFetcher_ParsesCFETSCentralParity(t *testing.T) {
 	require.InDelta(t, 1/6.7351, r.USDPerUnit, 1e-15)
 	require.Equal(t, service.FXSourceCFETSCentralParity, r.Source)
 	require.Equal(t, time.Date(2026, 9, 30, 1, 15, 0, 0, time.UTC), r.PublishedAt, "published at 09:15 Asia/Shanghai")
+}
+
+// 30 天窗口最多二十多个工作日，长假前后的补抓可能更多：按 data.pageTotal 翻完所有页再合并。
+func TestExchangeRateFetcher_ReadsEveryPage(t *testing.T) {
+	var pages []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("pageNum")
+		pages = append(pages, page)
+		records := map[string]string{
+			"1": `{"date":"2026-09-30","values":["6.7351"]},{"date":"2026-09-29","values":["6.7411"]}`,
+			"2": `{"date":"2026-09-28","values":["6.7399"]}`,
+		}[page]
+		_, _ = w.Write([]byte(`{"head":{"rep_code":"200"},"data":{"total":3,"pageTotal":2},"records":[` + records + `]}`))
+	}))
+	defer srv.Close()
+
+	rates, err := NewExchangeRateFetcher(srv.Client(), srv.URL, srv.URL).FetchCNYCentralParity(context.Background(),
+		time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.Equal(t, []string{"1", "2"}, pages)
+	require.Len(t, rates, 3)
+	require.Equal(t, "2026-09-28", rates[2].RateDate)
+
+	runaway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"head":{"rep_code":"200"},"data":{"total":99999,"pageTotal":9999},"records":[{"date":"2026-09-30","values":["6.7351"]}]}`))
+	}))
+	defer runaway.Close()
+	_, err = NewExchangeRateFetcher(runaway.Client(), runaway.URL, runaway.URL).FetchCNYCentralParity(context.Background(), time.Now(), time.Now())
+	require.Error(t, err, "an absurd page count is an error, not an endless loop")
 }
 
 func TestExchangeRateFetcher_ParsesCoinGeckoDailyPrice(t *testing.T) {
